@@ -7,37 +7,9 @@ use std::{
 use anyhow::{Context, Result, bail};
 use tempfile::Builder;
 
-use crate::snapshot::{DiffResult, ModifiedEntity};
+use crate::snapshot::ModifiedEntity;
 
-pub fn render_diff(diff: &DiffResult) -> Result<String> {
-    let mut sections = Vec::new();
-
-    for entity in &diff.deleted {
-        sections.push(format!(
-            "- {}",
-            crate::entity_collector::render_entity(entity)
-        ));
-    }
-
-    for entity in &diff.added {
-        sections.push(format!(
-            "+ {}",
-            crate::entity_collector::render_entity(entity)
-        ));
-    }
-
-    for change in &diff.modified {
-        sections.push(render_modified_entity(change)?);
-    }
-
-    if sections.is_empty() {
-        Ok(String::new())
-    } else {
-        Ok(format!("{}\n", sections.join("\n\n")))
-    }
-}
-
-fn render_modified_entity(change: &ModifiedEntity) -> Result<String> {
+pub fn render_modified_entity(change: &ModifiedEntity) -> Result<String> {
     let temp_dir = tempfile::tempdir().context("failed to create temporary directory")?;
     let lhs_path = write_entity_source(temp_dir.path(), "lhs", &change.lhs.source_text)?;
     let rhs_path = write_entity_source(temp_dir.path(), "rhs", &change.rhs.source_text)?;

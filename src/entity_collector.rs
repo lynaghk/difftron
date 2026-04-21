@@ -126,6 +126,19 @@ pub fn render_entity(entity: &Entity) -> String {
     }
 }
 
+pub fn entity_kind_name(detail: &EntityDetail) -> &'static str {
+    match detail {
+        EntityDetail::Module { .. } => "module",
+        EntityDetail::Function { .. } => "function",
+        EntityDetail::Struct { .. } => "struct",
+        EntityDetail::Enum { .. } => "enum",
+        EntityDetail::Union { .. } => "union",
+        EntityDetail::Trait { .. } => "trait",
+        EntityDetail::TypeAlias { .. } => "type_alias",
+        EntityDetail::Impl { .. } => "impl",
+    }
+}
+
 fn collect_target_entities(
     repo: &dyn SourceRepo,
     target: &TargetRoot,

@@ -6,12 +6,14 @@ use std::{
 mod difftastic_renderer;
 mod entity_collector;
 mod logging;
+mod output;
 mod project_discovery;
 mod snapshot;
 mod source_repo;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use output::OutputFormat;
 use snapshot::{
     SnapshotSpec, build_snapshot, diff_snapshots, render_diff_raw, resolve_snapshot_spec,
     snapshot_label,
@@ -31,7 +33,7 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::List(args)) => run_list(&resolve_snapshot_spec(&args.snapshot, &cwd)?),
+        Some(Command::List(args)) => run_list(&resolve_snapshot_spec(&args.snapshot, &cwd)?, cli.format),
         Some(Command::Diff(args)) => {
             let lhs = resolve_snapshot_spec(&args.lhs, &cwd)?;
             let rhs = resolve_snapshot_spec(&args.rhs, &cwd)?;
@@ -40,19 +42,19 @@ fn run() -> Result<()> {
                 .into_iter()
                 .map(|path| normalize_filter_path(&path))
                 .collect::<Vec<_>>();
-            run_diff(&lhs, &rhs, &paths, args.raw)
+            run_diff(&lhs, &rhs, &paths, args.raw, cli.format)
         }
         None => {
             let snapshot = cli
                 .snapshot
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("missing required argument: <PATH_OR_REV>"))?;
-            run_list(&resolve_snapshot_spec(snapshot, &cwd)?)
+            run_list(&resolve_snapshot_spec(snapshot, &cwd)?, cli.format)
         }
     }
 }
 
-fn run_list(spec: &SnapshotSpec) -> Result<()> {
+fn run_list(spec: &SnapshotSpec, format: OutputFormat) -> Result<()> {
     let run_span = info_span!("run_list", snapshot = %snapshot_label(spec));
     let _run_span = run_span.entered();
 
@@ -62,9 +64,7 @@ fn run_list(spec: &SnapshotSpec) -> Result<()> {
 
     let render_span = info_span!("render_entities", entity_count = snapshot.entities.len());
     let _render_span = render_span.entered();
-    for entity in snapshot.entities {
-        println!("{}", entity_collector::render_entity(&entity));
-    }
+    print!("{}", output::render_list(spec, &snapshot, format)?);
     info!("finished rendering entities");
 
     Ok(())
@@ -75,7 +75,12 @@ fn run_diff(
     rhs: &SnapshotSpec,
     path_filters: &[PathBuf],
     raw: bool,
+    format: OutputFormat,
 ) -> Result<()> {
+    if raw && format == OutputFormat::Json {
+        anyhow::bail!("--raw cannot be used with --format json");
+    }
+
     let run_span = info_span!(
         "run_diff",
         lhs = %snapshot_label(lhs),
@@ -112,7 +117,7 @@ fn run_diff(
             println!("{line}");
         }
     } else {
-        print!("{}", difftastic_renderer::render_diff(&diff)?);
+        print!("{}", output::render_diff(lhs, rhs, &diff, format)?);
     }
 
     Ok(())
@@ -125,6 +130,8 @@ struct Cli {
     command: Option<Command>,
     #[arg(value_name = "PATH_OR_REV")]
     snapshot: Option<String>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text, global = true)]
+    format: OutputFormat,
 }
 
 #[derive(Debug, Subcommand)]
