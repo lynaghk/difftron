@@ -1,6 +1,8 @@
 use anyhow::Result;
 use time::{OffsetDateTime, macros::format_description};
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::Layer;
+use tracing_subscriber::filter::filter_fn;
 use tracing_tree::HierarchicalLayer;
 use tracing_tree::time::{FormatTime, Uptime};
 
@@ -29,11 +31,14 @@ impl FormatTime for LocalTimeMillis {
 }
 
 pub fn init() -> Result<()> {
+    const APP_TARGET_PREFIX: &str = "rust_dive";
+
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("rust_dive=info"));
+    let app_only = filter_fn(|metadata| metadata.target().starts_with(APP_TARGET_PREFIX));
 
     tracing_subscriber::registry()
         .with(filter)
@@ -42,7 +47,8 @@ pub fn init() -> Result<()> {
                 .with_timer(LocalTimeMillis)
                 .with_indent_lines(true)
                 .with_targets(true)
-                .with_thread_names(true),
+                .with_thread_names(true)
+                .with_filter(app_only),
         )
         .try_init()?;
 
