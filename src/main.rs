@@ -1,24 +1,17 @@
 use std::{
-    env,
+    collections::HashSet,
+    env, fs,
     path::{Path, PathBuf},
 };
 
 mod logging;
 
 use anyhow::{Context, Result, bail};
-use ra_ap_hir::{
-    Adt, AssocItem, Crate, Function, HasContainer, HasSource, Impl, Module, ModuleDef, Trait,
-    TypeAlias,
-};
-use ra_ap_ide::{Edition, FileId, RootDatabase};
-use ra_ap_ide_db::{base_db::SourceDatabase, line_index};
-use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
-use ra_ap_project_model::CargoConfig;
+use cargo_metadata::{MetadataCommand, Package, PackageId, Target, TargetKind};
 use ra_ap_syntax::{
-    AstNode,
-    ast::{self, HasName},
+    AstNode, Edition, SourceFile, TextRange, TextSize,
+    ast::{self, HasAttrs, HasModuleItem, HasName},
 };
-use ra_ap_vfs::Vfs;
 use tracing::{info, info_span};
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -49,9 +42,28 @@ enum EntityDetail {
     Impl { header: String, items: Vec<String> },
 }
 
+#[derive(Debug, Clone)]
 struct LoadedProject {
-    db: RootDatabase,
-    vfs: Vfs,
+    targets: Vec<TargetRoot>,
+}
+
+#[derive(Debug, Clone)]
+struct TargetRoot {
+    crate_name: String,
+    root_file: PathBuf,
+}
+
+#[derive(Debug)]
+struct ParsedFile {
+    path: PathBuf,
+    source_file: SourceFile,
+    line_starts: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct TraversalContext {
+    modules: Vec<String>,
+    container: Option<String>,
 }
 
 fn main() {
@@ -69,7 +81,7 @@ fn run() -> Result<()> {
 
     info!("loading project");
     let project = load_project(&input_path)?;
-    let entities = collect_entities(&project);
+    let entities = collect_entities(&project)?;
     info!(entity_count = entities.len(), "collected entities");
 
     let render_span = info_span!("render_entities", entity_count = entities.len());
@@ -99,286 +111,480 @@ fn parse_path_arg() -> Result<PathBuf> {
 
 fn load_project(path: &Path) -> Result<LoadedProject> {
     let _span = info_span!("load_project", path = %path.display()).entered();
-    let cargo_config = CargoConfig {
-        no_deps: true,
-        ..CargoConfig::default()
-    };
-    let load_config = LoadCargoConfig {
-        load_out_dirs_from_check: false,
-        with_proc_macro_server: ProcMacroServerChoice::None,
-        prefill_caches: false,
-        num_worker_threads: 1,
-        proc_macro_processes: 1,
-    };
-
-    let (db, vfs, _proc_macros) = load_workspace_at(path, &cargo_config, &load_config, &|_| {})
-        .with_context(|| format!("failed to load Rust workspace at {}", path.display()))?;
-
-    info!("workspace loaded");
-    Ok(LoadedProject { db, vfs })
+    let metadata = cargo_metadata(path)?;
+    let targets = workspace_targets(&metadata);
+    info!(target_count = targets.len(), "workspace loaded");
+    Ok(LoadedProject { targets })
 }
 
-fn collect_entities(project: &LoadedProject) -> Vec<Entity> {
+fn cargo_metadata(path: &Path) -> Result<cargo_metadata::Metadata> {
+    let mut command = MetadataCommand::new();
+    command.no_deps();
+
+    if path.is_file() {
+        command.manifest_path(path);
+    } else {
+        let manifest_path = path.join("Cargo.toml");
+        if manifest_path.exists() {
+            command.manifest_path(manifest_path);
+        } else {
+            command.current_dir(path);
+        }
+    }
+
+    command.exec().context("failed to run cargo metadata")
+}
+
+fn workspace_targets(metadata: &cargo_metadata::Metadata) -> Vec<TargetRoot> {
+    let workspace_members: HashSet<&PackageId> = metadata.workspace_members.iter().collect();
+    let packages_by_id = metadata
+        .packages
+        .iter()
+        .map(|package| (&package.id, package))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    let mut targets = workspace_members
+        .into_iter()
+        .filter_map(|id| packages_by_id.get(id).copied())
+        .flat_map(target_roots_for_package)
+        .collect::<Vec<_>>();
+
+    targets.sort_by(|left, right| {
+        left.crate_name
+            .cmp(&right.crate_name)
+            .then_with(|| left.root_file.cmp(&right.root_file))
+    });
+    targets
+}
+
+fn target_roots_for_package(package: &Package) -> Vec<TargetRoot> {
+    package
+        .targets
+        .iter()
+        .filter(|target| is_supported_target(target))
+        .map(|target| TargetRoot {
+            crate_name: target.name.replace('-', "_"),
+            root_file: target.src_path.as_std_path().to_path_buf(),
+        })
+        .collect()
+}
+
+fn is_supported_target(target: &Target) -> bool {
+    target.src_path.extension().is_some_and(|ext| ext == "rs")
+        && target.kind.iter().any(|kind| {
+            matches!(
+                kind,
+                TargetKind::Lib
+                    | TargetKind::Bin
+                    | TargetKind::Example
+                    | TargetKind::Test
+                    | TargetKind::Bench
+            )
+        })
+}
+
+fn collect_entities(project: &LoadedProject) -> Result<Vec<Entity>> {
     let _span = info_span!("collect_entities").entered();
     let mut entities = Vec::new();
-    let crates = workspace_crates(&project.db);
 
-    info!(crate_count = crates.len(), "collecting workspace crates");
+    info!(
+        crate_count = project.targets.len(),
+        "collecting workspace crates"
+    );
 
-    for krate in crates {
-        let crate_name = crate_name(&project.db, krate);
-        let crate_span = info_span!("collect_crate", crate_name = %crate_name);
+    for target in &project.targets {
+        let crate_span = info_span!("collect_crate", crate_name = %target.crate_name);
         let _crate_span = crate_span.entered();
-        for module in krate.modules(&project.db) {
-            entities.push(module_entity(project, module));
-            collect_module_entities(project, module, &mut entities);
-        }
-
-        for impl_def in Impl::all_in_crate(&project.db, krate) {
-            entities.push(impl_entity(project, impl_def));
-
-            for item in impl_def.items(&project.db) {
-                if let AssocItem::Function(function) = item {
-                    entities.push(function_entity(project, function));
-                }
-            }
-        }
-
+        let mut visited = HashSet::new();
+        collect_target_entities(target, &mut visited, &mut entities)?;
         info!(entity_count = entities.len(), "finished crate");
     }
 
     entities.sort();
     info!(entity_count = entities.len(), "entity collection complete");
-    entities
+    Ok(entities)
 }
 
-fn collect_module_entities(project: &LoadedProject, module: Module, entities: &mut Vec<Entity>) {
-    let module_name = module
-        .name(&project.db)
-        .map(|name| name_text(&name))
-        .unwrap_or_else(|| "<crate-root>".to_owned());
-    let _span = info_span!("collect_module", module = %module_name).entered();
+fn collect_target_entities(
+    target: &TargetRoot,
+    visited: &mut HashSet<PathBuf>,
+    entities: &mut Vec<Entity>,
+) -> Result<()> {
+    let parsed = parse_file(&target.root_file)?;
+    visited.insert(parsed.path.clone());
+    entities.push(Entity {
+        name: target.crate_name.clone(),
+        location: source_location(&parsed, parsed.source_file.syntax().text_range()),
+        detail: EntityDetail::Module { is_inline: false },
+    });
 
-    for declaration in module.declarations(&project.db) {
-        match declaration {
-            ModuleDef::Function(function) => entities.push(function_entity(project, function)),
-            ModuleDef::Adt(adt) => entities.push(adt_entity(project, adt)),
-            ModuleDef::Trait(trait_def) => {
-                entities.push(trait_entity(project, trait_def));
-
-                for item in trait_def.items(&project.db) {
-                    if let AssocItem::Function(function) = item {
-                        entities.push(function_entity(project, function));
-                    }
-                }
-            }
-            ModuleDef::TypeAlias(type_alias) => {
-                entities.push(type_alias_entity(project, type_alias))
-            }
-            ModuleDef::Module(_) => {}
-            ModuleDef::EnumVariant(_)
-            | ModuleDef::Const(_)
-            | ModuleDef::Static(_)
-            | ModuleDef::Macro(_)
-            | ModuleDef::BuiltinType(_) => {}
-        }
-    }
-}
-
-fn module_entity(project: &LoadedProject, module: Module) -> Entity {
-    Entity {
-        name: module_path(&project.db, module),
-        location: module_location(project, module),
-        detail: EntityDetail::Module {
-            is_inline: module.is_inline(&project.db),
-        },
-    }
-}
-
-fn function_entity(project: &LoadedProject, function: Function) -> Entity {
-    Entity {
-        name: function_path(project, function),
-        location: node_location(project, function.source(&project.db)),
-        detail: EntityDetail::Function {
-            signature: function_signature(function, &project.db),
-        },
-    }
-}
-
-fn adt_entity(project: &LoadedProject, adt: Adt) -> Entity {
-    match adt {
-        Adt::Struct(struct_def) => Entity {
-            name: item_path(
-                &project.db,
-                struct_def.module(&project.db),
-                &name_text(&struct_def.name(&project.db)),
-            ),
-            location: node_location(project, struct_def.source(&project.db)),
-            detail: EntityDetail::Struct {
-                fields: struct_fields(&project.db, struct_def),
-            },
-        },
-        Adt::Enum(enum_def) => Entity {
-            name: item_path(
-                &project.db,
-                enum_def.module(&project.db),
-                &name_text(&enum_def.name(&project.db)),
-            ),
-            location: node_location(project, enum_def.source(&project.db)),
-            detail: EntityDetail::Enum {
-                variants: enum_variants(&project.db, enum_def),
-            },
-        },
-        Adt::Union(union_def) => Entity {
-            name: item_path(
-                &project.db,
-                union_def.module(&project.db),
-                &name_text(&union_def.name(&project.db)),
-            ),
-            location: node_location(project, union_def.source(&project.db)),
-            detail: EntityDetail::Union {
-                fields: union_fields(&project.db, union_def),
-            },
-        },
-    }
-}
-
-fn trait_entity(project: &LoadedProject, trait_def: Trait) -> Entity {
-    Entity {
-        name: item_path(
-            &project.db,
-            trait_def.module(&project.db),
-            &name_text(&trait_def.name(&project.db)),
-        ),
-        location: node_location(project, trait_def.source(&project.db)),
-        detail: EntityDetail::Trait {
-            items: trait_items(project, trait_def),
-        },
-    }
-}
-
-fn type_alias_entity(project: &LoadedProject, type_alias: TypeAlias) -> Entity {
-    Entity {
-        name: item_path(
-            &project.db,
-            type_alias.module(&project.db),
-            &name_text(&type_alias.name(&project.db)),
-        ),
-        location: node_location(project, type_alias.source(&project.db)),
-        detail: EntityDetail::TypeAlias {
-            target: type_alias_target(project, type_alias),
-        },
-    }
-}
-
-fn impl_entity(project: &LoadedProject, impl_def: Impl) -> Entity {
-    Entity {
-        name: impl_name(project, impl_def),
-        location: node_location(project, impl_def.source(&project.db)),
-        detail: EntityDetail::Impl {
-            header: impl_header(project, impl_def),
-            items: impl_items(project, impl_def),
-        },
-    }
-}
-
-fn workspace_crates(db: &RootDatabase) -> Vec<Crate> {
-    let mut crates = Crate::all(db)
-        .into_iter()
-        .filter(|krate| is_workspace_crate(db, *krate))
-        .collect::<Vec<_>>();
-
-    crates.sort_by_key(|krate| crate_name(db, *krate));
-    crates
-}
-
-fn is_workspace_crate(db: &RootDatabase, krate: Crate) -> bool {
-    let root_file = krate.base().data(db).root_file_id;
-    let source_root_id = db.file_source_root(root_file).source_root_id(db);
-    !db.source_root(source_root_id).source_root(db).is_library
-}
-
-fn crate_name(db: &RootDatabase, krate: Crate) -> String {
-    krate
-        .display_name(db)
-        .map(|name| name.to_string())
-        .unwrap_or_else(|| "<unnamed>".to_owned())
-}
-
-fn module_path(db: &RootDatabase, module: Module) -> String {
-    let mut segments = Vec::new();
-    segments.push(crate_name(db, module.krate(db)));
-    segments.extend(module_path_segments(db, module));
-    segments.join("::")
-}
-
-fn item_path(db: &RootDatabase, module: Module, item_name: &str) -> String {
-    let mut segments = Vec::new();
-    segments.push(crate_name(db, module.krate(db)));
-    segments.extend(module_path_segments(db, module));
-    segments.push(item_name.to_owned());
-    segments.join("::")
-}
-
-fn function_path(project: &LoadedProject, function: Function) -> String {
-    let db = &project.db;
-    let module = function.module(db);
-    let mut segments = Vec::new();
-    segments.push(crate_name(db, module.krate(db)));
-    segments.extend(module_path_segments(db, module));
-
-    match function.container(db) {
-        ra_ap_hir::ItemContainer::Trait(trait_def) => {
-            segments.push(name_text(&trait_def.name(db)));
-        }
-        ra_ap_hir::ItemContainer::Impl(impl_def) => {
-            segments.push(impl_container_name(project, impl_def));
-        }
-        ra_ap_hir::ItemContainer::Module(_)
-        | ra_ap_hir::ItemContainer::ExternBlock(_)
-        | ra_ap_hir::ItemContainer::Crate(_) => {}
-    }
-
-    segments.push(name_text(&function.name(db)));
-    segments.join("::")
-}
-
-fn impl_name(project: &LoadedProject, impl_def: Impl) -> String {
-    format!(
-        "{}::{}",
-        module_path(&project.db, impl_def.module(&project.db)),
-        impl_header(project, impl_def)
+    collect_items(
+        target,
+        &parsed,
+        parsed.source_file.items().collect(),
+        &TraversalContext::default(),
+        visited,
+        entities,
     )
 }
 
-fn impl_container_name(project: &LoadedProject, impl_def: Impl) -> String {
-    let header = impl_header(project, impl_def);
-    if let Some((_, rhs)) = header.split_once(" for ") {
-        return rhs.trim().to_owned();
+fn parse_file(path: &Path) -> Result<ParsedFile> {
+    let text =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let source_file = SourceFile::parse(&text, Edition::CURRENT).tree();
+    let line_starts = compute_line_starts(&text);
+
+    Ok(ParsedFile {
+        path: path.to_path_buf(),
+        source_file,
+        line_starts,
+    })
+}
+
+fn compute_line_starts(text: &str) -> Vec<usize> {
+    let mut starts = vec![0];
+    for (idx, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            starts.push(idx + 1);
+        }
     }
-    header
-        .strip_prefix("impl")
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| "<impl>".to_owned())
+    starts
 }
 
-fn module_path_segments(db: &RootDatabase, module: Module) -> Vec<String> {
-    module
-        .path_to_root(db)
-        .into_iter()
-        .rev()
-        .filter_map(|module| module.name(db).map(|name| name_text(&name)))
-        .collect()
+fn collect_items(
+    target: &TargetRoot,
+    parsed: &ParsedFile,
+    items: Vec<ast::Item>,
+    context: &TraversalContext,
+    visited: &mut HashSet<PathBuf>,
+    entities: &mut Vec<Entity>,
+) -> Result<()> {
+    let module_name = context
+        .modules
+        .last()
+        .cloned()
+        .unwrap_or_else(|| "<crate-root>".to_owned());
+    let _span = info_span!("collect_module", module = %module_name).entered();
+
+    for item in items {
+        if is_test_only(&item) {
+            continue;
+        }
+
+        match item {
+            ast::Item::Fn(function) => {
+                entities.push(function_entity(target, parsed, &function, context));
+            }
+            ast::Item::Struct(struct_def) => {
+                entities.push(struct_entity(target, parsed, &struct_def, context));
+            }
+            ast::Item::Enum(enum_def) => {
+                entities.push(enum_entity(target, parsed, &enum_def, context));
+            }
+            ast::Item::Union(union_def) => {
+                entities.push(union_entity(target, parsed, &union_def, context));
+            }
+            ast::Item::Trait(trait_def) => {
+                entities.push(trait_entity(target, parsed, &trait_def, context));
+                let mut nested = context.clone();
+                nested.container = Some(ast_name(&trait_def));
+                collect_assoc_functions(
+                    target,
+                    parsed,
+                    trait_def
+                        .assoc_item_list()
+                        .map(|list| list.assoc_items().collect())
+                        .unwrap_or_default(),
+                    &nested,
+                    entities,
+                );
+            }
+            ast::Item::TypeAlias(type_alias) => {
+                entities.push(type_alias_entity(target, parsed, &type_alias, context));
+            }
+            ast::Item::Impl(impl_def) => {
+                entities.push(impl_entity(target, parsed, &impl_def, context));
+                let mut nested = context.clone();
+                nested.container = Some(impl_container_name(&impl_def));
+                collect_assoc_functions(
+                    target,
+                    parsed,
+                    impl_def
+                        .assoc_item_list()
+                        .map(|list| list.assoc_items().collect())
+                        .unwrap_or_default(),
+                    &nested,
+                    entities,
+                );
+            }
+            ast::Item::Module(module) => {
+                entities.push(module_entity(target, parsed, &module, context));
+                if let Some(item_list) = module.item_list() {
+                    let mut nested = context.clone();
+                    nested.modules.push(ast_name(&module));
+                    collect_items(
+                        target,
+                        parsed,
+                        item_list.items().collect(),
+                        &nested,
+                        visited,
+                        entities,
+                    )?;
+                } else if let Some(module_file) = resolve_module_file(&parsed.path, &module) {
+                    let module_file = fs::canonicalize(&module_file).unwrap_or(module_file);
+                    if visited.insert(module_file.clone()) {
+                        let nested_file = parse_file(&module_file)?;
+                        let mut nested = context.clone();
+                        nested.modules.push(ast_name(&module));
+                        collect_items(
+                            target,
+                            &nested_file,
+                            nested_file.source_file.items().collect(),
+                            &nested,
+                            visited,
+                            entities,
+                        )?;
+                    }
+                }
+            }
+            ast::Item::Const(_)
+            | ast::Item::ExternBlock(_)
+            | ast::Item::ExternCrate(_)
+            | ast::Item::MacroCall(_)
+            | ast::Item::MacroDef(_)
+            | ast::Item::MacroRules(_)
+            | ast::Item::Static(_)
+            | ast::Item::Use(_)
+            | ast::Item::AsmExpr(_) => {}
+        }
+    }
+
+    Ok(())
 }
 
-fn function_signature(function: Function, db: &RootDatabase) -> String {
-    let Some(source) = function.source(db) else {
-        return "()".to_owned();
+fn collect_assoc_functions(
+    target: &TargetRoot,
+    parsed: &ParsedFile,
+    assoc_items: Vec<ast::AssocItem>,
+    context: &TraversalContext,
+    entities: &mut Vec<Entity>,
+) {
+    for item in assoc_items {
+        if is_test_only(&item) {
+            continue;
+        }
+
+        if let ast::AssocItem::Fn(function) = item {
+            entities.push(function_entity(target, parsed, &function, context));
+        }
+    }
+}
+
+fn module_entity(
+    target: &TargetRoot,
+    parsed: &ParsedFile,
+    module: &ast::Module,
+    context: &TraversalContext,
+) -> Entity {
+    Entity {
+        name: qualified_name(target, context, &ast_name(module)),
+        location: source_location(parsed, module.syntax().text_range()),
+        detail: EntityDetail::Module {
+            is_inline: module.item_list().is_some(),
+        },
+    }
+}
+
+fn function_entity(
+    target: &TargetRoot,
+    parsed: &ParsedFile,
+    function: &ast::Fn,
+    context: &TraversalContext,
+) -> Entity {
+    let mut name = path_prefix(target, context);
+    if let Some(container) = &context.container {
+        name.push(container.clone());
+    }
+    name.push(ast_name(function));
+
+    Entity {
+        name: name.join("::"),
+        location: source_location(parsed, function.syntax().text_range()),
+        detail: EntityDetail::Function {
+            signature: function_signature(function),
+        },
+    }
+}
+
+fn struct_entity(
+    target: &TargetRoot,
+    parsed: &ParsedFile,
+    struct_def: &ast::Struct,
+    context: &TraversalContext,
+) -> Entity {
+    Entity {
+        name: qualified_name(target, context, &ast_name(struct_def)),
+        location: source_location(parsed, struct_def.syntax().text_range()),
+        detail: EntityDetail::Struct {
+            fields: struct_def
+                .field_list()
+                .map(field_list_strings)
+                .unwrap_or_default(),
+        },
+    }
+}
+
+fn enum_entity(
+    target: &TargetRoot,
+    parsed: &ParsedFile,
+    enum_def: &ast::Enum,
+    context: &TraversalContext,
+) -> Entity {
+    Entity {
+        name: qualified_name(target, context, &ast_name(enum_def)),
+        location: source_location(parsed, enum_def.syntax().text_range()),
+        detail: EntityDetail::Enum {
+            variants: enum_def
+                .variant_list()
+                .map(|variants| {
+                    variants
+                        .variants()
+                        .map(|variant| match variant.field_list() {
+                            Some(field_list) => {
+                                format!("{}{}", ast_name(&variant), field_list.syntax().text())
+                            }
+                            None => ast_name(&variant),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        },
+    }
+}
+
+fn union_entity(
+    target: &TargetRoot,
+    parsed: &ParsedFile,
+    union_def: &ast::Union,
+    context: &TraversalContext,
+) -> Entity {
+    Entity {
+        name: qualified_name(target, context, &ast_name(union_def)),
+        location: source_location(parsed, union_def.syntax().text_range()),
+        detail: EntityDetail::Union {
+            fields: union_def
+                .record_field_list()
+                .map(|fields| {
+                    fields
+                        .fields()
+                        .map(|field| field.syntax().text().to_string())
+                        .collect()
+                })
+                .unwrap_or_default(),
+        },
+    }
+}
+
+fn trait_entity(
+    target: &TargetRoot,
+    parsed: &ParsedFile,
+    trait_def: &ast::Trait,
+    context: &TraversalContext,
+) -> Entity {
+    Entity {
+        name: qualified_name(target, context, &ast_name(trait_def)),
+        location: source_location(parsed, trait_def.syntax().text_range()),
+        detail: EntityDetail::Trait {
+            items: trait_def
+                .assoc_item_list()
+                .map(|items| {
+                    items
+                        .assoc_items()
+                        .map(|item| item.syntax().text().to_string())
+                        .collect()
+                })
+                .unwrap_or_default(),
+        },
+    }
+}
+
+fn type_alias_entity(
+    target: &TargetRoot,
+    parsed: &ParsedFile,
+    type_alias: &ast::TypeAlias,
+    context: &TraversalContext,
+) -> Entity {
+    Entity {
+        name: qualified_name(target, context, &ast_name(type_alias)),
+        location: source_location(parsed, type_alias.syntax().text_range()),
+        detail: EntityDetail::TypeAlias {
+            target: type_alias
+                .ty()
+                .map(|ty| ty.syntax().text().to_string())
+                .unwrap_or_default(),
+        },
+    }
+}
+
+fn impl_entity(
+    target: &TargetRoot,
+    parsed: &ParsedFile,
+    impl_def: &ast::Impl,
+    context: &TraversalContext,
+) -> Entity {
+    let header = impl_header(impl_def);
+    Entity {
+        name: format!("{}::{}", path_prefix(target, context).join("::"), header),
+        location: source_location(parsed, impl_def.syntax().text_range()),
+        detail: EntityDetail::Impl {
+            header,
+            items: impl_def
+                .assoc_item_list()
+                .map(|items| {
+                    items
+                        .assoc_items()
+                        .map(|item| item.syntax().text().to_string())
+                        .collect()
+                })
+                .unwrap_or_default(),
+        },
+    }
+}
+
+fn resolve_module_file(current_file: &Path, module: &ast::Module) -> Option<PathBuf> {
+    let module_name = module.name()?.text().to_string();
+    let parent_dir = current_file.parent()?;
+    let is_root_like = current_file
+        .file_stem()
+        .is_some_and(|stem| stem == "mod" || stem == "lib" || stem == "main");
+    let search_dir = if is_root_like {
+        parent_dir.to_path_buf()
+    } else {
+        parent_dir.join(current_file.file_stem()?)
     };
-    let params = source
-        .value
+
+    let candidates = [
+        search_dir.join(format!("{module_name}.rs")),
+        search_dir.join(module_name).join("mod.rs"),
+    ];
+
+    candidates.into_iter().find(|candidate| candidate.exists())
+}
+
+fn path_prefix(target: &TargetRoot, context: &TraversalContext) -> Vec<String> {
+    let mut parts = vec![target.crate_name.clone()];
+    parts.extend(context.modules.iter().cloned());
+    parts
+}
+
+fn qualified_name(target: &TargetRoot, context: &TraversalContext, name: &str) -> String {
+    let mut parts = path_prefix(target, context);
+    parts.push(name.to_owned());
+    parts.join("::")
+}
+
+fn function_signature(function: &ast::Fn) -> String {
+    let params = function
         .param_list()
         .map(|param_list| {
             param_list
@@ -388,8 +594,7 @@ fn function_signature(function: Function, db: &RootDatabase) -> String {
                 .join(", ")
         })
         .unwrap_or_default();
-    let ret = source
-        .value
+    let ret = function
         .ret_type()
         .map(|ret_type| ret_type.syntax().text().to_string())
         .unwrap_or_default();
@@ -401,95 +606,30 @@ fn function_signature(function: Function, db: &RootDatabase) -> String {
     }
 }
 
-fn struct_fields(db: &RootDatabase, struct_def: ra_ap_hir::Struct) -> Vec<String> {
-    struct_def
-        .source(db)
-        .and_then(|source| source.value.field_list())
-        .map(field_list_strings)
-        .unwrap_or_default()
-}
-
-fn union_fields(db: &RootDatabase, union_def: ra_ap_hir::Union) -> Vec<String> {
-    union_def
-        .source(db)
-        .and_then(|source| source.value.record_field_list())
-        .map(|fields| {
-            fields
-                .fields()
-                .map(|field| field.syntax().text().to_string())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn enum_variants(db: &RootDatabase, enum_def: ra_ap_hir::Enum) -> Vec<String> {
-    enum_def
-        .source(db)
-        .and_then(|source| source.value.variant_list())
-        .map(|variants| {
-            variants
-                .variants()
-                .map(|variant| match variant.field_list() {
-                    Some(field_list) => {
-                        format!("{}{}", ast_name(&variant), field_list.syntax().text())
-                    }
-                    None => ast_name(&variant),
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn trait_items(project: &LoadedProject, trait_def: Trait) -> Vec<String> {
-    trait_def
-        .source(&project.db)
-        .and_then(|source| source.value.assoc_item_list())
-        .map(|items| {
-            items
-                .assoc_items()
-                .map(|item| item.syntax().text().to_string())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn type_alias_target(project: &LoadedProject, type_alias: TypeAlias) -> String {
-    type_alias
-        .source(&project.db)
-        .and_then(|source| source.value.ty())
-        .map(|ty| ty.syntax().text().to_string())
-        .unwrap_or_default()
-}
-
-fn impl_header(project: &LoadedProject, impl_def: Impl) -> String {
-    impl_def
-        .source(&project.db)
-        .map(|source| {
-            let syntax = source.value.syntax().text().to_string();
+fn impl_header(impl_def: &ast::Impl) -> String {
+    let syntax = impl_def.syntax().text().to_string();
+    syntax
+        .split_once('{')
+        .map(|(header, _)| header.trim().to_owned())
+        .or_else(|| {
             syntax
-                .split_once('{')
+                .split_once(';')
                 .map(|(header, _)| header.trim().to_owned())
-                .or_else(|| {
-                    syntax
-                        .split_once(';')
-                        .map(|(header, _)| header.trim().to_owned())
-                })
-                .unwrap_or_else(|| syntax.trim().to_owned())
         })
-        .unwrap_or_else(|| "impl <unknown>".to_owned())
+        .unwrap_or_else(|| syntax.trim().to_owned())
 }
 
-fn impl_items(project: &LoadedProject, impl_def: Impl) -> Vec<String> {
-    impl_def
-        .source(&project.db)
-        .and_then(|source| source.value.assoc_item_list())
-        .map(|items| {
-            items
-                .assoc_items()
-                .map(|item| item.syntax().text().to_string())
-                .collect()
-        })
-        .unwrap_or_default()
+fn impl_container_name(impl_def: &ast::Impl) -> String {
+    let header = impl_header(impl_def);
+    if let Some((_, rhs)) = header.split_once(" for ") {
+        return rhs.trim().to_owned();
+    }
+    header
+        .strip_prefix("impl")
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| "<impl>".to_owned())
 }
 
 fn field_list_strings(field_list: ast::FieldList) -> Vec<String> {
@@ -505,78 +645,27 @@ fn field_list_strings(field_list: ast::FieldList) -> Vec<String> {
     }
 }
 
-fn module_location(project: &LoadedProject, module: Module) -> SourceLocation {
-    if let Some(declaration) = module.declaration_source(&project.db) {
-        return source_location(
-            &project.db,
-            &project.vfs,
-            declaration
-                .file_id
-                .original_file(&project.db)
-                .file_id(&project.db),
-            declaration.value.syntax().text_range(),
-        );
-    }
-
-    let definition_range = module.definition_source_range(&project.db);
-    source_location(
-        &project.db,
-        &project.vfs,
-        definition_range
-            .file_id
-            .original_file(&project.db)
-            .file_id(&project.db),
-        definition_range.value,
-    )
-}
-
-fn node_location<N: AstNode>(
-    project: &LoadedProject,
-    source: Option<ra_ap_hir::InFile<N>>,
-) -> SourceLocation {
-    if let Some(source) = source {
-        return source_location(
-            &project.db,
-            &project.vfs,
-            source
-                .file_id
-                .original_file(&project.db)
-                .file_id(&project.db),
-            source.value.syntax().text_range(),
-        );
-    }
+fn source_location(parsed: &ParsedFile, range: TextRange) -> SourceLocation {
+    let start = line_col(&parsed.line_starts, range.start());
+    let end = line_col(&parsed.line_starts, range.end());
 
     SourceLocation {
-        file_path: PathBuf::new(),
-        start_line: 0,
-        start_col: 0,
-        end_line: 0,
-        end_col: 0,
+        file_path: parsed.path.clone(),
+        start_line: start.0,
+        start_col: start.1,
+        end_line: end.0,
+        end_col: end.1,
     }
 }
 
-fn source_location(
-    db: &RootDatabase,
-    vfs: &Vfs,
-    file_id: FileId,
-    range: ra_ap_ide::TextRange,
-) -> SourceLocation {
-    let index = line_index(db, file_id);
-    let start = index.line_col(range.start());
-    let end = index.line_col(range.end());
-    let file_path: PathBuf = vfs
-        .file_path(file_id)
-        .as_path()
-        .map(|path| PathBuf::from(<ra_ap_vfs::AbsPath as AsRef<Path>>::as_ref(path)))
-        .unwrap_or_else(|| PathBuf::from(vfs.file_path(file_id).to_string()));
-
-    SourceLocation {
-        file_path,
-        start_line: start.line as u32 + 1,
-        start_col: start.col as u32 + 1,
-        end_line: end.line as u32 + 1,
-        end_col: end.col as u32 + 1,
-    }
+fn line_col(line_starts: &[usize], offset: TextSize) -> (u32, u32) {
+    let offset = usize::from(offset);
+    let line_index = match line_starts.binary_search(&offset) {
+        Ok(idx) => idx,
+        Err(idx) => idx.saturating_sub(1),
+    };
+    let line_start = line_starts[line_index];
+    (line_index as u32 + 1, (offset - line_start) as u32 + 1)
 }
 
 fn render_entity(entity: &Entity) -> String {
@@ -654,6 +743,9 @@ fn ast_name<N: HasName>(node: &N) -> String {
         .unwrap_or_else(|| "<anonymous>".to_owned())
 }
 
-fn name_text(name: &ra_ap_hir::Name) -> String {
-    name.display_no_db(Edition::CURRENT).to_string()
+fn is_test_only<N: HasAttrs>(node: &N) -> bool {
+    node.attrs().any(|attr| {
+        let text = attr.syntax().text().to_string();
+        text.contains("cfg(test)") || text.contains("cfg(any(test") || text.contains("cfg(all(test")
+    })
 }
