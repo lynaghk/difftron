@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use tracing::{info, info_span};
 
 use crate::{
-    entity_collector::{Entity, collect_entities},
+    entity_collector::{Entity, EntityDetail, collect_entities},
     project_discovery::discover_targets,
     source_repo::{FsSourceRepo, GitTreeSourceRepo, SourceRepo},
 };
@@ -99,25 +99,25 @@ pub fn diff_snapshots(lhs: &Snapshot, rhs: &Snapshot, path_filters: &[PathBuf]) 
     let lhs_entities = filtered_entities(lhs, path_filters);
     let rhs_entities = filtered_entities(rhs, path_filters);
 
-    let mut lhs_by_name = group_by_name(lhs_entities);
-    let mut rhs_by_name = group_by_name(rhs_entities);
+    let mut lhs_by_identity = group_by_identity(lhs_entities);
+    let mut rhs_by_identity = group_by_identity(rhs_entities);
 
     let mut added = Vec::new();
     let mut deleted = Vec::new();
     let mut modified = Vec::new();
 
-    let names = lhs_by_name
+    let identities = lhs_by_identity
         .keys()
-        .chain(rhs_by_name.keys())
+        .chain(rhs_by_identity.keys())
         .cloned()
         .collect::<BTreeSet<_>>();
 
-    for name in names {
-        let mut lhs_group = lhs_by_name.remove(&name).unwrap_or_default();
-        let mut rhs_group = rhs_by_name.remove(&name).unwrap_or_default();
+    for identity in identities {
+        let mut lhs_group = lhs_by_identity.remove(&identity).unwrap_or_default();
+        let mut rhs_group = rhs_by_identity.remove(&identity).unwrap_or_default();
 
         while !lhs_group.is_empty() && !rhs_group.is_empty() {
-            if let Some((lhs_index, rhs_index)) = find_exact_pair(&lhs_group, &rhs_group) {
+            if let Some((lhs_index, rhs_index)) = find_matching_pair(&lhs_group, &rhs_group) {
                 lhs_group.remove(lhs_index);
                 rhs_group.remove(rhs_index);
             } else {
@@ -206,21 +206,21 @@ fn filtered_entities<'a>(snapshot: &'a Snapshot, path_filters: &[PathBuf]) -> Ve
         .collect()
 }
 
-fn group_by_name(entities: Vec<&Entity>) -> BTreeMap<String, Vec<Entity>> {
+fn group_by_identity(entities: Vec<&Entity>) -> BTreeMap<EntityIdentity, Vec<Entity>> {
     let mut groups = BTreeMap::new();
     for entity in entities {
         groups
-            .entry(entity.name.clone())
+            .entry(entity_identity(entity))
             .or_insert_with(Vec::new)
             .push(entity.clone());
     }
     groups
 }
 
-fn find_exact_pair(lhs: &[Entity], rhs: &[Entity]) -> Option<(usize, usize)> {
+fn find_matching_pair(lhs: &[Entity], rhs: &[Entity]) -> Option<(usize, usize)> {
     for (lhs_index, lhs_entity) in lhs.iter().enumerate() {
         for (rhs_index, rhs_entity) in rhs.iter().enumerate() {
-            if lhs_entity == rhs_entity {
+            if entity_content_eq(lhs_entity, rhs_entity) {
                 return Some((lhs_index, rhs_index));
             }
         }
@@ -232,4 +232,139 @@ fn repo_workdir(repo: &gix::Repository) -> Result<PathBuf> {
     repo.workdir()
         .map(Path::to_path_buf)
         .context("git repository has no working directory")
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct EntityIdentity {
+    name: String,
+    kind: EntityKind,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+enum EntityKind {
+    Module,
+    Function,
+    Struct,
+    Enum,
+    Union,
+    Trait,
+    TypeAlias,
+    Impl,
+}
+
+fn entity_identity(entity: &Entity) -> EntityIdentity {
+    EntityIdentity {
+        name: entity.name.clone(),
+        kind: entity_kind(&entity.detail),
+    }
+}
+
+fn entity_kind(detail: &EntityDetail) -> EntityKind {
+    match detail {
+        EntityDetail::Module { .. } => EntityKind::Module,
+        EntityDetail::Function { .. } => EntityKind::Function,
+        EntityDetail::Struct { .. } => EntityKind::Struct,
+        EntityDetail::Enum { .. } => EntityKind::Enum,
+        EntityDetail::Union { .. } => EntityKind::Union,
+        EntityDetail::Trait { .. } => EntityKind::Trait,
+        EntityDetail::TypeAlias { .. } => EntityKind::TypeAlias,
+        EntityDetail::Impl { .. } => EntityKind::Impl,
+    }
+}
+
+fn entity_content_eq(lhs: &Entity, rhs: &Entity) -> bool {
+    entity_identity(lhs) == entity_identity(rhs)
+        && lhs.detail == rhs.detail
+        && lhs.source_text == rhs.source_text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entity_collector::SourceLocation;
+
+    #[test]
+    fn ignores_location_only_changes_when_matching_entities() {
+        let lhs = Snapshot {
+            entities: vec![sample_entity(
+                "crate::thing",
+                SourceLocation {
+                    file_path: PathBuf::from("/tmp/lhs.rs"),
+                    relative_path: PathBuf::from("src/lib.rs"),
+                    start_line: 1,
+                    start_col: 1,
+                    end_line: 3,
+                    end_col: 2,
+                },
+            )],
+        };
+        let rhs = Snapshot {
+            entities: vec![sample_entity(
+                "crate::thing",
+                SourceLocation {
+                    file_path: PathBuf::from("/tmp/rhs.rs"),
+                    relative_path: PathBuf::from("src/lib.rs"),
+                    start_line: 20,
+                    start_col: 4,
+                    end_line: 22,
+                    end_col: 5,
+                },
+            )],
+        };
+
+        let diff = diff_snapshots(&lhs, &rhs, &[]);
+
+        assert!(diff.added.is_empty());
+        assert!(diff.deleted.is_empty());
+        assert!(diff.modified.is_empty());
+    }
+
+    #[test]
+    fn same_name_different_kind_does_not_match() {
+        let lhs = Snapshot {
+            entities: vec![sample_entity(
+                "crate::thing",
+                SourceLocation {
+                    file_path: PathBuf::from("/tmp/lhs.rs"),
+                    relative_path: PathBuf::from("src/lib.rs"),
+                    start_line: 1,
+                    start_col: 1,
+                    end_line: 3,
+                    end_col: 2,
+                },
+            )],
+        };
+        let rhs = Snapshot {
+            entities: vec![Entity {
+                name: "crate::thing".to_owned(),
+                location: SourceLocation {
+                    file_path: PathBuf::from("/tmp/rhs.rs"),
+                    relative_path: PathBuf::from("src/lib.rs"),
+                    start_line: 1,
+                    start_col: 1,
+                    end_line: 1,
+                    end_col: 10,
+                },
+                source_text: "struct thing;".to_owned(),
+                detail: EntityDetail::Struct { fields: Vec::new() },
+            }],
+        };
+
+        let diff = diff_snapshots(&lhs, &rhs, &[]);
+
+        assert_eq!(diff.deleted.len(), 1);
+        assert_eq!(diff.added.len(), 1);
+        assert!(diff.modified.is_empty());
+    }
+
+    fn sample_entity(name: &str, location: SourceLocation) -> Entity {
+        Entity {
+            name: name.to_owned(),
+            location,
+            source_text: "fn thing() {}".to_owned(),
+            detail: EntityDetail::Function {
+                signature: "()".to_owned(),
+            },
+        }
+    }
 }
