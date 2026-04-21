@@ -99,7 +99,10 @@ fn parse_path_arg() -> Result<PathBuf> {
 
 fn load_project(path: &Path) -> Result<LoadedProject> {
     let _span = info_span!("load_project", path = %path.display()).entered();
-    let cargo_config = CargoConfig::default();
+    let cargo_config = CargoConfig {
+        no_deps: true,
+        ..CargoConfig::default()
+    };
     let load_config = LoadCargoConfig {
         load_out_dirs_from_check: false,
         with_proc_macro_server: ProcMacroServerChoice::None,
