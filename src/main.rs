@@ -554,12 +554,9 @@ fn render_entity(entity: &Entity) -> String {
         }
         EntityDetail::Function {
             signature,
-            has_self,
+            has_self: _,
         } => {
-            format!(
-                "function {}{} has_self={} @ {}",
-                entity.name, signature, has_self, location
-            )
+            format!("function {}{} @ {}", entity.name, signature, location)
         }
         EntityDetail::Struct { fields } => {
             format!(
