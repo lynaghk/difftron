@@ -19,6 +19,7 @@ use ra_ap_syntax::{
     ast::{self, HasName},
 };
 use ra_ap_vfs::Vfs;
+use tracing::{info, info_span};
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct Entity {
@@ -63,14 +64,20 @@ fn main() {
 fn run() -> Result<()> {
     logging::init()?;
     let input_path = parse_path_arg()?;
-    tracing::info!(path = %input_path.display(), "loading project");
+    let run_span = info_span!("run", path = %input_path.display());
+    let _run_span = run_span.entered();
+
+    info!("loading project");
     let project = load_project(&input_path)?;
     let entities = collect_entities(&project);
-    tracing::info!(entity_count = entities.len(), "collected entities");
+    info!(entity_count = entities.len(), "collected entities");
 
+    let render_span = info_span!("render_entities", entity_count = entities.len());
+    let _render_span = render_span.entered();
     for entity in entities {
         println!("{}", render_entity(&entity));
     }
+    info!("finished rendering entities");
 
     Ok(())
 }
@@ -91,6 +98,7 @@ fn parse_path_arg() -> Result<PathBuf> {
 }
 
 fn load_project(path: &Path) -> Result<LoadedProject> {
+    let _span = info_span!("load_project", path = %path.display()).entered();
     let cargo_config = CargoConfig::default();
     let load_config = LoadCargoConfig {
         load_out_dirs_from_check: false,
@@ -103,13 +111,21 @@ fn load_project(path: &Path) -> Result<LoadedProject> {
     let (db, vfs, _proc_macros) = load_workspace_at(path, &cargo_config, &load_config, &|_| {})
         .with_context(|| format!("failed to load Rust workspace at {}", path.display()))?;
 
+    info!("workspace loaded");
     Ok(LoadedProject { db, vfs })
 }
 
 fn collect_entities(project: &LoadedProject) -> Vec<Entity> {
+    let _span = info_span!("collect_entities").entered();
     let mut entities = Vec::new();
+    let crates = workspace_crates(&project.db);
 
-    for krate in workspace_crates(&project.db) {
+    info!(crate_count = crates.len(), "collecting workspace crates");
+
+    for krate in crates {
+        let crate_name = crate_name(&project.db, krate);
+        let crate_span = info_span!("collect_crate", crate_name = %crate_name);
+        let _crate_span = crate_span.entered();
         for module in krate.modules(&project.db) {
             entities.push(module_entity(project, module));
             collect_module_entities(project, module, &mut entities);
@@ -124,13 +140,22 @@ fn collect_entities(project: &LoadedProject) -> Vec<Entity> {
                 }
             }
         }
+
+        info!(entity_count = entities.len(), "finished crate");
     }
 
     entities.sort();
+    info!(entity_count = entities.len(), "entity collection complete");
     entities
 }
 
 fn collect_module_entities(project: &LoadedProject, module: Module, entities: &mut Vec<Entity>) {
+    let module_name = module
+        .name(&project.db)
+        .map(|name| name_text(&name))
+        .unwrap_or_else(|| "<crate-root>".to_owned());
+    let _span = info_span!("collect_module", module = %module_name).entered();
+
     for declaration in module.declarations(&project.db) {
         match declaration {
             ModuleDef::Function(function) => entities.push(function_entity(project, function)),
