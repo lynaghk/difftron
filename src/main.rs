@@ -4,11 +4,18 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use ra_ap_hir::Crate;
-use ra_ap_ide::RootDatabase;
+use ra_ap_hir::{AssocItem, Crate, Function, HasContainer, Impl, Module, ModuleDef};
+use ra_ap_ide::{Edition, RootDatabase};
 use ra_ap_ide_db::base_db::SourceDatabase;
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
 use ra_ap_project_model::CargoConfig;
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct FunctionRecord {
+    path: String,
+    arity: usize,
+    has_self: bool,
+}
 
 fn main() {
     if let Err(err) = run() {
@@ -20,13 +27,13 @@ fn main() {
 fn run() -> Result<()> {
     let input_path = parse_path_arg()?;
     let db = load_database(&input_path)?;
+    let functions = collect_functions(&db);
 
-    for krate in workspace_crates(&db) {
-        let name = krate
-            .display_name(&db)
-            .map(|name| name.to_string())
-            .unwrap_or_else(|| "<unnamed>".to_owned());
-        println!("{name}");
+    for function in functions {
+        println!(
+            "{} arity={} has_self={}",
+            function.path, function.arity, function.has_self
+        );
     }
 
     Ok(())
@@ -57,10 +64,8 @@ fn load_database(path: &Path) -> Result<RootDatabase> {
         proc_macro_processes: 1,
     };
 
-    let (db, _vfs, _proc_macros) = load_workspace_at(path, &cargo_config, &load_config, &|msg| {
-        eprintln!("{msg}");
-    })
-    .with_context(|| format!("failed to load Rust workspace at {}", path.display()))?;
+    let (db, _vfs, _proc_macros) = load_workspace_at(path, &cargo_config, &load_config, &|_| {})
+        .with_context(|| format!("failed to load Rust workspace at {}", path.display()))?;
 
     Ok(db)
 }
@@ -86,4 +91,101 @@ fn crate_name(db: &RootDatabase, krate: Crate) -> String {
         .display_name(db)
         .map(|name| name.to_string())
         .unwrap_or_else(|| "<unnamed>".to_owned())
+}
+
+fn collect_functions(db: &RootDatabase) -> Vec<FunctionRecord> {
+    let mut records = Vec::new();
+
+    for krate in workspace_crates(db) {
+        for module in krate.modules(db) {
+            collect_module_functions(db, module, &mut records);
+        }
+
+        for impl_def in Impl::all_in_crate(db, krate) {
+            for item in impl_def.items(db) {
+                if let AssocItem::Function(function) = item {
+                    records.push(function_record(db, function));
+                }
+            }
+        }
+    }
+
+    records.sort();
+    records
+}
+
+fn collect_module_functions(db: &RootDatabase, module: Module, records: &mut Vec<FunctionRecord>) {
+    for declaration in module.declarations(db) {
+        match declaration {
+            ModuleDef::Function(function) => records.push(function_record(db, function)),
+            ModuleDef::Trait(trait_def) => {
+                for item in trait_def.items(db) {
+                    if let AssocItem::Function(function) = item {
+                        records.push(function_record(db, function));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn function_record(db: &RootDatabase, function: Function) -> FunctionRecord {
+    let has_self = function.has_self_param(db);
+    FunctionRecord {
+        path: function_path(db, function),
+        arity: function
+            .num_params(db)
+            .saturating_sub(usize::from(has_self)),
+        has_self,
+    }
+}
+
+fn function_path(db: &RootDatabase, function: Function) -> String {
+    let module = function.module(db);
+    let mut segments = Vec::new();
+    segments.push(crate_name(db, module.krate(db)));
+    segments.extend(module_path_segments(db, module));
+
+    match function.container(db) {
+        ra_ap_hir::ItemContainer::Trait(trait_def) => {
+            segments.push(name_text(&trait_def.name(db)));
+        }
+        ra_ap_hir::ItemContainer::Impl(impl_def) => {
+            segments.push(impl_container_name(db, impl_def));
+        }
+        ra_ap_hir::ItemContainer::Module(_)
+        | ra_ap_hir::ItemContainer::ExternBlock(_)
+        | ra_ap_hir::ItemContainer::Crate(_) => {}
+    }
+
+    segments.push(name_text(&function.name(db)));
+    segments.join("::")
+}
+
+fn module_path_segments(db: &RootDatabase, module: Module) -> Vec<String> {
+    module
+        .path_to_root(db)
+        .into_iter()
+        .rev()
+        .filter_map(|module| module.name(db).map(|name| name_text(&name)))
+        .collect()
+}
+
+fn impl_container_name(db: &RootDatabase, impl_def: Impl) -> String {
+    let self_ty = impl_def.self_ty(db);
+    if let Some(adt) = self_ty.as_adt() {
+        return name_text(&adt.name(db));
+    }
+    if let Some(trait_def) = self_ty.as_dyn_trait() {
+        return name_text(&trait_def.name(db));
+    }
+    if let Some(builtin) = self_ty.as_builtin() {
+        return name_text(&builtin.name());
+    }
+    "<impl>".to_owned()
+}
+
+fn name_text(name: &ra_ap_hir::Name) -> String {
+    name.display_no_db(Edition::CURRENT).to_string()
 }
