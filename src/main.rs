@@ -9,7 +9,8 @@ mod project_discovery;
 mod snapshot;
 mod source_repo;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
+use clap::{Parser, Subcommand};
 use snapshot::{
     SnapshotSpec, build_snapshot, diff_snapshots, render_diff, resolve_snapshot_spec,
     snapshot_label,
@@ -26,10 +27,27 @@ fn main() {
 fn run() -> Result<()> {
     logging::init()?;
     let cwd = env::current_dir()?;
+    let cli = Cli::parse();
 
-    match parse_cli(&cwd)? {
-        Command::List(spec) => run_list(&spec),
-        Command::Diff { left, right, paths } => run_diff(&left, &right, &paths),
+    match cli.command {
+        Some(Command::List(args)) => run_list(&resolve_snapshot_spec(&args.snapshot, &cwd)?),
+        Some(Command::Diff(args)) => {
+            let left = resolve_snapshot_spec(&args.left, &cwd)?;
+            let right = resolve_snapshot_spec(&args.right, &cwd)?;
+            let paths = args
+                .path
+                .into_iter()
+                .map(|path| normalize_filter_path(&path))
+                .collect::<Vec<_>>();
+            run_diff(&left, &right, &paths)
+        }
+        None => {
+            let snapshot = cli
+                .snapshot
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("missing required argument: <PATH_OR_REV>"))?;
+            run_list(&resolve_snapshot_spec(snapshot, &cwd)?)
+        }
     }
 }
 
@@ -89,60 +107,35 @@ fn run_diff(left: &SnapshotSpec, right: &SnapshotSpec, path_filters: &[PathBuf])
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, Parser)]
+#[command(name = "rust_dive")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+    #[arg(value_name = "PATH_OR_REV")]
+    snapshot: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
 enum Command {
-    List(SnapshotSpec),
-    Diff {
-        left: SnapshotSpec,
-        right: SnapshotSpec,
-        paths: Vec<PathBuf>,
-    },
+    List(ListArgs),
+    Diff(DiffArgs),
 }
 
-fn parse_cli(cwd: &Path) -> Result<Command> {
-    let args = env::args().skip(1).collect::<Vec<_>>();
-    if args.is_empty() {
-        bail!(usage());
-    }
-
-    if args[0] == "diff" {
-        parse_diff_args(&args[1..], cwd)
-    } else if args[0] == "list" {
-        if args.len() != 2 {
-            bail!(usage());
-        }
-        Ok(Command::List(resolve_snapshot_spec(&args[1], cwd)?))
-    } else if args.len() == 1 {
-        Ok(Command::List(resolve_snapshot_spec(&args[0], cwd)?))
-    } else {
-        bail!(usage());
-    }
+#[derive(Debug, Parser)]
+struct ListArgs {
+    #[arg(value_name = "PATH_OR_REV")]
+    snapshot: String,
 }
 
-fn parse_diff_args(args: &[String], cwd: &Path) -> Result<Command> {
-    if args.len() < 2 {
-        bail!(usage());
-    }
-
-    let left = resolve_snapshot_spec(&args[0], cwd)?;
-    let right = resolve_snapshot_spec(&args[1], cwd)?;
-    let mut paths = Vec::new();
-    let mut index = 2;
-
-    while index < args.len() {
-        match args[index].as_str() {
-            "--path" => {
-                let Some(path) = args.get(index + 1) else {
-                    bail!("--path requires a value");
-                };
-                paths.push(normalize_filter_path(path));
-                index += 2;
-            }
-            flag => bail!("unknown argument: {flag}"),
-        }
-    }
-
-    Ok(Command::Diff { left, right, paths })
+#[derive(Debug, Parser)]
+struct DiffArgs {
+    #[arg(value_name = "LEFT")]
+    left: String,
+    #[arg(value_name = "RIGHT")]
+    right: String,
+    #[arg(long = "path", value_name = "RELATIVE_PATH")]
+    path: Vec<String>,
 }
 
 fn normalize_filter_path(path: &str) -> PathBuf {
@@ -158,8 +151,4 @@ fn normalize_filter_path(path: &str) -> PathBuf {
         }
     }
     normalized
-}
-
-fn usage() -> &'static str {
-    "usage: rust_dive <path-or-rev>\n       rust_dive list <path-or-rev>\n       rust_dive diff <left> <right> [--path <relative-path>]..."
 }

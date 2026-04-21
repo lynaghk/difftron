@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
+clap = { version = "4", features = ["derive"] }
 env_logger = "0"
 gix = "0"
 ra_ap_syntax = "0"
