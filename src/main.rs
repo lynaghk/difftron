@@ -32,14 +32,14 @@ fn run() -> Result<()> {
     match cli.command {
         Some(Command::List(args)) => run_list(&resolve_snapshot_spec(&args.snapshot, &cwd)?),
         Some(Command::Diff(args)) => {
-            let left = resolve_snapshot_spec(&args.left, &cwd)?;
-            let right = resolve_snapshot_spec(&args.right, &cwd)?;
+            let lhs = resolve_snapshot_spec(&args.lhs, &cwd)?;
+            let rhs = resolve_snapshot_spec(&args.rhs, &cwd)?;
             let paths = args
                 .path
                 .into_iter()
                 .map(|path| normalize_filter_path(&path))
                 .collect::<Vec<_>>();
-            run_diff(&left, &right, &paths)
+            run_diff(&lhs, &rhs, &paths)
         }
         None => {
             let snapshot = cli
@@ -69,30 +69,30 @@ fn run_list(spec: &SnapshotSpec) -> Result<()> {
     Ok(())
 }
 
-fn run_diff(left: &SnapshotSpec, right: &SnapshotSpec, path_filters: &[PathBuf]) -> Result<()> {
+fn run_diff(lhs: &SnapshotSpec, rhs: &SnapshotSpec, path_filters: &[PathBuf]) -> Result<()> {
     let run_span = info_span!(
         "run_diff",
-        left = %snapshot_label(left),
-        right = %snapshot_label(right),
+        lhs = %snapshot_label(lhs),
+        rhs = %snapshot_label(rhs),
         filter_count = path_filters.len()
     );
     let _run_span = run_span.entered();
 
-    info!("building left snapshot");
-    let left_snapshot = build_snapshot(left)?;
+    info!("building lhs snapshot");
+    let lhs_snapshot = build_snapshot(lhs)?;
     info!(
-        entity_count = left_snapshot.entities.len(),
-        "built left snapshot"
+        entity_count = lhs_snapshot.entities.len(),
+        "built lhs snapshot"
     );
 
-    info!("building right snapshot");
-    let right_snapshot = build_snapshot(right)?;
+    info!("building rhs snapshot");
+    let rhs_snapshot = build_snapshot(rhs)?;
     info!(
-        entity_count = right_snapshot.entities.len(),
-        "built right snapshot"
+        entity_count = rhs_snapshot.entities.len(),
+        "built rhs snapshot"
     );
 
-    let diff = diff_snapshots(&left_snapshot, &right_snapshot, path_filters);
+    let diff = diff_snapshots(&lhs_snapshot, &rhs_snapshot, path_filters);
     info!(
         added = diff.added.len(),
         deleted = diff.deleted.len(),
@@ -130,10 +130,10 @@ struct ListArgs {
 
 #[derive(Debug, Parser)]
 struct DiffArgs {
-    #[arg(value_name = "LEFT")]
-    left: String,
-    #[arg(value_name = "RIGHT")]
-    right: String,
+    #[arg(value_name = "LHS")]
+    lhs: String,
+    #[arg(value_name = "RHS")]
+    rhs: String,
     #[arg(long = "path", value_name = "RELATIVE_PATH")]
     path: Vec<String>,
 }
