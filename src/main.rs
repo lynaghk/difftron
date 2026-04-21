@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod logging;
+
 use anyhow::{Context, Result, bail};
 use ra_ap_hir::{
     Adt, AssocItem, Crate, Function, HasContainer, HasSource, Impl, Module, ModuleDef, Trait,
@@ -37,7 +39,7 @@ struct SourceLocation {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 enum EntityDetail {
     Module { is_inline: bool },
-    Function { signature: String, has_self: bool },
+    Function { signature: String },
     Struct { fields: Vec<String> },
     Enum { variants: Vec<String> },
     Union { fields: Vec<String> },
@@ -59,9 +61,12 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    logging::init()?;
     let input_path = parse_path_arg()?;
+    tracing::info!(path = %input_path.display(), "loading project");
     let project = load_project(&input_path)?;
     let entities = collect_entities(&project);
+    tracing::info!(entity_count = entities.len(), "collected entities");
 
     for entity in entities {
         println!("{}", render_entity(&entity));
@@ -164,11 +169,10 @@ fn module_entity(project: &LoadedProject, module: Module) -> Entity {
 
 fn function_entity(project: &LoadedProject, function: Function) -> Entity {
     Entity {
-        name: function_path(&project.db, function),
+        name: function_path(project, function),
         location: node_location(project, function.source(&project.db)),
         detail: EntityDetail::Function {
             signature: function_signature(function, &project.db),
-            has_self: function.has_self_param(&project.db),
         },
     }
 }
@@ -241,7 +245,7 @@ fn type_alias_entity(project: &LoadedProject, type_alias: TypeAlias) -> Entity {
 
 fn impl_entity(project: &LoadedProject, impl_def: Impl) -> Entity {
     Entity {
-        name: impl_name(&project.db, impl_def),
+        name: impl_name(project, impl_def),
         location: node_location(project, impl_def.source(&project.db)),
         detail: EntityDetail::Impl {
             header: impl_header(project, impl_def),
@@ -288,7 +292,8 @@ fn item_path(db: &RootDatabase, module: Module, item_name: &str) -> String {
     segments.join("::")
 }
 
-fn function_path(db: &RootDatabase, function: Function) -> String {
+fn function_path(project: &LoadedProject, function: Function) -> String {
+    let db = &project.db;
     let module = function.module(db);
     let mut segments = Vec::new();
     segments.push(crate_name(db, module.krate(db)));
@@ -299,7 +304,7 @@ fn function_path(db: &RootDatabase, function: Function) -> String {
             segments.push(name_text(&trait_def.name(db)));
         }
         ra_ap_hir::ItemContainer::Impl(impl_def) => {
-            segments.push(impl_container_name(db, impl_def));
+            segments.push(impl_container_name(project, impl_def));
         }
         ra_ap_hir::ItemContainer::Module(_)
         | ra_ap_hir::ItemContainer::ExternBlock(_)
@@ -310,12 +315,25 @@ fn function_path(db: &RootDatabase, function: Function) -> String {
     segments.join("::")
 }
 
-fn impl_name(db: &RootDatabase, impl_def: Impl) -> String {
+fn impl_name(project: &LoadedProject, impl_def: Impl) -> String {
     format!(
         "{}::{}",
-        module_path(db, impl_def.module(db)),
-        impl_header_text(db, impl_def)
+        module_path(&project.db, impl_def.module(&project.db)),
+        impl_header(project, impl_def)
     )
+}
+
+fn impl_container_name(project: &LoadedProject, impl_def: Impl) -> String {
+    let header = impl_header(project, impl_def);
+    if let Some((_, rhs)) = header.split_once(" for ") {
+        return rhs.trim().to_owned();
+    }
+    header
+        .strip_prefix("impl")
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| "<impl>".to_owned())
 }
 
 fn module_path_segments(db: &RootDatabase, module: Module) -> Vec<String> {
@@ -325,20 +343,6 @@ fn module_path_segments(db: &RootDatabase, module: Module) -> Vec<String> {
         .rev()
         .filter_map(|module| module.name(db).map(|name| name_text(&name)))
         .collect()
-}
-
-fn impl_container_name(db: &RootDatabase, impl_def: Impl) -> String {
-    let self_ty = impl_def.self_ty(db);
-    if let Some(adt) = self_ty.as_adt() {
-        return name_text(&adt.name(db));
-    }
-    if let Some(trait_def) = self_ty.as_dyn_trait() {
-        return name_text(&trait_def.name(db));
-    }
-    if let Some(builtin) = self_ty.as_builtin() {
-        return name_text(&builtin.name());
-    }
-    "<impl>".to_owned()
 }
 
 fn function_signature(function: Function, db: &RootDatabase) -> String {
@@ -430,19 +434,21 @@ fn type_alias_target(project: &LoadedProject, type_alias: TypeAlias) -> String {
 }
 
 fn impl_header(project: &LoadedProject, impl_def: Impl) -> String {
-    impl_header_text(&project.db, impl_def)
-}
-
-fn impl_header_text(db: &RootDatabase, impl_def: Impl) -> String {
-    if let Some(trait_def) = impl_def.trait_(db) {
-        format!(
-            "impl {} for {}",
-            name_text(&trait_def.name(db)),
-            impl_container_name(db, impl_def)
-        )
-    } else {
-        format!("impl {}", impl_container_name(db, impl_def))
-    }
+    impl_def
+        .source(&project.db)
+        .map(|source| {
+            let syntax = source.value.syntax().text().to_string();
+            syntax
+                .split_once('{')
+                .map(|(header, _)| header.trim().to_owned())
+                .or_else(|| {
+                    syntax
+                        .split_once(';')
+                        .map(|(header, _)| header.trim().to_owned())
+                })
+                .unwrap_or_else(|| syntax.trim().to_owned())
+        })
+        .unwrap_or_else(|| "impl <unknown>".to_owned())
 }
 
 fn impl_items(project: &LoadedProject, impl_def: Impl) -> Vec<String> {
@@ -552,10 +558,7 @@ fn render_entity(entity: &Entity) -> String {
         EntityDetail::Module { is_inline } => {
             format!("module {} inline={} @ {}", entity.name, is_inline, location)
         }
-        EntityDetail::Function {
-            signature,
-            has_self: _,
-        } => {
+        EntityDetail::Function { signature } => {
             format!("function {}{} @ {}", entity.name, signature, location)
         }
         EntityDetail::Struct { fields } => {
