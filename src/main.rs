@@ -4,17 +4,19 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use ra_ap_hir::{AssocItem, Crate, Function, HasContainer, Impl, Module, ModuleDef};
+use ra_ap_hir::{AssocItem, Crate, Function, HasContainer, HasSource, Impl, Module, ModuleDef};
 use ra_ap_ide::{Edition, RootDatabase};
 use ra_ap_ide_db::base_db::SourceDatabase;
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
 use ra_ap_project_model::CargoConfig;
+use ra_ap_syntax::{AstNode, ast};
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct FunctionRecord {
     path: String,
     arity: usize,
     has_self: bool,
+    params: Vec<String>,
 }
 
 fn main() {
@@ -31,8 +33,11 @@ fn run() -> Result<()> {
 
     for function in functions {
         println!(
-            "{} arity={} has_self={}",
-            function.path, function.arity, function.has_self
+            "{}({}) arity={} has_self={}",
+            function.path,
+            function.params.join(", "),
+            function.arity,
+            function.has_self
         );
     }
 
@@ -132,12 +137,12 @@ fn collect_module_functions(db: &RootDatabase, module: Module, records: &mut Vec
 
 fn function_record(db: &RootDatabase, function: Function) -> FunctionRecord {
     let has_self = function.has_self_param(db);
+    let params = function_params(function, db);
     FunctionRecord {
         path: function_path(db, function),
-        arity: function
-            .num_params(db)
-            .saturating_sub(usize::from(has_self)),
+        arity: params.len(),
         has_self,
+        params,
     }
 }
 
@@ -188,4 +193,25 @@ fn impl_container_name(db: &RootDatabase, impl_def: Impl) -> String {
 
 fn name_text(name: &ra_ap_hir::Name) -> String {
     name.display_no_db(Edition::CURRENT).to_string()
+}
+
+fn format_ast_param(param: &ast::Param) -> String {
+    match (param.pat(), param.ty()) {
+        (Some(pattern), Some(ty)) => format!("{}: {}", pattern.syntax().text(), ty.syntax().text()),
+        _ => param.syntax().text().to_string(),
+    }
+}
+
+fn function_params(function: Function, db: &RootDatabase) -> Vec<String> {
+    let Some(source) = function.source(db) else {
+        return Vec::new();
+    };
+    let Some(param_list) = source.value.param_list() else {
+        return Vec::new();
+    };
+
+    param_list
+        .params()
+        .map(|param| format_ast_param(&param))
+        .collect()
 }

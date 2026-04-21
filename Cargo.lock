@@ -1684,11 +1684,13 @@ name = "rust_dive"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "either",
  "ra_ap_hir",
  "ra_ap_ide",
  "ra_ap_ide_db",
  "ra_ap_load-cargo",
  "ra_ap_project_model",
+ "ra_ap_syntax",
 ]
 
 [[package]]
