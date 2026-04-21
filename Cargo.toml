@@ -5,10 +5,12 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-cargo_metadata = "0"
 env_logger = "0"
+gix = "0"
 ra_ap_syntax = "0"
+serde = { version = "1", features = ["derive"] }
 time = { version = "0", features = ["formatting", "local-offset", "macros"] }
+toml = "0"
 tracing = "0"
 tracing-subscriber = { version = "0", features = ["env-filter"] }
 tracing-tree = "0"

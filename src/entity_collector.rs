@@ -1,16 +1,16 @@
 use std::{
     collections::HashSet,
-    fs,
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result};
-use cargo_metadata::{MetadataCommand, Package, PackageId, Target, TargetKind};
 use ra_ap_syntax::{
     AstNode, Edition, SourceFile, TextRange, TextSize,
     ast::{self, HasAttrs, HasModuleItem, HasName},
 };
 use tracing::{info, info_span};
+
+use crate::{project_discovery::TargetRoot, source_repo::SourceRepo};
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Entity {
@@ -23,6 +23,7 @@ pub struct Entity {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SourceLocation {
     pub file_path: PathBuf,
+    pub relative_path: PathBuf,
     pub start_line: u32,
     pub start_col: u32,
     pub end_line: u32,
@@ -41,20 +42,10 @@ pub enum EntityDetail {
     Impl { header: String, items: Vec<String> },
 }
 
-#[derive(Debug, Clone)]
-pub struct LoadedProject {
-    targets: Vec<TargetRoot>,
-}
-
-#[derive(Debug, Clone)]
-struct TargetRoot {
-    crate_name: String,
-    root_file: PathBuf,
-}
-
 #[derive(Debug)]
 struct ParsedFile {
-    path: PathBuf,
+    relative_path: PathBuf,
+    display_path: PathBuf,
     source_file: SourceFile,
     line_starts: Vec<usize>,
 }
@@ -65,28 +56,17 @@ struct TraversalContext {
     container: Option<String>,
 }
 
-pub fn load_project(path: &Path) -> Result<LoadedProject> {
-    let _span = info_span!("load_project", path = %path.display()).entered();
-    let metadata = cargo_metadata(path)?;
-    let targets = workspace_targets(&metadata);
-    info!(target_count = targets.len(), "workspace loaded");
-    Ok(LoadedProject { targets })
-}
-
-pub fn collect_entities(project: &LoadedProject) -> Result<Vec<Entity>> {
-    let _span = info_span!("collect_entities").entered();
+pub fn collect_entities(repo: &dyn SourceRepo, targets: &[TargetRoot]) -> Result<Vec<Entity>> {
+    let _span = info_span!("collect_entities", target_count = targets.len()).entered();
     let mut entities = Vec::new();
 
-    info!(
-        crate_count = project.targets.len(),
-        "collecting workspace crates"
-    );
+    info!(crate_count = targets.len(), "collecting workspace crates");
 
-    for target in &project.targets {
+    for target in targets {
         let crate_span = info_span!("collect_crate", crate_name = %target.crate_name);
         let _crate_span = crate_span.entered();
         let mut visited = HashSet::new();
-        collect_target_entities(target, &mut visited, &mut entities)?;
+        collect_target_entities(repo, target, &mut visited, &mut entities)?;
         info!(entity_count = entities.len(), "finished crate");
     }
 
@@ -146,79 +126,14 @@ pub fn render_entity(entity: &Entity) -> String {
     }
 }
 
-fn cargo_metadata(path: &Path) -> Result<cargo_metadata::Metadata> {
-    let mut command = MetadataCommand::new();
-    command.no_deps();
-
-    if path.is_file() {
-        command.manifest_path(path);
-    } else {
-        let manifest_path = path.join("Cargo.toml");
-        if manifest_path.exists() {
-            command.manifest_path(manifest_path);
-        } else {
-            command.current_dir(path);
-        }
-    }
-
-    command.exec().context("failed to run cargo metadata")
-}
-
-fn workspace_targets(metadata: &cargo_metadata::Metadata) -> Vec<TargetRoot> {
-    let workspace_members: HashSet<&PackageId> = metadata.workspace_members.iter().collect();
-    let packages_by_id = metadata
-        .packages
-        .iter()
-        .map(|package| (&package.id, package))
-        .collect::<std::collections::HashMap<_, _>>();
-
-    let mut targets = workspace_members
-        .into_iter()
-        .filter_map(|id| packages_by_id.get(id).copied())
-        .flat_map(target_roots_for_package)
-        .collect::<Vec<_>>();
-
-    targets.sort_by(|left, right| {
-        left.crate_name
-            .cmp(&right.crate_name)
-            .then_with(|| left.root_file.cmp(&right.root_file))
-    });
-    targets
-}
-
-fn target_roots_for_package(package: &Package) -> Vec<TargetRoot> {
-    package
-        .targets
-        .iter()
-        .filter(|target| is_supported_target(target))
-        .map(|target| TargetRoot {
-            crate_name: target.name.replace('-', "_"),
-            root_file: target.src_path.as_std_path().to_path_buf(),
-        })
-        .collect()
-}
-
-fn is_supported_target(target: &Target) -> bool {
-    target.src_path.extension().is_some_and(|ext| ext == "rs")
-        && target.kind.iter().any(|kind| {
-            matches!(
-                kind,
-                TargetKind::Lib
-                    | TargetKind::Bin
-                    | TargetKind::Example
-                    | TargetKind::Test
-                    | TargetKind::Bench
-            )
-        })
-}
-
 fn collect_target_entities(
+    repo: &dyn SourceRepo,
     target: &TargetRoot,
     visited: &mut HashSet<PathBuf>,
     entities: &mut Vec<Entity>,
 ) -> Result<()> {
-    let parsed = parse_file(&target.root_file)?;
-    visited.insert(parsed.path.clone());
+    let parsed = parse_file(repo, &target.root_file)?;
+    visited.insert(parsed.relative_path.clone());
     entities.push(Entity {
         name: target.crate_name.clone(),
         location: source_location(&parsed, parsed.source_file.syntax().text_range()),
@@ -227,6 +142,7 @@ fn collect_target_entities(
     });
 
     collect_items(
+        repo,
         target,
         &parsed,
         parsed.source_file.items().collect(),
@@ -236,14 +152,16 @@ fn collect_target_entities(
     )
 }
 
-fn parse_file(path: &Path) -> Result<ParsedFile> {
-    let text =
-        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+fn parse_file(repo: &dyn SourceRepo, relative_path: &Path) -> Result<ParsedFile> {
+    let text = repo
+        .read_file(relative_path)?
+        .with_context(|| format!("missing {}", relative_path.display()))?;
     let source_file = SourceFile::parse(&text, Edition::CURRENT).tree();
     let line_starts = compute_line_starts(&text);
 
     Ok(ParsedFile {
-        path: path.to_path_buf(),
+        relative_path: relative_path.to_path_buf(),
+        display_path: repo.display_path(relative_path),
         source_file,
         line_starts,
     })
@@ -260,6 +178,7 @@ fn compute_line_starts(text: &str) -> Vec<usize> {
 }
 
 fn collect_items(
+    repo: &dyn SourceRepo,
     target: &TargetRoot,
     parsed: &ParsedFile,
     items: Vec<ast::Item>,
@@ -331,6 +250,7 @@ fn collect_items(
                     let mut nested = context.clone();
                     nested.modules.push(ast_name(&module));
                     collect_items(
+                        repo,
                         target,
                         parsed,
                         item_list.items().collect(),
@@ -338,21 +258,22 @@ fn collect_items(
                         visited,
                         entities,
                     )?;
-                } else if let Some(module_file) = resolve_module_file(&parsed.path, &module) {
-                    let module_file = fs::canonicalize(&module_file).unwrap_or(module_file);
-                    if visited.insert(module_file.clone()) {
-                        let nested_file = parse_file(&module_file)?;
-                        let mut nested = context.clone();
-                        nested.modules.push(ast_name(&module));
-                        collect_items(
-                            target,
-                            &nested_file,
-                            nested_file.source_file.items().collect(),
-                            &nested,
-                            visited,
-                            entities,
-                        )?;
-                    }
+                } else if let Some(module_file) =
+                    resolve_module_file(repo, &parsed.relative_path, &module)?
+                    && visited.insert(module_file.clone())
+                {
+                    let nested_file = parse_file(repo, &module_file)?;
+                    let mut nested = context.clone();
+                    nested.modules.push(ast_name(&module));
+                    collect_items(
+                        repo,
+                        target,
+                        &nested_file,
+                        nested_file.source_file.items().collect(),
+                        &nested,
+                        visited,
+                        entities,
+                    )?;
                 }
             }
             ast::Item::Const(_)
@@ -567,24 +488,39 @@ fn impl_entity(
     }
 }
 
-fn resolve_module_file(current_file: &Path, module: &ast::Module) -> Option<PathBuf> {
-    let module_name = module.name()?.text().to_string();
-    let parent_dir = current_file.parent()?;
+fn resolve_module_file(
+    repo: &dyn SourceRepo,
+    current_file: &Path,
+    module: &ast::Module,
+) -> Result<Option<PathBuf>> {
+    let Some(module_name) = module.name().map(|name| name.text().to_string()) else {
+        return Ok(None);
+    };
+    let Some(parent_dir) = current_file.parent() else {
+        return Ok(None);
+    };
+
     let is_root_like = current_file
         .file_stem()
         .is_some_and(|stem| stem == "mod" || stem == "lib" || stem == "main");
     let search_dir = if is_root_like {
         parent_dir.to_path_buf()
     } else {
-        parent_dir.join(current_file.file_stem()?)
+        parent_dir.join(current_file.file_stem().unwrap_or_default())
     };
 
     let candidates = [
         search_dir.join(format!("{module_name}.rs")),
-        search_dir.join(module_name).join("mod.rs"),
+        search_dir.join(&module_name).join("mod.rs"),
     ];
 
-    candidates.into_iter().find(|candidate| candidate.exists())
+    for candidate in candidates {
+        if repo.is_file(&candidate)? {
+            return Ok(Some(candidate));
+        }
+    }
+
+    Ok(None)
 }
 
 fn path_prefix(target: &TargetRoot, context: &TraversalContext) -> Vec<String> {
@@ -666,7 +602,8 @@ fn source_location(parsed: &ParsedFile, range: TextRange) -> SourceLocation {
     let end = line_col(&parsed.line_starts, range.end());
 
     SourceLocation {
-        file_path: parsed.path.clone(),
+        file_path: parsed.display_path.clone(),
+        relative_path: parsed.relative_path.clone(),
         start_line: start.0,
         start_col: start.1,
         end_line: end.0,
