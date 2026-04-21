@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod difftastic_renderer;
 mod entity_collector;
 mod logging;
 mod project_discovery;
@@ -12,7 +13,7 @@ mod source_repo;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use snapshot::{
-    SnapshotSpec, build_snapshot, diff_snapshots, render_diff, resolve_snapshot_spec,
+    SnapshotSpec, build_snapshot, diff_snapshots, render_diff_raw, resolve_snapshot_spec,
     snapshot_label,
 };
 use tracing::{info, info_span};
@@ -39,7 +40,7 @@ fn run() -> Result<()> {
                 .into_iter()
                 .map(|path| normalize_filter_path(&path))
                 .collect::<Vec<_>>();
-            run_diff(&lhs, &rhs, &paths)
+            run_diff(&lhs, &rhs, &paths, args.raw)
         }
         None => {
             let snapshot = cli
@@ -69,12 +70,18 @@ fn run_list(spec: &SnapshotSpec) -> Result<()> {
     Ok(())
 }
 
-fn run_diff(lhs: &SnapshotSpec, rhs: &SnapshotSpec, path_filters: &[PathBuf]) -> Result<()> {
+fn run_diff(
+    lhs: &SnapshotSpec,
+    rhs: &SnapshotSpec,
+    path_filters: &[PathBuf],
+    raw: bool,
+) -> Result<()> {
     let run_span = info_span!(
         "run_diff",
         lhs = %snapshot_label(lhs),
         rhs = %snapshot_label(rhs),
-        filter_count = path_filters.len()
+        filter_count = path_filters.len(),
+        raw
     );
     let _run_span = run_span.entered();
 
@@ -100,8 +107,12 @@ fn run_diff(lhs: &SnapshotSpec, rhs: &SnapshotSpec, path_filters: &[PathBuf]) ->
         "computed diff"
     );
 
-    for line in render_diff(&diff) {
-        println!("{line}");
+    if raw {
+        for line in render_diff_raw(&diff) {
+            println!("{line}");
+        }
+    } else {
+        print!("{}", difftastic_renderer::render_diff(&diff)?);
     }
 
     Ok(())
@@ -136,6 +147,8 @@ struct DiffArgs {
     rhs: String,
     #[arg(long = "path", value_name = "RELATIVE_PATH")]
     path: Vec<String>,
+    #[arg(long)]
+    raw: bool,
 }
 
 fn normalize_filter_path(path: &str) -> PathBuf {

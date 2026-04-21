@@ -143,7 +143,7 @@ pub fn diff_snapshots(lhs: &Snapshot, rhs: &Snapshot, path_filters: &[PathBuf]) 
     }
 }
 
-pub fn render_diff(diff: &DiffResult) -> Vec<String> {
+pub fn render_diff_raw(diff: &DiffResult) -> Vec<String> {
     let mut lines = Vec::new();
 
     for entity in &diff.deleted {

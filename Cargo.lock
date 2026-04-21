@@ -1925,6 +1925,7 @@ dependencies = [
  "gix",
  "ra_ap_syntax",
  "serde",
+ "tempfile",
  "time",
  "toml",
  "tracing",

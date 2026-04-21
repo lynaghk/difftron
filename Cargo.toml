@@ -10,6 +10,7 @@ env_logger = "0"
 gix = "0"
 ra_ap_syntax = "0"
 serde = { version = "1", features = ["derive"] }
+tempfile = "3"
 time = { version = "0", features = ["formatting", "local-offset", "macros"] }
 toml = "0"
 tracing = "0"
