@@ -4,10 +4,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use id_arena::Arena;
 use tracing::{info, info_span};
 
 use crate::{
-    entity_collector::{Entity, EntityDetail, collect_entities},
+    entity_collector::{Entity, EntityDetail, EntityId, collect_entities},
     project_discovery::TargetRoot,
     project_discovery::discover_targets,
     source_repo::{FsSourceRepo, GitTreeSourceRepo, SingleFileSourceRepo, SourceRepo},
@@ -28,9 +29,10 @@ pub enum SnapshotSpec {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Snapshot {
-    pub entities: Vec<Entity>,
+    pub arena: Arena<Entity>,
+    pub entities: Vec<EntityId>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,9 +101,12 @@ pub fn build_snapshot(spec: &SnapshotSpec) -> Result<Snapshot> {
     info!(root = %source.root().display(), "discovering targets");
     let targets = discover_snapshot_targets(spec, source.as_ref())?;
     info!(target_count = targets.len(), "discovered targets");
-    let entities = collect_entities(source.as_ref(), &targets)?;
+    let collected = collect_entities(source.as_ref(), &targets)?;
 
-    Ok(Snapshot { entities })
+    Ok(Snapshot {
+        arena: collected.arena,
+        entities: collected.entities,
+    })
 }
 
 pub fn diff_snapshots(lhs: &Snapshot, rhs: &Snapshot, path_filters: &[PathBuf]) -> DiffResult {
@@ -243,12 +248,17 @@ fn path_starts_with(path: &Path, base: &Path) -> bool {
 
 fn filtered_entities<'a>(snapshot: &'a Snapshot, path_filters: &[PathBuf]) -> Vec<&'a Entity> {
     if path_filters.is_empty() {
-        return snapshot.entities.iter().collect();
+        return snapshot
+            .entities
+            .iter()
+            .map(|id| &snapshot.arena[*id])
+            .collect();
     }
 
     snapshot
         .entities
         .iter()
+        .map(|id| &snapshot.arena[*id])
         .filter(|entity| {
             path_filters
                 .iter()
@@ -336,32 +346,28 @@ mod tests {
 
     #[test]
     fn ignores_location_only_changes_when_matching_entities() {
-        let lhs = Snapshot {
-            entities: vec![sample_entity(
-                "crate::thing",
-                SourceLocation {
-                    file_path: PathBuf::from("/tmp/lhs.rs"),
-                    snapshot_path: PathBuf::from("src/lib.rs"),
-                    start_line: 1,
-                    start_col: 1,
-                    end_line: 3,
-                    end_col: 2,
-                },
-            )],
-        };
-        let rhs = Snapshot {
-            entities: vec![sample_entity(
-                "crate::thing",
-                SourceLocation {
-                    file_path: PathBuf::from("/tmp/rhs.rs"),
-                    snapshot_path: PathBuf::from("src/lib.rs"),
-                    start_line: 20,
-                    start_col: 4,
-                    end_line: 22,
-                    end_col: 5,
-                },
-            )],
-        };
+        let lhs = snapshot_from_entities(vec![sample_entity(
+            "crate::thing",
+            SourceLocation {
+                file_path: PathBuf::from("/tmp/lhs.rs"),
+                snapshot_path: PathBuf::from("src/lib.rs"),
+                start_line: 1,
+                start_col: 1,
+                end_line: 3,
+                end_col: 2,
+            },
+        )]);
+        let rhs = snapshot_from_entities(vec![sample_entity(
+            "crate::thing",
+            SourceLocation {
+                file_path: PathBuf::from("/tmp/rhs.rs"),
+                snapshot_path: PathBuf::from("src/lib.rs"),
+                start_line: 20,
+                start_col: 4,
+                end_line: 22,
+                end_col: 5,
+            },
+        )]);
 
         let diff = diff_snapshots(&lhs, &rhs, &[]);
 
@@ -372,34 +378,31 @@ mod tests {
 
     #[test]
     fn same_name_different_kind_does_not_match() {
-        let lhs = Snapshot {
-            entities: vec![sample_entity(
-                "crate::thing",
-                SourceLocation {
-                    file_path: PathBuf::from("/tmp/lhs.rs"),
-                    snapshot_path: PathBuf::from("src/lib.rs"),
-                    start_line: 1,
-                    start_col: 1,
-                    end_line: 3,
-                    end_col: 2,
-                },
-            )],
-        };
-        let rhs = Snapshot {
-            entities: vec![Entity {
-                name: "crate::thing".to_owned(),
-                location: SourceLocation {
-                    file_path: PathBuf::from("/tmp/rhs.rs"),
-                    snapshot_path: PathBuf::from("src/lib.rs"),
-                    start_line: 1,
-                    start_col: 1,
-                    end_line: 1,
-                    end_col: 10,
-                },
-                source_text: "struct thing;".to_owned(),
-                detail: EntityDetail::Struct { fields: Vec::new() },
-            }],
-        };
+        let lhs = snapshot_from_entities(vec![sample_entity(
+            "crate::thing",
+            SourceLocation {
+                file_path: PathBuf::from("/tmp/lhs.rs"),
+                snapshot_path: PathBuf::from("src/lib.rs"),
+                start_line: 1,
+                start_col: 1,
+                end_line: 3,
+                end_col: 2,
+            },
+        )]);
+        let rhs = snapshot_from_entities(vec![Entity {
+            name: "crate::thing".to_owned(),
+            parent: None,
+            location: SourceLocation {
+                file_path: PathBuf::from("/tmp/rhs.rs"),
+                snapshot_path: PathBuf::from("src/lib.rs"),
+                start_line: 1,
+                start_col: 1,
+                end_line: 1,
+                end_col: 10,
+            },
+            source_text: "struct thing;".to_owned(),
+            detail: EntityDetail::Struct { fields: Vec::new() },
+        }]);
 
         let diff = diff_snapshots(&lhs, &rhs, &[]);
 
@@ -411,11 +414,21 @@ mod tests {
     fn sample_entity(name: &str, location: SourceLocation) -> Entity {
         Entity {
             name: name.to_owned(),
+            parent: None,
             location,
             source_text: "fn thing() {}".to_owned(),
             detail: EntityDetail::Function {
                 signature: "()".to_owned(),
             },
         }
+    }
+
+    fn snapshot_from_entities(values: Vec<Entity>) -> Snapshot {
+        let mut arena = Arena::new();
+        let entities = values
+            .into_iter()
+            .map(|entity| arena.alloc(entity))
+            .collect();
+        Snapshot { arena, entities }
     }
 }

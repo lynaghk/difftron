@@ -29,7 +29,11 @@ pub fn render_list(
         OutputFormat::Json => serde_json::to_string_pretty(&ListOutput {
             command: "list",
             snapshot: SnapshotOutput::from(snapshot),
-            entities: entities.entities.iter().map(EntityOutput::from).collect(),
+            entities: entities
+                .entities
+                .iter()
+                .map(|id| EntityOutput::from(&entities.arena[*id]))
+                .collect(),
         })
         .map_err(Into::into),
     }
@@ -78,7 +82,7 @@ fn render_list_text(snapshot: &Snapshot) -> String {
     let lines = snapshot
         .entities
         .iter()
-        .map(render_entity)
+        .map(|id| render_entity(&snapshot.arena[*id]))
         .collect::<Vec<_>>();
     render_lines(lines)
 }
@@ -243,9 +247,7 @@ mod tests {
         let snapshot_spec = SnapshotSpec::Directory {
             root: PathBuf::from("/tmp/project"),
         };
-        let snapshot = Snapshot {
-            entities: vec![sample_entity("crate::demo", "src/lib.rs")],
-        };
+        let snapshot = snapshot_from_entities(vec![sample_entity("crate::demo", "src/lib.rs")]);
 
         let rendered = render_list(&snapshot_spec, &snapshot, OutputFormat::Json).unwrap();
         let json: Value = serde_json::from_str(&rendered).unwrap();
@@ -302,9 +304,7 @@ mod tests {
 
     #[test]
     fn renders_list_text_compatibly() {
-        let snapshot = Snapshot {
-            entities: vec![sample_entity("crate::demo", "src/lib.rs")],
-        };
+        let snapshot = snapshot_from_entities(vec![sample_entity("crate::demo", "src/lib.rs")]);
 
         let rendered = render_list_text(&snapshot);
 
@@ -317,6 +317,7 @@ mod tests {
     fn sample_entity(name: &str, relative_path: &str) -> Entity {
         Entity {
             name: name.to_owned(),
+            parent: None,
             location: SourceLocation {
                 file_path: PathBuf::from(format!("/tmp/project/{relative_path}")),
                 snapshot_path: PathBuf::from(relative_path),
@@ -330,6 +331,15 @@ mod tests {
                 signature: "()".to_owned(),
             },
         }
+    }
+
+    fn snapshot_from_entities(values: Vec<Entity>) -> Snapshot {
+        let mut arena = id_arena::Arena::new();
+        let entities = values
+            .into_iter()
+            .map(|entity| arena.alloc(entity))
+            .collect();
+        Snapshot { arena, entities }
     }
 
     fn difftastic_test_lock() -> &'static Mutex<()> {

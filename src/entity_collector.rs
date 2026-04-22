@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use id_arena::{Arena, Id};
 use ra_ap_syntax::{
     AstNode, Edition, SourceFile, TextRange, TextSize,
     ast::{self, HasAttrs, HasModuleItem, HasName},
@@ -12,9 +13,12 @@ use tracing::{info, info_span};
 
 use crate::{project_discovery::TargetRoot, source_repo::SourceRepo};
 
+pub type EntityId = Id<Entity>;
+
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Entity {
     pub name: String,
+    pub parent: Option<EntityId>,
     pub location: SourceLocation,
     pub source_text: String,
     pub detail: EntityDetail,
@@ -44,20 +48,29 @@ pub enum EntityDetail {
 
 #[derive(Debug)]
 struct ParsedFile {
+    repo_path: PathBuf,
     snapshot_path: PathBuf,
     file_path: PathBuf,
     source_file: SourceFile,
     line_starts: Vec<usize>,
 }
 
+#[derive(Debug)]
+pub struct EntityArena {
+    pub arena: Arena<Entity>,
+    pub entities: Vec<EntityId>,
+}
+
 #[derive(Debug, Clone, Default)]
 struct TraversalContext {
     modules: Vec<String>,
     container: Option<String>,
+    parent: Option<EntityId>,
 }
 
-pub fn collect_entities(repo: &dyn SourceRepo, targets: &[TargetRoot]) -> Result<Vec<Entity>> {
+pub fn collect_entities(repo: &dyn SourceRepo, targets: &[TargetRoot]) -> Result<EntityArena> {
     let _span = info_span!("collect_entities", target_count = targets.len()).entered();
+    let mut arena = Arena::new();
     let mut entities = Vec::new();
 
     info!(crate_count = targets.len(), "collecting workspace crates");
@@ -66,13 +79,13 @@ pub fn collect_entities(repo: &dyn SourceRepo, targets: &[TargetRoot]) -> Result
         let crate_span = info_span!("collect_crate", crate_name = %target.crate_name);
         let _crate_span = crate_span.entered();
         let mut visited = HashSet::new();
-        collect_target_entities(repo, target, &mut visited, &mut entities)?;
+        collect_target_entities(repo, target, &mut visited, &mut arena, &mut entities)?;
         info!(entity_count = entities.len(), "finished crate");
     }
 
-    entities.sort();
+    entities.sort_by(|lhs, rhs| arena[*lhs].cmp(&arena[*rhs]));
     info!(entity_count = entities.len(), "entity collection complete");
-    Ok(entities)
+    Ok(EntityArena { arena, entities })
 }
 
 pub fn render_entity(entity: &Entity) -> String {
@@ -143,24 +156,34 @@ fn collect_target_entities(
     repo: &dyn SourceRepo,
     target: &TargetRoot,
     visited: &mut HashSet<PathBuf>,
-    entities: &mut Vec<Entity>,
+    arena: &mut Arena<Entity>,
+    entities: &mut Vec<EntityId>,
 ) -> Result<()> {
     let parsed = parse_file(repo, &target.root_file)?;
-    visited.insert(parsed.snapshot_path.clone());
-    entities.push(Entity {
-        name: target.crate_name.clone(),
-        location: source_location(&parsed, parsed.source_file.syntax().text_range()),
-        source_text: parsed.source_file.syntax().text().to_string(),
-        detail: EntityDetail::Module { is_inline: false },
-    });
+    visited.insert(parsed.repo_path.clone());
+    let root_id = insert_entity(
+        arena,
+        entities,
+        Entity {
+            name: target.crate_name.clone(),
+            parent: None,
+            location: source_location(&parsed, parsed.source_file.syntax().text_range()),
+            source_text: parsed.source_file.syntax().text().to_string(),
+            detail: EntityDetail::Module { is_inline: false },
+        },
+    );
 
     collect_items(
         repo,
         target,
         &parsed,
         parsed.source_file.items().collect(),
-        &TraversalContext::default(),
+        &TraversalContext {
+            parent: Some(root_id),
+            ..TraversalContext::default()
+        },
         visited,
+        arena,
         entities,
     )
 }
@@ -173,6 +196,7 @@ fn parse_file(repo: &dyn SourceRepo, snapshot_path: &Path) -> Result<ParsedFile>
     let line_starts = compute_line_starts(&text);
 
     Ok(ParsedFile {
+        repo_path: snapshot_path.to_path_buf(),
         snapshot_path: repo.snapshot_path(snapshot_path),
         file_path: repo.file_path(snapshot_path),
         source_file,
@@ -197,7 +221,8 @@ fn collect_items(
     items: Vec<ast::Item>,
     context: &TraversalContext,
     visited: &mut HashSet<PathBuf>,
-    entities: &mut Vec<Entity>,
+    arena: &mut Arena<Entity>,
+    entities: &mut Vec<EntityId>,
 ) -> Result<()> {
     let module_name = context
         .modules
@@ -213,21 +238,42 @@ fn collect_items(
 
         match item {
             ast::Item::Fn(function) => {
-                entities.push(function_entity(target, parsed, &function, context));
+                insert_entity(
+                    arena,
+                    entities,
+                    function_entity(target, parsed, &function, context),
+                );
             }
             ast::Item::Struct(struct_def) => {
-                entities.push(struct_entity(target, parsed, &struct_def, context));
+                insert_entity(
+                    arena,
+                    entities,
+                    struct_entity(target, parsed, &struct_def, context),
+                );
             }
             ast::Item::Enum(enum_def) => {
-                entities.push(enum_entity(target, parsed, &enum_def, context));
+                insert_entity(
+                    arena,
+                    entities,
+                    enum_entity(target, parsed, &enum_def, context),
+                );
             }
             ast::Item::Union(union_def) => {
-                entities.push(union_entity(target, parsed, &union_def, context));
+                insert_entity(
+                    arena,
+                    entities,
+                    union_entity(target, parsed, &union_def, context),
+                );
             }
             ast::Item::Trait(trait_def) => {
-                entities.push(trait_entity(target, parsed, &trait_def, context));
+                let trait_id = insert_entity(
+                    arena,
+                    entities,
+                    trait_entity(target, parsed, &trait_def, context),
+                );
                 let mut nested = context.clone();
                 nested.container = Some(ast_name(&trait_def));
+                nested.parent = Some(trait_id);
                 collect_assoc_functions(
                     target,
                     parsed,
@@ -236,16 +282,26 @@ fn collect_items(
                         .map(|list| list.assoc_items().collect())
                         .unwrap_or_default(),
                     &nested,
+                    arena,
                     entities,
                 );
             }
             ast::Item::TypeAlias(type_alias) => {
-                entities.push(type_alias_entity(target, parsed, &type_alias, context));
+                insert_entity(
+                    arena,
+                    entities,
+                    type_alias_entity(target, parsed, &type_alias, context),
+                );
             }
             ast::Item::Impl(impl_def) => {
-                entities.push(impl_entity(target, parsed, &impl_def, context));
+                let impl_id = insert_entity(
+                    arena,
+                    entities,
+                    impl_entity(target, parsed, &impl_def, context),
+                );
                 let mut nested = context.clone();
                 nested.container = Some(impl_container_name(&impl_def));
+                nested.parent = Some(impl_id);
                 collect_assoc_functions(
                     target,
                     parsed,
@@ -254,14 +310,20 @@ fn collect_items(
                         .map(|list| list.assoc_items().collect())
                         .unwrap_or_default(),
                     &nested,
+                    arena,
                     entities,
                 );
             }
             ast::Item::Module(module) => {
-                entities.push(module_entity(target, parsed, &module, context));
+                let module_id = insert_entity(
+                    arena,
+                    entities,
+                    module_entity(target, parsed, &module, context),
+                );
                 if let Some(item_list) = module.item_list() {
                     let mut nested = context.clone();
                     nested.modules.push(ast_name(&module));
+                    nested.parent = Some(module_id);
                     collect_items(
                         repo,
                         target,
@@ -269,15 +331,17 @@ fn collect_items(
                         item_list.items().collect(),
                         &nested,
                         visited,
+                        arena,
                         entities,
                     )?;
                 } else if let Some(module_file) =
-                    resolve_module_file(repo, &parsed.snapshot_path, &module)?
+                    resolve_module_file(repo, &parsed.repo_path, &module)?
                     && visited.insert(module_file.clone())
                 {
                     let nested_file = parse_file(repo, &module_file)?;
                     let mut nested = context.clone();
                     nested.modules.push(ast_name(&module));
+                    nested.parent = Some(module_id);
                     collect_items(
                         repo,
                         target,
@@ -285,6 +349,7 @@ fn collect_items(
                         nested_file.source_file.items().collect(),
                         &nested,
                         visited,
+                        arena,
                         entities,
                     )?;
                 }
@@ -309,7 +374,8 @@ fn collect_assoc_functions(
     parsed: &ParsedFile,
     assoc_items: Vec<ast::AssocItem>,
     context: &TraversalContext,
-    entities: &mut Vec<Entity>,
+    arena: &mut Arena<Entity>,
+    entities: &mut Vec<EntityId>,
 ) {
     for item in assoc_items {
         if is_test_only(&item) {
@@ -317,9 +383,23 @@ fn collect_assoc_functions(
         }
 
         if let ast::AssocItem::Fn(function) = item {
-            entities.push(function_entity(target, parsed, &function, context));
+            insert_entity(
+                arena,
+                entities,
+                function_entity(target, parsed, &function, context),
+            );
         }
     }
+}
+
+fn insert_entity(
+    arena: &mut Arena<Entity>,
+    entities: &mut Vec<EntityId>,
+    entity: Entity,
+) -> EntityId {
+    let id = arena.alloc(entity);
+    entities.push(id);
+    id
 }
 
 fn module_entity(
@@ -330,6 +410,7 @@ fn module_entity(
 ) -> Entity {
     Entity {
         name: qualified_name(target, context, &ast_name(module)),
+        parent: context.parent,
         location: source_location(parsed, module.syntax().text_range()),
         source_text: module.syntax().text().to_string(),
         detail: EntityDetail::Module {
@@ -352,6 +433,7 @@ fn function_entity(
 
     Entity {
         name: name.join("::"),
+        parent: context.parent,
         location: source_location(parsed, function.syntax().text_range()),
         source_text: function.syntax().text().to_string(),
         detail: EntityDetail::Function {
@@ -368,6 +450,7 @@ fn struct_entity(
 ) -> Entity {
     Entity {
         name: qualified_name(target, context, &ast_name(struct_def)),
+        parent: context.parent,
         location: source_location(parsed, struct_def.syntax().text_range()),
         source_text: struct_def.syntax().text().to_string(),
         detail: EntityDetail::Struct {
@@ -387,6 +470,7 @@ fn enum_entity(
 ) -> Entity {
     Entity {
         name: qualified_name(target, context, &ast_name(enum_def)),
+        parent: context.parent,
         location: source_location(parsed, enum_def.syntax().text_range()),
         source_text: enum_def.syntax().text().to_string(),
         detail: EntityDetail::Enum {
@@ -416,6 +500,7 @@ fn union_entity(
 ) -> Entity {
     Entity {
         name: qualified_name(target, context, &ast_name(union_def)),
+        parent: context.parent,
         location: source_location(parsed, union_def.syntax().text_range()),
         source_text: union_def.syntax().text().to_string(),
         detail: EntityDetail::Union {
@@ -440,6 +525,7 @@ fn trait_entity(
 ) -> Entity {
     Entity {
         name: qualified_name(target, context, &ast_name(trait_def)),
+        parent: context.parent,
         location: source_location(parsed, trait_def.syntax().text_range()),
         source_text: trait_def.syntax().text().to_string(),
         detail: EntityDetail::Trait {
@@ -464,6 +550,7 @@ fn type_alias_entity(
 ) -> Entity {
     Entity {
         name: qualified_name(target, context, &ast_name(type_alias)),
+        parent: context.parent,
         location: source_location(parsed, type_alias.syntax().text_range()),
         source_text: type_alias.syntax().text().to_string(),
         detail: EntityDetail::TypeAlias {
@@ -484,6 +571,7 @@ fn impl_entity(
     let header = impl_header(impl_def);
     Entity {
         name: format!("{}::{}", path_prefix(target, context).join("::"), header),
+        parent: context.parent,
         location: source_location(parsed, impl_def.syntax().text_range()),
         source_text: impl_def.syntax().text().to_string(),
         detail: EntityDetail::Impl {
