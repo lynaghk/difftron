@@ -22,19 +22,21 @@
         {
           \"path\": \"src/lib.rs\",
           \"lhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"relative_path\": \"src/lib.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 41 }\"},
-          \"rhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"relative_path\": \"src/lib.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 42 }\"}
+          \"rhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"relative_path\": \"src/lib.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 42 }\"},
+          \"difftastic_display\": \"ANSI-DIFF\"
         }
       ]
     }"
    :object-type 'plist
    :array-type 'list))
 
-(ert-deftest rust-dive-magit-groups-entities-by-path ()
-  (let* ((entities (plist-get rust-dive-magit-tests--sample-payload :added))
-         (grouped (rust-dive-magit--group-by-path entities)))
-    (should (equal (caar grouped) "src/lib.rs"))
+(ert-deftest rust-dive-magit-groups-items-by-kind ()
+  (let* ((items (rust-dive-magit--diff-items rust-dive-magit-tests--sample-payload))
+         (grouped (rust-dive-magit--group-items-by-kind items)))
+    (should (equal (caar grouped) "function"))
     (should (equal (length grouped) 1))
-    (should (equal (plist-get (cadar grouped) :name) "demo::added"))))
+    (should (equal (plist-get (plist-get (cadar grouped) :entity) :name)
+                   "demo::meaning"))))
 
 (ert-deftest rust-dive-magit-renders-diff-buffer ()
   (with-temp-buffer
@@ -43,9 +45,10 @@
       (rust-dive-magit--insert-payload rust-dive-magit-tests--sample-payload))
     (let ((text (buffer-string)))
       (should (string-match-p "rust_dive diff repo@HEAD~1 -> repo@HEAD" text))
-      (should (string-match-p "Added" text))
-      (should (string-match-p "Modified" text))
-      (should (string-match-p "demo::meaning" text)))))
+      (should (string-match-p "\\* Functions (2)" text))
+      (should (string-match-p "\\*\\* M demo::meaning" text))
+      (should (string-match-p "\\*\\* \\+ demo::added" text))
+      (should (string-match-p "ANSI-DIFF" text)))))
 
 (ert-deftest rust-dive-magit-splits-path-input ()
   (should (equal (rust-dive-magit--split-paths "src/lib.rs, src/main.rs ,")

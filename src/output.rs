@@ -38,15 +38,22 @@ pub fn render_diff(
 ) -> Result<String> {
     match format {
         OutputFormat::Text => render_diff_text(diff),
-        OutputFormat::Json => serde_json::to_string_pretty(&DiffOutput {
-            command: "diff",
-            lhs: SnapshotOutput::from(lhs),
-            rhs: SnapshotOutput::from(rhs),
-            added: diff.added.iter().map(EntityOutput::from).collect(),
-            deleted: diff.deleted.iter().map(EntityOutput::from).collect(),
-            modified: diff.modified.iter().map(ModifiedEntityOutput::from).collect(),
-        })
-        .map_err(Into::into),
+        OutputFormat::Json => {
+            let modified = diff
+                .modified
+                .iter()
+                .map(ModifiedEntityOutput::try_from_change)
+                .collect::<Result<Vec<_>>>()?;
+            serde_json::to_string_pretty(&DiffOutput {
+                command: "diff",
+                lhs: SnapshotOutput::from(lhs),
+                rhs: SnapshotOutput::from(rhs),
+                added: diff.added.iter().map(EntityOutput::from).collect(),
+                deleted: diff.deleted.iter().map(EntityOutput::from).collect(),
+                modified,
+            })
+            .map_err(Into::into)
+        }
     }
 }
 
@@ -138,15 +145,17 @@ struct ModifiedEntityOutput {
     path: String,
     lhs: EntityOutput,
     rhs: EntityOutput,
+    difftastic_display: String,
 }
 
-impl From<&ModifiedEntity> for ModifiedEntityOutput {
-    fn from(value: &ModifiedEntity) -> Self {
-        Self {
+impl ModifiedEntityOutput {
+    fn try_from_change(value: &ModifiedEntity) -> Result<Self> {
+        Ok(Self {
             path: value.lhs.location.relative_path.display().to_string(),
             lhs: EntityOutput::from(&value.lhs),
             rhs: EntityOutput::from(&value.rhs),
-        }
+            difftastic_display: crate::difftastic_renderer::render_modified_entity(value)?,
+        })
     }
 }
 
@@ -183,9 +192,15 @@ impl From<&Entity> for EntityOutput {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        path::{Path, PathBuf},
+        sync::{Mutex, OnceLock},
+    };
 
     use serde_json::Value;
+    use tempfile::TempDir;
 
     use super::*;
     use crate::entity_collector::{EntityDetail, SourceLocation};
@@ -230,7 +245,14 @@ mod tests {
             }],
         };
 
+        let _guard = difftastic_test_lock().lock().unwrap();
+        let previous = std::env::var_os("RUST_DIVE_DIFFT_PATH");
+        let mock = MockDifftastic::new("mock difftastic");
+        unsafe {
+            std::env::set_var("RUST_DIVE_DIFFT_PATH", mock.path());
+        }
         let rendered = render_diff(&lhs, &rhs, &diff, OutputFormat::Json).unwrap();
+        restore_difftastic_env(previous);
         let json: Value = serde_json::from_str(&rendered).unwrap();
 
         assert_eq!(json["command"], "diff");
@@ -238,6 +260,7 @@ mod tests {
         assert_eq!(json["rhs"]["rev"], "HEAD");
         assert_eq!(json["added"][0]["name"], "crate::added");
         assert_eq!(json["modified"][0]["lhs"]["name"], "crate::changed");
+        assert_eq!(json["modified"][0]["difftastic_display"], "mock difftastic");
         assert_eq!(
             json["modified"][0]["rhs"]["source_text"],
             "fn changed() -> u32 { 2 }"
@@ -274,5 +297,47 @@ mod tests {
                 signature: "()".to_owned(),
             },
         }
+    }
+
+    fn difftastic_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn restore_difftastic_env(previous: Option<std::ffi::OsString>) {
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var("RUST_DIVE_DIFFT_PATH", value);
+            },
+            None => unsafe {
+                std::env::remove_var("RUST_DIVE_DIFFT_PATH");
+            },
+        }
+    }
+
+    struct MockDifftastic {
+        _dir: TempDir,
+        path: PathBuf,
+    }
+
+    impl MockDifftastic {
+        fn new(output: &str) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("mock-difft");
+            let script = format!("#!/usr/bin/env bash\nprintf {}\n", shell_quote(output));
+            fs::write(&path, script).unwrap();
+            let mut permissions = fs::metadata(&path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&path, permissions).unwrap();
+            Self { _dir: dir, path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    fn shell_quote(value: &str) -> String {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
     }
 }

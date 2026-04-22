@@ -1,5 +1,6 @@
 use std::{
     fs,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -32,9 +33,11 @@ fn diff_json_emits_modified_entities() {
     repo.commit_all("initial");
     repo.write_lib("pub fn meaning() -> u32 { 42 }\n");
     repo.commit_all("change meaning");
+    let mock_difft = repo.write_executable("mock-difft", "#!/usr/bin/env bash\nprintf 'mock difftastic output'\n");
 
     let output = Command::new(binary_path())
         .current_dir(repo.path())
+        .env("RUST_DIVE_DIFFT_PATH", &mock_difft)
         .args(["diff", "HEAD~1", "HEAD", "--format", "json"])
         .output()
         .expect("failed to run rust_dive");
@@ -51,6 +54,7 @@ fn diff_json_emits_modified_entities() {
         .iter()
         .find(|entry| entry["lhs"]["name"] == "demo::meaning")
         .expect("expected a modified function entry");
+    assert_eq!(meaning["difftastic_display"], "mock difftastic output");
     assert_eq!(
         meaning["rhs"]["source_text"],
         "pub fn meaning() -> u32 { 42 }"
@@ -94,6 +98,18 @@ impl TestRepo {
             fs::create_dir_all(parent).expect("failed to create parent directories");
         }
         fs::write(absolute_path, contents).expect("failed to write file");
+    }
+
+    fn write_executable(&self, relative_path: &str, contents: &str) -> PathBuf {
+        let absolute_path = self.path().join(relative_path);
+        if let Some(parent) = absolute_path.parent() {
+            fs::create_dir_all(parent).expect("failed to create parent directories");
+        }
+        fs::write(&absolute_path, contents).expect("failed to write file");
+        let mut permissions = fs::metadata(&absolute_path).expect("failed to stat file").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&absolute_path, permissions).expect("failed to set permissions");
+        absolute_path
     }
 
     fn commit_all(&self, message: &str) {
