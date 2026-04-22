@@ -212,9 +212,13 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
        (rust-dive-magit--insert-ansi-block
         (or (plist-get item :difftastic-display) "")))
       (_
-       (insert (format "%s\n\n" (plist-get entity :rendered_summary)))
+       (rust-dive-magit--insert-faced-block
+        (format "%s\n\n" (plist-get entity :rendered_summary))
+        (rust-dive-magit--status-face (plist-get item :status)))
        (when-let ((source (plist-get entity :source_text)))
-         (insert source)
+         (rust-dive-magit--insert-faced-block
+          source
+          (rust-dive-magit--status-face (plist-get item :status)))
          (unless (string-suffix-p "\n" source)
            (insert "\n")))))
     (unless (eq (char-before) ?\n)
@@ -230,6 +234,10 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
       (unless (string-suffix-p "\n" text)
         (insert "\n")))
     (ansi-color-apply-on-region start (point))))
+
+(defun rust-dive-magit--insert-faced-block (text face)
+  "Insert TEXT with FACE."
+  (insert (propertize text 'font-lock-face face)))
 
 (defun rust-dive-magit--insert-location-button (entity)
   "Insert a button for ENTITY's source location."
@@ -349,6 +357,13 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     ('added 1)
     ('deleted 2)
     (_ 3)))
+
+(defun rust-dive-magit--status-face (status)
+  "Return the Magit face for STATUS."
+  (pcase status
+    ('added 'magit-diff-added)
+    ('deleted 'magit-diff-removed)
+    (_ 'default)))
 
 (defun rust-dive-magit--split-paths (input)
   "Split comma-separated INPUT into normalized path filters."

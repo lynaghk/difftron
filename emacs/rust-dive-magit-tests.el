@@ -58,6 +58,41 @@
       (should (string-match-p "\\+ demo::added" text))
       (should (string-match-p "ANSI-DIFF" text)))))
 
+(ert-deftest rust-dive-magit-faces-added-and-deleted-entities ()
+  (let* ((payload (json-parse-string
+                   "{
+                      \"command\": \"diff\",
+                      \"lhs\": {\"label\": \"repo@HEAD~1\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD~1\"},
+                      \"rhs\": {\"label\": \"repo@HEAD\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD\"},
+                      \"added\": [
+                        {\"name\": \"demo::added\", \"kind\": \"function\", \"rendered_summary\": \"function demo::added()\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"relative_path\": \"src/lib.rs\", \"start_line\": 10, \"start_col\": 1, \"end_line\": 12, \"end_col\": 2, \"source_text\": \"fn added() {}\"}
+                      ],
+                      \"deleted\": [
+                        {\"name\": \"demo::deleted\", \"kind\": \"function\", \"rendered_summary\": \"function demo::deleted()\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"relative_path\": \"src/lib.rs\", \"start_line\": 20, \"start_col\": 1, \"end_line\": 22, \"end_col\": 2, \"source_text\": \"fn deleted() {}\"}
+                      ],
+                      \"modified\": []
+                    }"
+                   :object-type 'plist
+                   :array-type 'list)))
+    (with-temp-buffer
+      (rust-dive-magit-mode)
+      (let ((inhibit-read-only t))
+        (rust-dive-magit--insert-payload payload))
+      (goto-char (point-min))
+      (search-forward "function demo::added()")
+      (should (eq (get-text-property (match-beginning 0) 'font-lock-face)
+                  'magit-diff-added))
+      (search-forward "fn added() {}")
+      (should (eq (get-text-property (match-beginning 0) 'font-lock-face)
+                  'magit-diff-added))
+      (goto-char (point-min))
+      (search-forward "function demo::deleted()")
+      (should (eq (get-text-property (match-beginning 0) 'font-lock-face)
+                  'magit-diff-removed))
+      (search-forward "fn deleted() {}")
+      (should (eq (get-text-property (match-beginning 0) 'font-lock-face)
+                  'magit-diff-removed)))))
+
 (ert-deftest rust-dive-magit-splits-path-input ()
   (should (equal (rust-dive-magit--split-paths "src/lib.rs, src/main.rs ,")
                  '("src/lib.rs" "src/main.rs")))
