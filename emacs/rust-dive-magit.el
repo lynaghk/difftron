@@ -23,6 +23,16 @@
   "Emacs integration for the rust_dive CLI."
   :group 'tools)
 
+(defface rust-dive-magit-level-1-heading
+  '((t :inherit magit-diff-file-heading))
+  "Face for first nested heading level in Rust Dive buffers."
+  :group 'rust-dive-magit)
+
+(defface rust-dive-magit-level-2-heading
+  '((t :inherit magit-diff-file-heading-selection))
+  "Face for second nested heading level in Rust Dive buffers."
+  :group 'rust-dive-magit)
+
 (defcustom rust-dive-magit-executable "rust_dive"
   "Path to the rust_dive executable."
   :type 'file)
@@ -142,7 +152,7 @@ working tree rooted at the current repository."
    rust-dive-magit--command-args
    rust-dive-magit--payload)
   (with-current-buffer rust-dive-magit-buffer-name
-    (magit-section-show-level-1)))
+    (magit-section-show-level-2)))
 
 (defun rust-dive-magit-visit-thing ()
   "Visit the entity at point or activate a button."
@@ -167,6 +177,7 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         (setq rust-dive-magit--command-args args)
         (setq rust-dive-magit--payload payload)
         (rust-dive-magit--insert-payload payload)
+        (magit-section-show-level-2)
         (goto-char (point-min))))
     (pop-to-buffer buffer)))
 
@@ -222,7 +233,7 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
   (let ((groups (rust-dive-magit--group-items-by-file items)))
     (if groups
         (dolist (group groups)
-          (rust-dive-magit--insert-file-group (car group) (cdr group)))
+          (rust-dive-magit--insert-file-group (car group) (cdr group) 0))
       (insert "No entities\n"))))
 
 (defun rust-dive-magit--insert-kind-group (kind items)
@@ -231,41 +242,42 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     (magit-insert-heading
       (format "%s (%d)" (rust-dive-magit--kind-label kind) (length items)))
     (dolist (group (rust-dive-magit--group-items-by-file items))
-      (rust-dive-magit--insert-file-group (car group) (cdr group)))
+      (rust-dive-magit--insert-file-group (car group) (cdr group) 1))
     (insert "\n")))
 
-(defun rust-dive-magit--insert-file-group (file items)
-  "Insert a file heading for FILE and its ITEMS."
+(defun rust-dive-magit--insert-file-group (file items depth)
+  "Insert a file heading for FILE and its ITEMS at DEPTH."
   (magit-insert-section (rust-dive-file file t)
     (magit-insert-heading
-      (format "%s (%d)" file (length items)))
+      (propertize
+       (format "%s%s (%d)"
+               (rust-dive-magit--indent depth)
+               file
+               (length items))
+       'font-lock-face (rust-dive-magit--heading-face depth)))
     (dolist (item items)
-      (rust-dive-magit--insert-item item))
+      (rust-dive-magit--insert-item item (1+ depth)))
     (insert "\n")))
 
-(defun rust-dive-magit--insert-item (item)
-  "Insert ITEM as a foldable second-level heading."
+(defun rust-dive-magit--insert-item (item depth)
+  "Insert ITEM as a foldable heading at DEPTH."
   (let ((entity (plist-get item :entity)))
     (magit-insert-section (rust-dive-entity item t)
       (magit-insert-heading
-        (propertize (plist-get item :summary)
-                    'font-lock-face 'magit-diff-file-heading))
+        (propertize (format "%s%s"
+                            (rust-dive-magit--indent depth)
+                            (plist-get item :summary))
+                    'font-lock-face (rust-dive-magit--heading-face depth)))
       (add-text-properties
        (oref magit-insert-section--current start)
        (oref magit-insert-section--current content)
        '(mouse-face highlight
          help-echo "RET visits source, TAB toggles section"))
-    (insert "Location: ")
-    (rust-dive-magit--insert-location-button entity)
-    (insert "\n")
     (pcase (plist-get item :status)
       ('modified
        (rust-dive-magit--insert-ansi-block
         (or (plist-get item :difftastic-display) "")))
       (_
-       (rust-dive-magit--insert-faced-block
-        (format "%s\n\n" (plist-get entity :rendered_summary))
-        (rust-dive-magit--status-face (plist-get item :status)))
        (when-let ((source (plist-get entity :source_text)))
          (rust-dive-magit--insert-faced-block
           source
@@ -437,6 +449,17 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
   (pcase rust-dive-magit--grouping
     ('file (rust-dive-magit--insert-file-groups items))
     (_ (rust-dive-magit--insert-kind-groups items))))
+
+(defun rust-dive-magit--indent (depth)
+  "Return indentation for section DEPTH."
+  (make-string (* depth 2) ?\s))
+
+(defun rust-dive-magit--heading-face (depth)
+  "Return the heading face for section DEPTH."
+  (pcase depth
+    (0 'magit-section-heading)
+    (1 'rust-dive-magit-level-1-heading)
+    (_ 'rust-dive-magit-level-2-heading)))
 
 (defun rust-dive-magit--split-paths (input)
   "Split comma-separated INPUT into normalized path filters."
