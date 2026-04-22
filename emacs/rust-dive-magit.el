@@ -17,6 +17,7 @@
 (require 'magit-section)
 (require 'seq)
 (require 'subr-x)
+(require 'transient)
 
 (defgroup rust-dive-magit nil
   "Emacs integration for the rust_dive CLI."
@@ -34,6 +35,8 @@
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map magit-section-mode-map)
     (define-key map (kbd "g") #'rust-dive-magit-refresh)
+    (define-key map (kbd "h") #'rust-dive-magit-dispatch)
+    (define-key map (kbd "?") #'rust-dive-magit-dispatch)
     (define-key map (kbd "RET") #'rust-dive-magit-visit-thing)
     map)
   "Keymap for `rust-dive-magit-mode'.")
@@ -48,6 +51,24 @@
 (define-derived-mode rust-dive-magit-mode magit-section-mode "Rust-Dive"
   "Major mode for rust_dive results."
   (setq-local truncate-lines t))
+
+(transient-define-prefix rust-dive-magit-dispatch ()
+  "Show commands for `rust-dive-magit-mode'."
+  [["Rust Dive"
+    ("g" "Refresh" rust-dive-magit-refresh)
+    ("q" "Quit buffer" quit-window)
+    ("TAB" "Toggle section" magit-section-toggle)
+    ("RET" "Visit thing" rust-dive-magit-visit-thing)]
+   ["Visibility"
+    ("<backtab>" "Cycle all" magit-section-cycle-global)
+    ("1" "Level 1" magit-section-show-level-1)
+    ("2" "Level 2" magit-section-show-level-2)
+    ("3" "Level 3" magit-section-show-level-3)]
+   ["Movement"
+    ("n" "Next section" magit-section-forward)
+    ("p" "Previous section" magit-section-backward)
+    ("M-n" "Next sibling" magit-section-forward-sibling)
+    ("M-p" "Previous sibling" magit-section-backward-sibling)]])
 
 (defun rust-dive-magit-diff (lhs rhs &optional paths)
   "Run `rust_dive diff' for LHS and RHS and display the results.
