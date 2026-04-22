@@ -31,6 +31,11 @@
   "Name of the rust_dive results buffer."
   :type 'string)
 
+(defcustom rust-dive-magit-default-grouping 'kind
+  "Default top-level grouping for Rust Dive buffers."
+  :type '(choice (const :tag "Entity then file" kind)
+                 (const :tag "File then entity" file)))
+
 (defconst rust-dive-magit--magit-diff-suffix
   '("D" "Rust Dive" rust-dive-magit-diff-dwim))
 
@@ -38,6 +43,7 @@
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map magit-section-mode-map)
     (define-key map (kbd "g") #'rust-dive-magit-refresh)
+    (define-key map (kbd "f") #'rust-dive-magit-cycle-grouping)
     (define-key map (kbd "h") #'rust-dive-magit-dispatch)
     (define-key map (kbd "?") #'rust-dive-magit-dispatch)
     (define-key map (kbd "RET") #'rust-dive-magit-visit-thing)
@@ -50,6 +56,8 @@
 (defvar-local rust-dive-magit--command-args nil)
 (defvar-local rust-dive-magit--default-directory nil)
 (defvar-local rust-dive-magit--payload nil)
+(defvar-local rust-dive-magit--grouping nil
+  "Current grouping mode for the Rust Dive buffer.")
 
 (define-derived-mode rust-dive-magit-mode magit-section-mode "Rust-Dive"
   "Major mode for rust_dive results."
@@ -59,6 +67,7 @@
   "Show commands for `rust-dive-magit-mode'."
   [["Rust Dive"
     ("g" "Refresh" rust-dive-magit-refresh)
+    ("f" "Cycle grouping" rust-dive-magit-cycle-grouping)
     ("q" "Quit buffer" quit-window)
     ("TAB" "Toggle section" magit-section-toggle)
     ("RET" "Visit thing" rust-dive-magit-visit-thing)]
@@ -118,6 +127,23 @@ working tree rooted at the current repository."
      rust-dive-magit--command-args
      payload)))
 
+(defun rust-dive-magit-cycle-grouping ()
+  "Cycle the Rust Dive grouping mode for the current buffer."
+  (interactive)
+  (unless rust-dive-magit--payload
+    (user-error "No rust_dive payload is associated with this buffer"))
+  (setq rust-dive-magit-default-grouping
+        (pcase rust-dive-magit--grouping
+          ('kind 'file)
+          (_ 'kind)))
+  (setq rust-dive-magit--grouping rust-dive-magit-default-grouping)
+  (rust-dive-magit--display-buffer
+   rust-dive-magit--default-directory
+   rust-dive-magit--command-args
+   rust-dive-magit--payload)
+  (with-current-buffer rust-dive-magit-buffer-name
+    (magit-section-show-level-1)))
+
 (defun rust-dive-magit-visit-thing ()
   "Visit the entity at point or activate a button."
   (interactive)
@@ -136,6 +162,7 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (rust-dive-magit-mode)
+        (setq rust-dive-magit--grouping rust-dive-magit-default-grouping)
         (setq rust-dive-magit--default-directory default-directory)
         (setq rust-dive-magit--command-args args)
         (setq rust-dive-magit--payload payload)
@@ -155,7 +182,7 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
   "Insert a list-mode PAYLOAD into the current buffer."
   (rust-dive-magit--insert-title
    (format "rust_dive list %s" (plist-get (plist-get payload :snapshot) :label)))
-  (rust-dive-magit--insert-kind-groups
+  (rust-dive-magit--insert-items
    (mapcar #'rust-dive-magit--list-entity->item
            (plist-get payload :entities))))
 
@@ -167,12 +194,19 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
      (format "rust_dive diff %s -> %s"
              (plist-get lhs :label)
              (plist-get rhs :label)))
-    (rust-dive-magit--insert-kind-groups
+    (rust-dive-magit--insert-items
      (rust-dive-magit--diff-items payload))))
 
 (defun rust-dive-magit--insert-title (title)
   "Insert TITLE at the top of the current buffer."
   (insert (propertize title 'font-lock-face 'magit-section-heading))
+  (insert "\n")
+  (insert (propertize
+           (format "Grouping: %s"
+                   (pcase rust-dive-magit--grouping
+                     ('file "File -> Entity")
+                     (_ "Entity -> File")))
+           'font-lock-face 'magit-section-secondary-heading))
   (insert "\n\n"))
 
 (defun rust-dive-magit--insert-kind-groups (items)
@@ -183,11 +217,28 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
           (rust-dive-magit--insert-kind-group (car group) (cdr group)))
       (insert "No entities\n"))))
 
+(defun rust-dive-magit--insert-file-groups (items)
+  "Insert ITEMS grouped by file."
+  (let ((groups (rust-dive-magit--group-items-by-file items)))
+    (if groups
+        (dolist (group groups)
+          (rust-dive-magit--insert-file-group (car group) (cdr group)))
+      (insert "No entities\n"))))
+
 (defun rust-dive-magit--insert-kind-group (kind items)
   "Insert a kind heading for KIND and its ITEMS."
   (magit-insert-section (rust-dive-kind kind t)
     (magit-insert-heading
       (format "%s (%d)" (rust-dive-magit--kind-label kind) (length items)))
+    (dolist (group (rust-dive-magit--group-items-by-file items))
+      (rust-dive-magit--insert-file-group (car group) (cdr group)))
+    (insert "\n")))
+
+(defun rust-dive-magit--insert-file-group (file items)
+  "Insert a file heading for FILE and its ITEMS."
+  (magit-insert-section (rust-dive-file file t)
+    (magit-insert-heading
+      (format "%s (%d)" file (length items)))
     (dolist (item items)
       (rust-dive-magit--insert-item item))
     (insert "\n")))
@@ -314,9 +365,25 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     (mapcar
      (lambda (kind)
        (cons kind
-             (sort (nreverse (gethash kind table))
-                   #'rust-dive-magit--item-lessp)))
+             (nreverse (gethash kind table))))
      (sort kinds #'rust-dive-magit--kind-lessp))))
+
+(defun rust-dive-magit--group-items-by-file (items)
+  "Group ITEMS by relative path."
+  (let ((table (make-hash-table :test #'equal))
+        files)
+    (dolist (item items)
+      (let ((file (plist-get (plist-get item :entity) :relative_path)))
+        (unless (gethash file table)
+          (push file files)
+          (puthash file nil table))
+        (puthash file (cons item (gethash file table)) table)))
+    (mapcar
+     (lambda (file)
+       (cons file
+             (sort (nreverse (gethash file table))
+                   #'rust-dive-magit--item-lessp)))
+     (sort files #'string<))))
 
 (defun rust-dive-magit--item-lessp (lhs rhs)
   "Return non-nil when LHS should sort before RHS."
@@ -364,6 +431,12 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     ('added 'magit-diff-added)
     ('deleted 'magit-diff-removed)
     (_ 'default)))
+
+(defun rust-dive-magit--insert-items (items)
+  "Insert ITEMS using the current grouping mode."
+  (pcase rust-dive-magit--grouping
+    ('file (rust-dive-magit--insert-file-groups items))
+    (_ (rust-dive-magit--insert-kind-groups items))))
 
 (defun rust-dive-magit--split-paths (input)
   "Split comma-separated INPUT into normalized path filters."
