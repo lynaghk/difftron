@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 
+"${SCRIPT_DIR}/setup-test-deps.sh"
+
 if command -v emacs >/dev/null 2>&1; then
   EMACS_BIN=$(command -v emacs)
 elif command -v emacs-nox >/dev/null 2>&1; then
