@@ -15,6 +15,7 @@ fi
 
 cd "${REPO_ROOT}"
 "${EMACS_BIN}" -Q --batch \
+  -l "${REPO_ROOT}/emacs/test-config/init.el" \
   -L "${REPO_ROOT}/emacs" \
   -l rust-dive-magit-tests.el \
   -f ert-run-tests-batch-and-exit

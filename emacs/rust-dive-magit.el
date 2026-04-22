@@ -14,7 +14,7 @@
 (require 'button)
 (require 'cl-lib)
 (require 'json)
-(require 'outline)
+(require 'magit-section)
 (require 'seq)
 (require 'subr-x)
 
@@ -30,24 +30,11 @@
   "Name of the rust_dive results buffer."
   :type 'string)
 
-(defface rust-dive-magit-heading
-  '((t :inherit bold))
-  "Face used for rust_dive section headings."
-  :group 'rust-dive-magit)
-
-(defface rust-dive-magit-summary
-  '((t :inherit default))
-  "Face used for entity summary headings."
-  :group 'rust-dive-magit)
-
 (defvar rust-dive-magit-mode-map
   (let ((map (make-sparse-keymap)))
-    (set-keymap-parent map special-mode-map)
+    (set-keymap-parent map magit-section-mode-map)
     (define-key map (kbd "g") #'rust-dive-magit-refresh)
     (define-key map (kbd "RET") #'rust-dive-magit-visit-thing)
-    (define-key map (kbd "<tab>") #'rust-dive-magit-toggle-section)
-    (define-key map (kbd "TAB") #'rust-dive-magit-toggle-section)
-    (define-key map (kbd "<backtab>") #'rust-dive-magit-cycle-buffer)
     map)
   "Keymap for `rust-dive-magit-mode'.")
 
@@ -58,12 +45,9 @@
 (defvar-local rust-dive-magit--default-directory nil)
 (defvar-local rust-dive-magit--payload nil)
 
-(define-derived-mode rust-dive-magit-mode special-mode "Rust-Dive"
+(define-derived-mode rust-dive-magit-mode magit-section-mode "Rust-Dive"
   "Major mode for rust_dive results."
-  (setq-local truncate-lines t)
-  (setq-local outline-regexp "\\*+ ")
-  (setq-local outline-level #'rust-dive-magit--outline-level)
-  (outline-minor-mode 1))
+  (setq-local truncate-lines t))
 
 (defun rust-dive-magit-diff (lhs rhs &optional paths)
   "Run `rust_dive diff' for LHS and RHS and display the results.
@@ -96,33 +80,15 @@ working tree rooted at the current repository."
      rust-dive-magit--command-args
      payload)))
 
-(defun rust-dive-magit-toggle-section ()
-  "Toggle the outline section at point."
-  (interactive)
-  (if (fboundp 'outline-cycle)
-      (outline-cycle)
-    (save-excursion
-      (outline-back-to-heading t)
-      (outline-toggle-children))))
-
-(defun rust-dive-magit-cycle-buffer ()
-  "Cycle visibility for the entire buffer."
-  (interactive)
-  (if (fboundp 'outline-cycle-buffer)
-      (outline-cycle-buffer)
-    (outline-show-all)))
-
 (defun rust-dive-magit-visit-thing ()
   "Visit the entity at point or activate a button."
   (interactive)
-  (cond
-   ((button-at (point))
-    (push-button))
-   ((get-text-property (point) 'rust-dive-entity)
-    (rust-dive-magit--visit-entity
-     (get-text-property (point) 'rust-dive-entity)))
-   (t
-    (rust-dive-magit-toggle-section))))
+  (if-let* ((section (rust-dive-magit--entity-section-at-point))
+            (entity (plist-get (oref section value) :entity)))
+      (rust-dive-magit--visit-entity entity)
+    (if (button-at (point))
+        (push-button)
+      (magit-section-toggle (magit-current-section)))))
 
 (defun rust-dive-magit--display-buffer (default-directory args payload)
   "Render PAYLOAD in the dedicated buffer.
@@ -136,24 +102,16 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         (setq rust-dive-magit--command-args args)
         (setq rust-dive-magit--payload payload)
         (rust-dive-magit--insert-payload payload)
-        (rust-dive-magit--collapse-to-kind-headings)
         (goto-char (point-min))))
     (pop-to-buffer buffer)))
 
-(defun rust-dive-magit--collapse-to-kind-headings ()
-  "Collapse the buffer to the top-level kind headings."
-  (save-excursion
-    (goto-char (point-min))
-    (when (re-search-forward outline-regexp nil t)
-      (goto-char (match-beginning 0))
-      (outline-hide-sublevels 1))))
-
 (defun rust-dive-magit--insert-payload (payload)
   "Insert PAYLOAD into the current buffer."
-  (pcase (plist-get payload :command)
-    ("diff" (rust-dive-magit--insert-diff payload))
-    ("list" (rust-dive-magit--insert-list payload))
-    (_ (insert (format "Unsupported rust_dive command: %S" payload)))))
+  (magit-insert-section (rust-dive-root)
+    (pcase (plist-get payload :command)
+      ("diff" (rust-dive-magit--insert-diff payload))
+      ("list" (rust-dive-magit--insert-list payload))
+      (_ (insert (format "Unsupported rust_dive command: %S" payload))))))
 
 (defun rust-dive-magit--insert-list (payload)
   "Insert a list-mode PAYLOAD into the current buffer."
@@ -176,7 +134,7 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
 
 (defun rust-dive-magit--insert-title (title)
   "Insert TITLE at the top of the current buffer."
-  (insert (propertize title 'face 'rust-dive-magit-heading))
+  (insert (propertize title 'font-lock-face 'magit-section-heading))
   (insert "\n\n"))
 
 (defun rust-dive-magit--insert-kind-groups (items)
@@ -189,25 +147,25 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
 
 (defun rust-dive-magit--insert-kind-group (kind items)
   "Insert a kind heading for KIND and its ITEMS."
-  (insert (propertize
-           (format "* %s (%d)\n" (rust-dive-magit--kind-label kind) (length items))
-           'face 'rust-dive-magit-heading))
-  (dolist (item items)
-    (rust-dive-magit--insert-item item))
-  (insert "\n"))
+  (magit-insert-section (rust-dive-kind kind t)
+    (magit-insert-heading
+      (format "%s (%d)" (rust-dive-magit--kind-label kind) (length items)))
+    (dolist (item items)
+      (rust-dive-magit--insert-item item))
+    (insert "\n")))
 
 (defun rust-dive-magit--insert-item (item)
   "Insert ITEM as a foldable second-level heading."
-  (let* ((entity (plist-get item :entity))
-         (heading-start (point)))
-    (insert (propertize
-             (format "** %s\n" (plist-get item :summary))
-             'face 'rust-dive-magit-summary))
-    (add-text-properties
-     heading-start (1- (point))
-     `(rust-dive-entity ,entity
-       mouse-face highlight
-       help-echo "RET visits source, TAB toggles section"))
+  (let ((entity (plist-get item :entity)))
+    (magit-insert-section (rust-dive-entity item t)
+      (magit-insert-heading
+        (propertize (plist-get item :summary)
+                    'font-lock-face 'magit-diff-file-heading))
+      (add-text-properties
+       (oref magit-insert-section--current start)
+       (oref magit-insert-section--current content)
+       '(mouse-face highlight
+         help-echo "RET visits source, TAB toggles section"))
     (insert "Location: ")
     (rust-dive-magit--insert-location-button entity)
     (insert "\n")
@@ -223,7 +181,7 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
            (insert "\n")))))
     (unless (eq (char-before) ?\n)
       (insert "\n"))
-    (insert "\n")))
+      (insert "\n"))))
 
 (defun rust-dive-magit--insert-ansi-block (text)
   "Insert TEXT and apply ANSI color escapes."
@@ -354,10 +312,6 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     ('deleted 2)
     (_ 3)))
 
-(defun rust-dive-magit--outline-level ()
-  "Return the outline level at point."
-  (- (match-end 0) (match-beginning 0) 1))
-
 (defun rust-dive-magit--split-paths (input)
   "Split comma-separated INPUT into normalized path filters."
   (if (string-empty-p input)
@@ -394,6 +348,14 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
            (ignore-errors (magit-toplevel)))
       (locate-dominating-file default-directory ".git")
       (user-error "Not inside a Git repository")))
+
+(defun rust-dive-magit--entity-section-at-point ()
+  "Return the nearest entity section at point, if any."
+  (let ((section (magit-current-section)))
+    (while (and section
+                (not (eq (oref section type) 'rust-dive-entity)))
+      (setq section (oref section parent)))
+    section))
 
 (provide 'rust-dive-magit)
 
