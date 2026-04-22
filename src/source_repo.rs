@@ -8,7 +8,8 @@ use gix::bstr::ByteSlice;
 
 pub trait SourceRepo {
     fn root(&self) -> &Path;
-    fn display_path(&self, path: &Path) -> PathBuf;
+    fn file_path(&self, path: &Path) -> PathBuf;
+    fn snapshot_path(&self, path: &Path) -> PathBuf;
     fn read_file(&self, path: &Path) -> Result<Option<String>>;
     fn is_file(&self, path: &Path) -> Result<bool>;
     fn is_dir(&self, path: &Path) -> Result<bool>;
@@ -39,8 +40,12 @@ impl SourceRepo for FsSourceRepo {
         &self.root
     }
 
-    fn display_path(&self, path: &Path) -> PathBuf {
+    fn file_path(&self, path: &Path) -> PathBuf {
         self.absolute_path(path)
+    }
+
+    fn snapshot_path(&self, path: &Path) -> PathBuf {
+        path.to_path_buf()
     }
 
     fn read_file(&self, path: &Path) -> Result<Option<String>> {
@@ -77,6 +82,98 @@ impl SourceRepo for FsSourceRepo {
                 .expect("directory entries should stay within the source root")
                 .to_path_buf();
             children.push(relative_path);
+        }
+
+        children.sort();
+        Ok(children)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SingleFileSourceRepo {
+    file_path: PathBuf,
+    base_dir: PathBuf,
+    display_base: Option<PathBuf>,
+}
+
+impl SingleFileSourceRepo {
+    pub fn new(file_path: PathBuf, display_base: Option<PathBuf>) -> Result<Self> {
+        let base_dir = file_path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .context("file snapshot has no parent directory")?
+            .to_path_buf();
+        Ok(Self {
+            file_path,
+            base_dir,
+            display_base,
+        })
+    }
+
+    fn absolute_path(&self, path: &Path) -> PathBuf {
+        if path.as_os_str().is_empty() {
+            self.file_path.clone()
+        } else if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.base_dir.join(path)
+        }
+    }
+}
+
+impl SourceRepo for SingleFileSourceRepo {
+    fn root(&self) -> &Path {
+        &self.file_path
+    }
+
+    fn file_path(&self, path: &Path) -> PathBuf {
+        self.absolute_path(path)
+    }
+
+    fn snapshot_path(&self, path: &Path) -> PathBuf {
+        let absolute_path = self.absolute_path(path);
+        if let Some(display_base) = &self.display_base
+            && let Ok(snapshot_path) = absolute_path.strip_prefix(display_base)
+        {
+            return snapshot_path.to_path_buf();
+        }
+        absolute_path
+    }
+
+    fn read_file(&self, path: &Path) -> Result<Option<String>> {
+        let absolute_path = self.absolute_path(path);
+        match fs::read_to_string(&absolute_path) {
+            Ok(text) => Ok(Some(text)),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => {
+                Err(err).with_context(|| format!("failed to read {}", absolute_path.display()))
+            }
+        }
+    }
+
+    fn is_file(&self, path: &Path) -> Result<bool> {
+        Ok(self.absolute_path(path).is_file())
+    }
+
+    fn is_dir(&self, path: &Path) -> Result<bool> {
+        Ok(self.absolute_path(path).is_dir())
+    }
+
+    fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>> {
+        let absolute_path = self.absolute_path(path);
+        let entries = fs::read_dir(&absolute_path)
+            .with_context(|| format!("failed to read directory {}", absolute_path.display()))?;
+        let mut children = Vec::new();
+
+        for entry in entries {
+            let entry = entry
+                .with_context(|| format!("failed to read entry in {}", absolute_path.display()))?;
+            let child = entry.path();
+            let snapshot_path = child
+                .strip_prefix(&self.base_dir)
+                .expect("directory entries should stay within the source base")
+                .to_path_buf();
+            children.push(snapshot_path);
         }
 
         children.sort();
@@ -165,8 +262,12 @@ impl SourceRepo for GitTreeSourceRepo {
         &self.repo_root
     }
 
-    fn display_path(&self, path: &Path) -> PathBuf {
+    fn file_path(&self, path: &Path) -> PathBuf {
         self.repo_root.join(path)
+    }
+
+    fn snapshot_path(&self, path: &Path) -> PathBuf {
+        path.to_path_buf()
     }
 
     fn read_file(&self, path: &Path) -> Result<Option<String>> {

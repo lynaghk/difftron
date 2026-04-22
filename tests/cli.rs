@@ -113,6 +113,57 @@ fn diff_width_is_forwarded_to_difftastic() {
     assert!(display.contains("--width 120"), "display was: {display}");
 }
 
+#[test]
+fn diff_json_accepts_single_files() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let lhs = repo_root.join("example-diffs/parent-child-changes/lhs.rs");
+    let rhs = repo_root.join("example-diffs/parent-child-changes/rhs.rs");
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let mock_difft = temp_dir.path().join("mock-difft");
+    fs::write(
+        &mock_difft,
+        "#!/usr/bin/env bash\nprintf 'mock difftastic output'\n",
+    )
+    .expect("failed to write mock difftastic");
+    let mut permissions = fs::metadata(&mock_difft)
+        .expect("failed to stat mock difftastic")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&mock_difft, permissions)
+        .expect("failed to set mock difftastic permissions");
+
+    let output = Command::new(binary_path())
+        .current_dir(&repo_root)
+        .env("RUST_DIVE_DIFFT_PATH", &mock_difft)
+        .args([
+            "diff",
+            lhs.to_str().expect("lhs path should be valid utf-8"),
+            rhs.to_str().expect("rhs path should be valid utf-8"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("failed to run rust_dive");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    assert_eq!(json["command"], "diff");
+    assert_eq!(json["lhs"]["kind"], "file");
+    assert_eq!(json["rhs"]["kind"], "file");
+    assert!(
+        json["modified"]
+            .as_array()
+            .expect("modified should be an array")
+            .iter()
+            .any(|entry| entry["rhs"]["name"] == "file::demo::compute")
+    );
+}
+
 fn binary_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_rust_dive"))
 }

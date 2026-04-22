@@ -15,14 +15,14 @@
       \"lhs\": {\"label\": \"repo@HEAD~1\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD~1\"},
       \"rhs\": {\"label\": \"repo@HEAD\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD\"},
       \"added\": [
-        {\"name\": \"demo::added\", \"kind\": \"function\", \"rendered_summary\": \"function demo::added() @ /tmp/repo/src/lib.rs:10:1-12:2\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"relative_path\": \"src/lib.rs\", \"start_line\": 10, \"start_col\": 1, \"end_line\": 12, \"end_col\": 2, \"source_text\": \"fn added() {}\"}
+        {\"name\": \"demo::added\", \"kind\": \"function\", \"rendered_summary\": \"function demo::added() @ /tmp/repo/src/lib.rs:10:1-12:2\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"snapshot_path\": \"src/lib.rs\", \"start_line\": 10, \"start_col\": 1, \"end_line\": 12, \"end_col\": 2, \"source_text\": \"fn added() {}\"}
       ],
       \"deleted\": [],
       \"modified\": [
         {
           \"path\": \"src/lib.rs\",
-          \"lhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"relative_path\": \"src/lib.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 41 }\"},
-          \"rhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"relative_path\": \"src/lib.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 42 }\"},
+          \"lhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"snapshot_path\": \"src/lib.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 41 }\"},
+          \"rhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"snapshot_path\": \"src/lib.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 42 }\"},
           \"difftastic_display\": \"ANSI-DIFF\"
         }
       ]
@@ -37,16 +37,16 @@
       \"lhs\": {\"label\": \"repo@HEAD~1\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD~1\"},
       \"rhs\": {\"label\": \"repo@HEAD\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD\"},
       \"added\": [
-        {\"name\": \"demo::added\", \"kind\": \"function\", \"rendered_summary\": \"function demo::added()\", \"file_path\": \"/tmp/repo/src/a.rs\", \"relative_path\": \"src/a.rs\", \"start_line\": 10, \"start_col\": 1, \"end_line\": 12, \"end_col\": 2, \"source_text\": \"fn added() {}\"}
+        {\"name\": \"demo::added\", \"kind\": \"function\", \"rendered_summary\": \"function demo::added()\", \"file_path\": \"/tmp/repo/src/a.rs\", \"snapshot_path\": \"src/a.rs\", \"start_line\": 10, \"start_col\": 1, \"end_line\": 12, \"end_col\": 2, \"source_text\": \"fn added() {}\"}
       ],
       \"deleted\": [
-        {\"name\": \"demo::old_struct\", \"kind\": \"struct\", \"rendered_summary\": \"struct demo::old_struct\", \"file_path\": \"/tmp/repo/src/b.rs\", \"relative_path\": \"src/b.rs\", \"start_line\": 20, \"start_col\": 1, \"end_line\": 22, \"end_col\": 2, \"source_text\": \"struct Old;\"}
+        {\"name\": \"demo::old_struct\", \"kind\": \"struct\", \"rendered_summary\": \"struct demo::old_struct\", \"file_path\": \"/tmp/repo/src/b.rs\", \"snapshot_path\": \"src/b.rs\", \"start_line\": 20, \"start_col\": 1, \"end_line\": 22, \"end_col\": 2, \"source_text\": \"struct Old;\"}
       ],
       \"modified\": [
         {
           \"path\": \"src/b.rs\",
-          \"lhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning()\", \"file_path\": \"/tmp/repo/src/b.rs\", \"relative_path\": \"src/b.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 41 }\"},
-          \"rhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning()\", \"file_path\": \"/tmp/repo/src/b.rs\", \"relative_path\": \"src/b.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 42 }\"},
+          \"lhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning()\", \"file_path\": \"/tmp/repo/src/b.rs\", \"snapshot_path\": \"src/b.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 41 }\"},
+          \"rhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning()\", \"file_path\": \"/tmp/repo/src/b.rs\", \"snapshot_path\": \"src/b.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 42 }\"},
           \"difftastic_display\": \"ANSI-DIFF\"
         }
       ]
@@ -159,10 +159,10 @@
                       \"lhs\": {\"label\": \"repo@HEAD~1\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD~1\"},
                       \"rhs\": {\"label\": \"repo@HEAD\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD\"},
                       \"added\": [
-                        {\"name\": \"demo::added\", \"kind\": \"function\", \"rendered_summary\": \"function demo::added()\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"relative_path\": \"src/lib.rs\", \"start_line\": 10, \"start_col\": 1, \"end_line\": 12, \"end_col\": 2, \"source_text\": \"fn added() {}\"}
+                        {\"name\": \"demo::added\", \"kind\": \"function\", \"rendered_summary\": \"function demo::added()\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"snapshot_path\": \"src/lib.rs\", \"start_line\": 10, \"start_col\": 1, \"end_line\": 12, \"end_col\": 2, \"source_text\": \"fn added() {}\"}
                       ],
                       \"deleted\": [
-                        {\"name\": \"demo::deleted\", \"kind\": \"function\", \"rendered_summary\": \"function demo::deleted()\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"relative_path\": \"src/lib.rs\", \"start_line\": 20, \"start_col\": 1, \"end_line\": 22, \"end_col\": 2, \"source_text\": \"fn deleted() {}\"}
+                        {\"name\": \"demo::deleted\", \"kind\": \"function\", \"rendered_summary\": \"function demo::deleted()\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"snapshot_path\": \"src/lib.rs\", \"start_line\": 20, \"start_col\": 1, \"end_line\": 22, \"end_col\": 2, \"source_text\": \"fn deleted() {}\"}
                       ],
                       \"modified\": []
                     }"

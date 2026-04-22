@@ -23,7 +23,7 @@ pub struct Entity {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SourceLocation {
     pub file_path: PathBuf,
-    pub relative_path: PathBuf,
+    pub snapshot_path: PathBuf,
     pub start_line: u32,
     pub start_col: u32,
     pub end_line: u32,
@@ -44,8 +44,8 @@ pub enum EntityDetail {
 
 #[derive(Debug)]
 struct ParsedFile {
-    relative_path: PathBuf,
-    display_path: PathBuf,
+    snapshot_path: PathBuf,
+    file_path: PathBuf,
     source_file: SourceFile,
     line_starts: Vec<usize>,
 }
@@ -146,7 +146,7 @@ fn collect_target_entities(
     entities: &mut Vec<Entity>,
 ) -> Result<()> {
     let parsed = parse_file(repo, &target.root_file)?;
-    visited.insert(parsed.relative_path.clone());
+    visited.insert(parsed.snapshot_path.clone());
     entities.push(Entity {
         name: target.crate_name.clone(),
         location: source_location(&parsed, parsed.source_file.syntax().text_range()),
@@ -165,16 +165,16 @@ fn collect_target_entities(
     )
 }
 
-fn parse_file(repo: &dyn SourceRepo, relative_path: &Path) -> Result<ParsedFile> {
+fn parse_file(repo: &dyn SourceRepo, snapshot_path: &Path) -> Result<ParsedFile> {
     let text = repo
-        .read_file(relative_path)?
-        .with_context(|| format!("missing {}", relative_path.display()))?;
+        .read_file(snapshot_path)?
+        .with_context(|| format!("missing {}", snapshot_path.display()))?;
     let source_file = SourceFile::parse(&text, Edition::CURRENT).tree();
     let line_starts = compute_line_starts(&text);
 
     Ok(ParsedFile {
-        relative_path: relative_path.to_path_buf(),
-        display_path: repo.display_path(relative_path),
+        snapshot_path: repo.snapshot_path(snapshot_path),
+        file_path: repo.file_path(snapshot_path),
         source_file,
         line_starts,
     })
@@ -272,7 +272,7 @@ fn collect_items(
                         entities,
                     )?;
                 } else if let Some(module_file) =
-                    resolve_module_file(repo, &parsed.relative_path, &module)?
+                    resolve_module_file(repo, &parsed.snapshot_path, &module)?
                     && visited.insert(module_file.clone())
                 {
                     let nested_file = parse_file(repo, &module_file)?;
@@ -615,8 +615,8 @@ fn source_location(parsed: &ParsedFile, range: TextRange) -> SourceLocation {
     let end = line_col(&parsed.line_starts, range.end());
 
     SourceLocation {
-        file_path: parsed.display_path.clone(),
-        relative_path: parsed.relative_path.clone(),
+        file_path: parsed.file_path.clone(),
+        snapshot_path: parsed.snapshot_path.clone(),
         start_line: start.0,
         start_col: start.1,
         end_line: end.0,

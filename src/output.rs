@@ -1,5 +1,6 @@
 use anyhow::Result;
 use serde::Serialize;
+use tracing::{info, info_span};
 
 use crate::{
     entity_collector::{Entity, entity_kind_name, render_entity},
@@ -41,14 +42,25 @@ pub fn render_diff(
     format: OutputFormat,
     width: Option<usize>,
 ) -> Result<String> {
+    let _span = info_span!(
+        "render_diff",
+        format = ?format,
+        added = diff.added.len(),
+        deleted = diff.deleted.len(),
+        modified = diff.modified.len(),
+        width = width
+    )
+    .entered();
     match format {
         OutputFormat::Text => render_diff_text(diff, width),
         OutputFormat::Json => {
+            info!("rendering modified entities for json output");
             let modified = diff
                 .modified
                 .iter()
                 .map(|change| ModifiedEntityOutput::try_from_change(change, width))
                 .collect::<Result<Vec<_>>>()?;
+            info!("serializing diff json");
             serde_json::to_string_pretty(&DiffOutput {
                 command: "diff",
                 lhs: SnapshotOutput::from(lhs),
@@ -72,6 +84,14 @@ fn render_list_text(snapshot: &Snapshot) -> String {
 }
 
 fn render_diff_text(diff: &DiffResult, width: Option<usize>) -> Result<String> {
+    let _span = info_span!(
+        "render_diff_text",
+        added = diff.added.len(),
+        deleted = diff.deleted.len(),
+        modified = diff.modified.len(),
+        width = width
+    )
+    .entered();
     let mut sections = Vec::new();
 
     for entity in &diff.deleted {
@@ -137,6 +157,12 @@ impl From<&SnapshotSpec> for SnapshotOutput {
                 root: root.display().to_string(),
                 rev: None,
             },
+            SnapshotSpec::File { path, .. } => Self {
+                label: snapshot_label(value),
+                kind: "file",
+                root: path.display().to_string(),
+                rev: None,
+            },
             SnapshotSpec::GitRevision { repo_root, rev } => Self {
                 label: snapshot_label(value),
                 kind: "git_revision",
@@ -158,7 +184,7 @@ struct ModifiedEntityOutput {
 impl ModifiedEntityOutput {
     fn try_from_change(value: &ModifiedEntity, width: Option<usize>) -> Result<Self> {
         Ok(Self {
-            path: value.lhs.location.relative_path.display().to_string(),
+            path: value.lhs.location.snapshot_path.display().to_string(),
             lhs: EntityOutput::from(&value.lhs),
             rhs: EntityOutput::from(&value.rhs),
             difftastic_display: crate::difftastic_renderer::render_modified_entity(value, width)?,
@@ -172,7 +198,7 @@ struct EntityOutput {
     kind: &'static str,
     rendered_summary: String,
     file_path: String,
-    relative_path: String,
+    snapshot_path: String,
     start_line: u32,
     start_col: u32,
     end_line: u32,
@@ -187,7 +213,7 @@ impl From<&Entity> for EntityOutput {
             kind: entity_kind_name(&value.detail),
             rendered_summary: render_entity(value),
             file_path: value.location.file_path.display().to_string(),
-            relative_path: value.location.relative_path.display().to_string(),
+            snapshot_path: value.location.snapshot_path.display().to_string(),
             start_line: value.location.start_line,
             start_col: value.location.start_col,
             end_line: value.location.end_line,
@@ -227,7 +253,7 @@ mod tests {
         assert_eq!(json["command"], "list");
         assert_eq!(json["snapshot"]["kind"], "directory");
         assert_eq!(json["entities"][0]["kind"], "function");
-        assert_eq!(json["entities"][0]["relative_path"], "src/lib.rs");
+        assert_eq!(json["entities"][0]["snapshot_path"], "src/lib.rs");
     }
 
     #[test]
@@ -293,7 +319,7 @@ mod tests {
             name: name.to_owned(),
             location: SourceLocation {
                 file_path: PathBuf::from(format!("/tmp/project/{relative_path}")),
-                relative_path: PathBuf::from(relative_path),
+                snapshot_path: PathBuf::from(relative_path),
                 start_line: 1,
                 start_col: 1,
                 end_line: 1,

@@ -6,10 +6,18 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use tempfile::Builder;
+use tracing::{info, info_span};
 
 use crate::snapshot::ModifiedEntity;
 
 pub fn render_modified_entity(change: &ModifiedEntity, width: Option<usize>) -> Result<String> {
+    let _span = info_span!(
+        "render_modified_entity",
+        entity = %change.lhs.name,
+        path = %change.lhs.location.snapshot_path.display(),
+        width = width
+    )
+    .entered();
     let temp_dir = tempfile::tempdir().context("failed to create temporary directory")?;
     let lhs_path = write_entity_source(temp_dir.path(), "lhs", &change.lhs.source_text)?;
     let rhs_path = write_entity_source(temp_dir.path(), "rhs", &change.rhs.source_text)?;
@@ -36,6 +44,12 @@ pub fn render_modified_entity(change: &ModifiedEntity, width: Option<usize>) -> 
         .arg("100644")
         .output()
         .with_context(|| format!("failed to run difftastic for {}", change.lhs.name))?;
+    info!(
+        status = ?output.status.code(),
+        stdout_bytes = output.stdout.len(),
+        stderr_bytes = output.stderr.len(),
+        "finished difftastic subprocess"
+    );
 
     if !output.status.success() && output.stdout.is_empty() {
         let stderr = String::from_utf8_lossy(&output.stderr);

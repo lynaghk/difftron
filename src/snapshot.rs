@@ -3,19 +3,29 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use tracing::{info, info_span};
 
 use crate::{
     entity_collector::{Entity, EntityDetail, collect_entities},
+    project_discovery::TargetRoot,
     project_discovery::discover_targets,
-    source_repo::{FsSourceRepo, GitTreeSourceRepo, SourceRepo},
+    source_repo::{FsSourceRepo, GitTreeSourceRepo, SingleFileSourceRepo, SourceRepo},
 };
 
 #[derive(Debug, Clone)]
 pub enum SnapshotSpec {
-    Directory { root: PathBuf },
-    GitRevision { repo_root: PathBuf, rev: String },
+    Directory {
+        root: PathBuf,
+    },
+    File {
+        path: PathBuf,
+        display_base: Option<PathBuf>,
+    },
+    GitRevision {
+        repo_root: PathBuf,
+        rev: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +48,9 @@ pub struct ModifiedEntity {
 
 pub fn resolve_snapshot_spec(arg: &str, cwd: &Path) -> Result<SnapshotSpec> {
     let candidate = PathBuf::from(arg);
+    let cwd = cwd
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", cwd.display()))?;
     let resolved = if candidate.is_absolute() {
         candidate
     } else {
@@ -46,7 +59,11 @@ pub fn resolve_snapshot_spec(arg: &str, cwd: &Path) -> Result<SnapshotSpec> {
 
     if resolved.exists() {
         if resolved.is_file() {
-            bail!("{arg} is a file; expected a directory");
+            let path = resolved
+                .canonicalize()
+                .with_context(|| format!("failed to resolve {}", resolved.display()))?;
+            let display_base = path_starts_with(&path, &cwd).then_some(cwd.clone());
+            return Ok(SnapshotSpec::File { path, display_base });
         }
         if resolved.is_dir() {
             return Ok(SnapshotSpec::Directory {
@@ -57,7 +74,7 @@ pub fn resolve_snapshot_spec(arg: &str, cwd: &Path) -> Result<SnapshotSpec> {
         }
     }
 
-    let repo = gix::discover(cwd).with_context(|| {
+    let repo = gix::discover(&cwd).with_context(|| {
         format!("{arg} is not a directory and {cwd:?} is not inside a git repository")
     })?;
     let repo_root = repo_workdir(&repo)?;
@@ -80,7 +97,7 @@ pub fn build_snapshot(spec: &SnapshotSpec) -> Result<Snapshot> {
 
     let source = open_source_repo(spec)?;
     info!(root = %source.root().display(), "discovering targets");
-    let targets = discover_targets(source.as_ref())?;
+    let targets = discover_snapshot_targets(spec, source.as_ref())?;
     info!(target_count = targets.len(), "discovered targets");
     let entities = collect_entities(source.as_ref(), &targets)?;
 
@@ -176,6 +193,7 @@ pub fn render_diff_raw(diff: &DiffResult) -> Vec<String> {
 pub fn snapshot_label(spec: &SnapshotSpec) -> String {
     match spec {
         SnapshotSpec::Directory { root } => root.display().to_string(),
+        SnapshotSpec::File { path, .. } => path.display().to_string(),
         SnapshotSpec::GitRevision { repo_root, rev } => format!("{}@{rev}", repo_root.display()),
     }
 }
@@ -183,11 +201,44 @@ pub fn snapshot_label(spec: &SnapshotSpec) -> String {
 fn open_source_repo(spec: &SnapshotSpec) -> Result<Box<dyn SourceRepo>> {
     match spec {
         SnapshotSpec::Directory { root } => Ok(Box::new(FsSourceRepo::new(root.clone()))),
+        SnapshotSpec::File { path, display_base } => Ok(Box::new(SingleFileSourceRepo::new(
+            path.clone(),
+            display_base.clone(),
+        )?)),
         SnapshotSpec::GitRevision { repo_root, rev } => Ok(Box::new(GitTreeSourceRepo::open(
             repo_root.clone(),
             rev.clone(),
         )?)),
     }
+}
+
+fn discover_snapshot_targets(
+    spec: &SnapshotSpec,
+    repo: &dyn SourceRepo,
+) -> Result<Vec<TargetRoot>> {
+    match spec {
+        SnapshotSpec::File { path, .. } => Ok(vec![single_file_target(path)?]),
+        SnapshotSpec::Directory { .. } | SnapshotSpec::GitRevision { .. } => discover_targets(repo),
+    }
+}
+
+fn single_file_target(path: &Path) -> Result<TargetRoot> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .context("file snapshot has no parent directory")?;
+    let snapshot_path = path
+        .strip_prefix(parent)
+        .expect("file should be relative to its parent directory")
+        .to_path_buf();
+    Ok(TargetRoot {
+        crate_name: "file".to_owned(),
+        root_file: snapshot_path,
+    })
+}
+
+fn path_starts_with(path: &Path, base: &Path) -> bool {
+    path.strip_prefix(base).is_ok()
 }
 
 fn filtered_entities<'a>(snapshot: &'a Snapshot, path_filters: &[PathBuf]) -> Vec<&'a Entity> {
@@ -201,7 +252,7 @@ fn filtered_entities<'a>(snapshot: &'a Snapshot, path_filters: &[PathBuf]) -> Ve
         .filter(|entity| {
             path_filters
                 .iter()
-                .any(|filter| entity.location.relative_path.starts_with(filter))
+                .any(|filter| entity.location.snapshot_path.starts_with(filter))
         })
         .collect()
 }
@@ -290,7 +341,7 @@ mod tests {
                 "crate::thing",
                 SourceLocation {
                     file_path: PathBuf::from("/tmp/lhs.rs"),
-                    relative_path: PathBuf::from("src/lib.rs"),
+                    snapshot_path: PathBuf::from("src/lib.rs"),
                     start_line: 1,
                     start_col: 1,
                     end_line: 3,
@@ -303,7 +354,7 @@ mod tests {
                 "crate::thing",
                 SourceLocation {
                     file_path: PathBuf::from("/tmp/rhs.rs"),
-                    relative_path: PathBuf::from("src/lib.rs"),
+                    snapshot_path: PathBuf::from("src/lib.rs"),
                     start_line: 20,
                     start_col: 4,
                     end_line: 22,
@@ -326,7 +377,7 @@ mod tests {
                 "crate::thing",
                 SourceLocation {
                     file_path: PathBuf::from("/tmp/lhs.rs"),
-                    relative_path: PathBuf::from("src/lib.rs"),
+                    snapshot_path: PathBuf::from("src/lib.rs"),
                     start_line: 1,
                     start_col: 1,
                     end_line: 3,
@@ -339,7 +390,7 @@ mod tests {
                 name: "crate::thing".to_owned(),
                 location: SourceLocation {
                     file_path: PathBuf::from("/tmp/rhs.rs"),
-                    relative_path: PathBuf::from("src/lib.rs"),
+                    snapshot_path: PathBuf::from("src/lib.rs"),
                     start_line: 1,
                     start_col: 1,
                     end_line: 1,

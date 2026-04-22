@@ -305,7 +305,7 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
 (defun rust-dive-magit--insert-location-button (entity)
   "Insert a button for ENTITY's source location."
   (let ((label (format "%s:%s"
-                       (plist-get entity :relative_path)
+                       (plist-get entity :snapshot_path)
                        (plist-get entity :start_line))))
     (insert-text-button
      label
@@ -385,7 +385,7 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
   (let ((table (make-hash-table :test #'equal))
         files)
     (dolist (item items)
-      (let ((file (plist-get (plist-get item :entity) :relative_path)))
+      (let ((file (plist-get (plist-get item :entity) :snapshot_path)))
         (unless (gethash file table)
           (push file files)
           (puthash file nil table))
