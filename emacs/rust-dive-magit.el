@@ -97,7 +97,10 @@ working tree rooted at the current repository."
           (path-input (read-string "Filter paths (comma-separated, optional): ")))
      (list lhs rhs (rust-dive-magit--split-paths path-input))))
   (let* ((default-directory (rust-dive-magit--repo-root))
-         (args (append (list "diff" lhs rhs "--format" "json")
+         (args (append (list "diff" lhs rhs
+                             "--format" "json"
+                             "--width" (number-to-string
+                                        (rust-dive-magit--current-display-width)))
                        (cl-mapcan (lambda (path) (list "--path" path)) paths)))
          (payload (rust-dive-magit--run-command default-directory args)))
     (rust-dive-magit--display-buffer default-directory args payload)))
@@ -354,6 +357,13 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     (seq-filter
      (lambda (item) (not (string-empty-p item)))
      (mapcar #'string-trim (split-string input "," t)))))
+
+(defun rust-dive-magit--current-display-width ()
+  "Return the current window body width in character columns."
+  (max 20
+       (if-let ((window (selected-window)))
+           (window-body-width window)
+         (frame-width))))
 
 (defun rust-dive-magit--run-command (default-directory args)
   "Run rust_dive with ARGS from DEFAULT-DIRECTORY and parse JSON output."

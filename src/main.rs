@@ -33,7 +33,9 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::List(args)) => run_list(&resolve_snapshot_spec(&args.snapshot, &cwd)?, cli.format),
+        Some(Command::List(args)) => {
+            run_list(&resolve_snapshot_spec(&args.snapshot, &cwd)?, cli.format)
+        }
         Some(Command::Diff(args)) => {
             let lhs = resolve_snapshot_spec(&args.lhs, &cwd)?;
             let rhs = resolve_snapshot_spec(&args.rhs, &cwd)?;
@@ -42,7 +44,7 @@ fn run() -> Result<()> {
                 .into_iter()
                 .map(|path| normalize_filter_path(&path))
                 .collect::<Vec<_>>();
-            run_diff(&lhs, &rhs, &paths, args.raw, cli.format)
+            run_diff(&lhs, &rhs, &paths, args.raw, cli.format, args.width)
         }
         None => {
             let snapshot = cli
@@ -76,6 +78,7 @@ fn run_diff(
     path_filters: &[PathBuf],
     raw: bool,
     format: OutputFormat,
+    width: Option<usize>,
 ) -> Result<()> {
     if raw && format == OutputFormat::Json {
         anyhow::bail!("--raw cannot be used with --format json");
@@ -117,7 +120,7 @@ fn run_diff(
             println!("{line}");
         }
     } else {
-        print!("{}", output::render_diff(lhs, rhs, &diff, format)?);
+        print!("{}", output::render_diff(lhs, rhs, &diff, format, width)?);
     }
 
     Ok(())
@@ -154,6 +157,8 @@ struct DiffArgs {
     rhs: String,
     #[arg(long = "path", value_name = "RELATIVE_PATH")]
     path: Vec<String>,
+    #[arg(long, value_name = "COLUMNS")]
+    width: Option<usize>,
     #[arg(long)]
     raw: bool,
 }

@@ -18,7 +18,11 @@ impl Default for OutputFormat {
     }
 }
 
-pub fn render_list(snapshot: &SnapshotSpec, entities: &Snapshot, format: OutputFormat) -> Result<String> {
+pub fn render_list(
+    snapshot: &SnapshotSpec,
+    entities: &Snapshot,
+    format: OutputFormat,
+) -> Result<String> {
     match format {
         OutputFormat::Text => Ok(render_list_text(entities)),
         OutputFormat::Json => serde_json::to_string_pretty(&ListOutput {
@@ -35,14 +39,15 @@ pub fn render_diff(
     rhs: &SnapshotSpec,
     diff: &DiffResult,
     format: OutputFormat,
+    width: Option<usize>,
 ) -> Result<String> {
     match format {
-        OutputFormat::Text => render_diff_text(diff),
+        OutputFormat::Text => render_diff_text(diff, width),
         OutputFormat::Json => {
             let modified = diff
                 .modified
                 .iter()
-                .map(ModifiedEntityOutput::try_from_change)
+                .map(|change| ModifiedEntityOutput::try_from_change(change, width))
                 .collect::<Result<Vec<_>>>()?;
             serde_json::to_string_pretty(&DiffOutput {
                 command: "diff",
@@ -66,7 +71,7 @@ fn render_list_text(snapshot: &Snapshot) -> String {
     render_lines(lines)
 }
 
-fn render_diff_text(diff: &DiffResult) -> Result<String> {
+fn render_diff_text(diff: &DiffResult, width: Option<usize>) -> Result<String> {
     let mut sections = Vec::new();
 
     for entity in &diff.deleted {
@@ -78,7 +83,9 @@ fn render_diff_text(diff: &DiffResult) -> Result<String> {
     }
 
     for change in &diff.modified {
-        sections.push(crate::difftastic_renderer::render_modified_entity(change)?);
+        sections.push(crate::difftastic_renderer::render_modified_entity(
+            change, width,
+        )?);
     }
 
     if sections.is_empty() {
@@ -149,12 +156,12 @@ struct ModifiedEntityOutput {
 }
 
 impl ModifiedEntityOutput {
-    fn try_from_change(value: &ModifiedEntity) -> Result<Self> {
+    fn try_from_change(value: &ModifiedEntity, width: Option<usize>) -> Result<Self> {
         Ok(Self {
             path: value.lhs.location.relative_path.display().to_string(),
             lhs: EntityOutput::from(&value.lhs),
             rhs: EntityOutput::from(&value.rhs),
-            difftastic_display: crate::difftastic_renderer::render_modified_entity(value)?,
+            difftastic_display: crate::difftastic_renderer::render_modified_entity(value, width)?,
         })
     }
 }
@@ -251,7 +258,7 @@ mod tests {
         unsafe {
             std::env::set_var("RUST_DIVE_DIFFT_PATH", mock.path());
         }
-        let rendered = render_diff(&lhs, &rhs, &diff, OutputFormat::Json).unwrap();
+        let rendered = render_diff(&lhs, &rhs, &diff, OutputFormat::Json, None).unwrap();
         restore_difftastic_env(previous);
         let json: Value = serde_json::from_str(&rendered).unwrap();
 

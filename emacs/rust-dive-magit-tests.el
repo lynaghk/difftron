@@ -63,6 +63,23 @@
                  '("src/lib.rs" "src/main.rs")))
   (should-not (rust-dive-magit--split-paths "")))
 
+(ert-deftest rust-dive-magit-diff-includes-current-width ()
+  (cl-letf (((symbol-function 'rust-dive-magit--repo-root)
+             (lambda () "/tmp/repo/"))
+            ((symbol-function 'rust-dive-magit--current-display-width)
+             (lambda () 123))
+            ((symbol-function 'rust-dive-magit--run-command)
+             (lambda (_default-directory args)
+               (should (equal args
+                              '("diff" "HEAD~1" "HEAD"
+                                "--format" "json"
+                                "--width" "123"
+                                "--path" "src/lib.rs")))
+               rust-dive-magit-tests--sample-payload))
+            ((symbol-function 'rust-dive-magit--display-buffer)
+             (lambda (_default-directory _args _payload) nil)))
+    (rust-dive-magit-diff "HEAD~1" "HEAD" '("src/lib.rs"))))
+
 (ert-deftest rust-dive-magit-dwim-endpoints-from-commit ()
   (should (equal (rust-dive-magit--dwim-endpoints '(commit . "HEAD~2") "/tmp/repo")
                  '("HEAD~2^" "HEAD~2"))))

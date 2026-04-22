@@ -9,19 +9,24 @@ use tempfile::Builder;
 
 use crate::snapshot::ModifiedEntity;
 
-pub fn render_modified_entity(change: &ModifiedEntity) -> Result<String> {
+pub fn render_modified_entity(change: &ModifiedEntity, width: Option<usize>) -> Result<String> {
     let temp_dir = tempfile::tempdir().context("failed to create temporary directory")?;
     let lhs_path = write_entity_source(temp_dir.path(), "lhs", &change.lhs.source_text)?;
     let rhs_path = write_entity_source(temp_dir.path(), "rhs", &change.rhs.source_text)?;
     let display_path = &change.lhs.name;
 
-    let output = Command::new(difft_binary())
+    let mut command = Command::new(difft_binary());
+    command
         .arg("--display")
         .arg("side-by-side")
         .arg("--color")
         .arg("always")
         .arg("--context")
-        .arg("999999")
+        .arg("999999");
+    if let Some(width) = width {
+        command.arg("--width").arg(width.to_string());
+    }
+    let output = command
         .arg(display_path)
         .arg(&lhs_path)
         .arg("0000000")

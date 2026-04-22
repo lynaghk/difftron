@@ -18,14 +18,18 @@ fn list_json_emits_structured_stdout() {
         .output()
         .expect("failed to run rust_dive");
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
     assert_eq!(json["command"], "list");
     assert_eq!(json["snapshot"]["kind"], "directory");
     assert_eq!(json["entities"][0]["name"], "demo");
     assert_eq!(json["entities"][1]["name"], "demo::meaning");
-  }
+}
 
 #[test]
 fn diff_json_emits_modified_entities() {
@@ -33,7 +37,10 @@ fn diff_json_emits_modified_entities() {
     repo.commit_all("initial");
     repo.write_lib("pub fn meaning() -> u32 { 42 }\n");
     repo.commit_all("change meaning");
-    let mock_difft = repo.write_executable("mock-difft", "#!/usr/bin/env bash\nprintf 'mock difftastic output'\n");
+    let mock_difft = repo.write_executable(
+        "mock-difft",
+        "#!/usr/bin/env bash\nprintf 'mock difftastic output'\n",
+    );
 
     let output = Command::new(binary_path())
         .current_dir(repo.path())
@@ -42,13 +49,19 @@ fn diff_json_emits_modified_entities() {
         .output()
         .expect("failed to run rust_dive");
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
     assert_eq!(json["command"], "diff");
     assert_eq!(json["lhs"]["rev"], "HEAD~1");
     assert_eq!(json["rhs"]["rev"], "HEAD");
-    let modified = json["modified"].as_array().expect("modified should be an array");
+    let modified = json["modified"]
+        .as_array()
+        .expect("modified should be an array");
     assert!(modified.len() >= 1);
     let meaning = modified
         .iter()
@@ -59,6 +72,45 @@ fn diff_json_emits_modified_entities() {
         meaning["rhs"]["source_text"],
         "pub fn meaning() -> u32 { 42 }"
     );
+}
+
+#[test]
+fn diff_width_is_forwarded_to_difftastic() {
+    let repo = TestRepo::new();
+    repo.commit_all("initial");
+    repo.write_lib("pub fn meaning() -> u32 { 42 }\n");
+    repo.commit_all("change meaning");
+    let mock_difft =
+        repo.write_executable("mock-difft", "#!/usr/bin/env bash\nprintf '%s' \"$*\"\n");
+
+    let output = Command::new(binary_path())
+        .current_dir(repo.path())
+        .env("RUST_DIVE_DIFFT_PATH", &mock_difft)
+        .args([
+            "diff", "HEAD~1", "HEAD", "--format", "json", "--width", "120",
+        ])
+        .output()
+        .expect("failed to run rust_dive");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    let modified = json["modified"]
+        .as_array()
+        .expect("modified should be an array");
+    let meaning = modified
+        .iter()
+        .find(|entry| entry["lhs"]["name"] == "demo::meaning")
+        .expect("expected a modified function entry");
+    let display = meaning["difftastic_display"]
+        .as_str()
+        .expect("difftastic display should be a string");
+
+    assert!(display.contains("--width 120"), "display was: {display}");
 }
 
 fn binary_path() -> PathBuf {
@@ -106,7 +158,9 @@ impl TestRepo {
             fs::create_dir_all(parent).expect("failed to create parent directories");
         }
         fs::write(&absolute_path, contents).expect("failed to write file");
-        let mut permissions = fs::metadata(&absolute_path).expect("failed to stat file").permissions();
+        let mut permissions = fs::metadata(&absolute_path)
+            .expect("failed to stat file")
+            .permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&absolute_path, permissions).expect("failed to set permissions");
         absolute_path
