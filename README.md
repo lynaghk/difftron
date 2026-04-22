@@ -15,33 +15,50 @@ Run the project test entrypoints from the workspace root:
 ./scripts/run-tests.sh
 ```
 
-## Emacs Development Setup
+## Emacs Usage
 
-The Emacs package still assumes there will eventually be a normal `rust_dive`
-binary. For local development, override that from outside the package by
-pointing `rust-dive-magit-executable` at the wrapper script in this repo.
+The Emacs package assumes a normal `rust_dive` binary by default.
+
+For local development from this workspace, override that from outside the
+package by pointing `rust-dive-magit-executable` at the wrapper script in this
+repo. If you also want Rust Dive to appear in Magit's diff transient as `D`,
+enable `rust-dive-magit-bindings-mode`.
 
 Example Emacs config:
 
 ```elisp
-(add-to-list 'load-path "/root/2026-04-21-diff/emacs")
+(add-to-list 'load-path "/path/to/rust_dive/emacs")
 (require 'rust-dive-magit)
 
 (setq rust-dive-magit-executable
-      "/scripts/rust_dive_dev")
+      "/path/to/rust_dive/scripts/rust_dive_dev")
+
+(rust-dive-magit-bindings-mode 1)
+```
+
+Example with `use-package`:
+
+```elisp
+(use-package rust-dive-magit
+  :load-path "/path/to/rust_dive/emacs"
+  :commands (rust-dive-magit-diff)
+  :init
+  (setq rust-dive-magit-executable
+        "/path/to/rust_dive/scripts/rust_dive_dev")
+  :config
+  (rust-dive-magit-bindings-mode 1))
 ```
 
 That wrapper runs:
 
 ```bash
-cargo run --release --manifest-path /root/2026-04-21-diff/Cargo.toml -- ...
+cargo run --release --manifest-path /path/to/rust_dive/Cargo.toml -- ...
 ```
 
-After that, open a file inside a Git repo and run:
+After that:
 
-```elisp
-M-x rust-dive-magit-diff
-```
+- `M-x rust-dive-magit-diff` opens a Rust Dive diff buffer
+- in Magit's diff popup, `D` runs Rust Dive using Magit's current diff context
 
-By default it compares `HEAD` to the current working tree and renders results in
-the `*rust-dive*` buffer.
+`rust-dive-magit-diff` compares `HEAD` to the current working tree by default
+and renders results in the `*rust-dive*` buffer.

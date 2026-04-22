@@ -47,7 +47,9 @@
   :demand t
   :bind ("C-c r d" . rust-dive-magit-diff)
   :init
-  (setq rust-dive-magit-executable rust-dive-dev-wrapper))
+  (setq rust-dive-magit-executable rust-dive-dev-wrapper)
+  :config
+  (rust-dive-magit-bindings-mode 1))
 
 (provide 'init)
 

@@ -31,6 +31,9 @@
   "Name of the rust_dive results buffer."
   :type 'string)
 
+(defconst rust-dive-magit--magit-diff-suffix
+  '("D" "Rust Dive" rust-dive-magit-diff-dwim))
+
 (defvar rust-dive-magit-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map magit-section-mode-map)
@@ -69,6 +72,17 @@
     ("p" "Previous section" magit-section-backward)
     ("M-n" "Next sibling" magit-section-forward-sibling)
     ("M-p" "Previous sibling" magit-section-backward-sibling)]])
+
+(defun rust-dive-magit-diff-dwim ()
+  "Run `rust_dive diff' using the current Magit diff context."
+  (interactive)
+  (require 'magit-diff)
+  (pcase-let* ((default-directory (rust-dive-magit--repo-root))
+               (`(,_args ,paths) (magit-diff-arguments))
+               (`(,lhs ,rhs) (rust-dive-magit--dwim-endpoints
+                              (ignore-errors (magit-diff--dwim))
+                              default-directory)))
+    (rust-dive-magit-diff lhs rhs paths)))
 
 (defun rust-dive-magit-diff (lhs rhs &optional paths)
   "Run `rust_dive diff' for LHS and RHS and display the results.
@@ -370,6 +384,29 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
       (locate-dominating-file default-directory ".git")
       (user-error "Not inside a Git repository")))
 
+(defun rust-dive-magit--dwim-endpoints (spec repo-root)
+  "Return Rust Dive LHS and RHS endpoints from Magit SPEC in REPO-ROOT."
+  (pcase spec
+    ((or 'unstaged 'staged 'unmerged 'undefined)
+     (list "HEAD" repo-root))
+    (`(commit . ,rev)
+     (list (format "%s^" rev) rev))
+    (`(stash . ,rev)
+     (list (format "%s^" rev) rev))
+    ((pred stringp)
+     (or (rust-dive-magit--range-endpoints spec)
+         (list spec repo-root)))
+    (_
+     (list "HEAD" repo-root))))
+
+(defun rust-dive-magit--range-endpoints (range)
+  "Return LHS and RHS endpoints for Git diff RANGE, or nil."
+  (cond
+   ((string-match "\\`\\(.+\\)\\.\\.\\.\\(.+\\)\\'" range)
+    (list (match-string 1 range) (match-string 2 range)))
+   ((string-match "\\`\\(.+\\)\\.\\.\\(.+\\)\\'" range)
+    (list (match-string 1 range) (match-string 2 range)))))
+
 (defun rust-dive-magit--entity-section-at-point ()
   "Return the nearest entity section at point, if any."
   (let ((section (magit-current-section)))
@@ -377,6 +414,31 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
                 (not (eq (oref section type) 'rust-dive-entity)))
       (setq section (oref section parent)))
     section))
+
+(defun rust-dive-magit-register-magit-diff-suffix ()
+  "Register Rust Dive in the `magit-diff' transient."
+  (when (and (featurep 'magit-diff)
+             (not (ignore-errors (transient-get-suffix 'magit-diff "D"))))
+    (transient-append-suffix 'magit-diff "d"
+      rust-dive-magit--magit-diff-suffix)))
+
+(defun rust-dive-magit-unregister-magit-diff-suffix ()
+  "Remove Rust Dive from the `magit-diff' transient."
+  (when (and (featurep 'magit-diff)
+             (ignore-errors (transient-get-suffix 'magit-diff "D")))
+    (transient-remove-suffix 'magit-diff "D")))
+
+(define-minor-mode rust-dive-magit-bindings-mode
+  "Toggle Rust Dive bindings in Magit transients."
+  :global t
+  :group 'rust-dive-magit
+  (if rust-dive-magit-bindings-mode
+      (rust-dive-magit-register-magit-diff-suffix)
+    (rust-dive-magit-unregister-magit-diff-suffix)))
+
+(with-eval-after-load 'magit-diff
+  (when rust-dive-magit-bindings-mode
+    (rust-dive-magit-register-magit-diff-suffix)))
 
 (provide 'rust-dive-magit)
 

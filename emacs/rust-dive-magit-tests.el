@@ -63,6 +63,36 @@
                  '("src/lib.rs" "src/main.rs")))
   (should-not (rust-dive-magit--split-paths "")))
 
+(ert-deftest rust-dive-magit-dwim-endpoints-from-commit ()
+  (should (equal (rust-dive-magit--dwim-endpoints '(commit . "HEAD~2") "/tmp/repo")
+                 '("HEAD~2^" "HEAD~2"))))
+
+(ert-deftest rust-dive-magit-dwim-endpoints-from-range ()
+  (should (equal (rust-dive-magit--dwim-endpoints "main..feature" "/tmp/repo")
+                 '("main" "feature")))
+  (should (equal (rust-dive-magit--dwim-endpoints "HEAD" "/tmp/repo")
+                 '("HEAD" "/tmp/repo"))))
+
+(ert-deftest rust-dive-magit-dwim-endpoints-from-worktree-context ()
+  (should (equal (rust-dive-magit--dwim-endpoints 'unstaged "/tmp/repo")
+                 '("HEAD" "/tmp/repo")))
+  (should (equal (rust-dive-magit--dwim-endpoints nil "/tmp/repo")
+                 '("HEAD" "/tmp/repo"))))
+
+(ert-deftest rust-dive-magit-bindings-mode-registers-magit-suffix ()
+  (require 'magit-diff)
+  (unwind-protect
+      (progn
+        (rust-dive-magit-bindings-mode 1)
+        (should (transient-get-suffix 'magit-diff "D")))
+    (rust-dive-magit-bindings-mode -1)))
+
+(ert-deftest rust-dive-magit-bindings-mode-unregisters-magit-suffix ()
+  (require 'magit-diff)
+  (rust-dive-magit-bindings-mode 1)
+  (rust-dive-magit-bindings-mode -1)
+  (should-not (ignore-errors (transient-get-suffix 'magit-diff "D"))))
+
 (provide 'rust-dive-magit-tests)
 
 ;;; rust-dive-magit-tests.el ends here
