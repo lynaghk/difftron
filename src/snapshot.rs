@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ops::Range,
     path::{Path, PathBuf},
 };
 
@@ -8,7 +9,7 @@ use id_arena::Arena;
 use tracing::{info, info_span};
 
 use crate::{
-    entity_collector::{Entity, EntityDetail, EntityId, collect_entities},
+    entity_collector::{Entity, EntityDetail, EntityId, SourceLocation, collect_entities},
     project_discovery::TargetRoot,
     project_discovery::discover_targets,
     source_repo::{FsSourceRepo, GitTreeSourceRepo, SingleFileSourceRepo, SourceRepo},
@@ -46,6 +47,20 @@ pub struct DiffResult {
 pub struct ModifiedEntity {
     pub lhs: Entity,
     pub rhs: Entity,
+}
+
+#[derive(Debug, Clone)]
+struct IndexedEntity {
+    id: EntityId,
+    entity: Entity,
+}
+
+#[derive(Debug, Clone)]
+struct IndexedModifiedEntity {
+    lhs_id: EntityId,
+    lhs: Entity,
+    rhs_id: EntityId,
+    rhs: Entity,
 }
 
 pub fn resolve_snapshot_spec(arg: &str, cwd: &Path) -> Result<SnapshotSpec> {
@@ -143,9 +158,13 @@ pub fn diff_snapshots(lhs: &Snapshot, rhs: &Snapshot, path_filters: &[PathBuf]) 
                 lhs_group.remove(lhs_index);
                 rhs_group.remove(rhs_index);
             } else {
-                modified.push(ModifiedEntity {
-                    lhs: lhs_group.remove(0),
-                    rhs: rhs_group.remove(0),
+                let lhs_entity = lhs_group.remove(0);
+                let rhs_entity = rhs_group.remove(0);
+                modified.push(IndexedModifiedEntity {
+                    lhs_id: lhs_entity.id,
+                    lhs: lhs_entity.entity,
+                    rhs_id: rhs_entity.id,
+                    rhs: rhs_entity.entity,
                 });
             }
         }
@@ -154,14 +173,22 @@ pub fn diff_snapshots(lhs: &Snapshot, rhs: &Snapshot, path_filters: &[PathBuf]) 
         added.extend(rhs_group);
     }
 
-    added.sort();
-    deleted.sort();
+    suppress_redundant_parents(lhs, rhs, &mut added, &mut deleted, &mut modified);
+
+    added.sort_by(|lhs, rhs| lhs.entity.cmp(&rhs.entity));
+    deleted.sort_by(|lhs, rhs| lhs.entity.cmp(&rhs.entity));
     modified.sort_by(|lhs, rhs| lhs.lhs.name.cmp(&rhs.lhs.name));
 
     DiffResult {
-        added,
-        deleted,
-        modified,
+        added: added.into_iter().map(|entity| entity.entity).collect(),
+        deleted: deleted.into_iter().map(|entity| entity.entity).collect(),
+        modified: modified
+            .into_iter()
+            .map(|change| ModifiedEntity {
+                lhs: change.lhs,
+                rhs: change.rhs,
+            })
+            .collect(),
     }
 }
 
@@ -246,47 +273,229 @@ fn path_starts_with(path: &Path, base: &Path) -> bool {
     path.strip_prefix(base).is_ok()
 }
 
-fn filtered_entities<'a>(snapshot: &'a Snapshot, path_filters: &[PathBuf]) -> Vec<&'a Entity> {
+fn filtered_entities(snapshot: &Snapshot, path_filters: &[PathBuf]) -> Vec<IndexedEntity> {
     if path_filters.is_empty() {
         return snapshot
             .entities
             .iter()
-            .map(|id| &snapshot.arena[*id])
+            .map(|id| IndexedEntity {
+                id: *id,
+                entity: snapshot.arena[*id].clone(),
+            })
             .collect();
     }
 
     snapshot
         .entities
         .iter()
-        .map(|id| &snapshot.arena[*id])
+        .map(|id| IndexedEntity {
+            id: *id,
+            entity: snapshot.arena[*id].clone(),
+        })
         .filter(|entity| {
             path_filters
                 .iter()
-                .any(|filter| entity.location.snapshot_path.starts_with(filter))
+                .any(|filter| entity.entity.location.snapshot_path.starts_with(filter))
         })
         .collect()
 }
 
-fn group_by_identity(entities: Vec<&Entity>) -> BTreeMap<EntityIdentity, Vec<Entity>> {
+fn group_by_identity(entities: Vec<IndexedEntity>) -> BTreeMap<EntityIdentity, Vec<IndexedEntity>> {
     let mut groups = BTreeMap::new();
     for entity in entities {
         groups
-            .entry(entity_identity(entity))
+            .entry(entity_identity(&entity.entity))
             .or_insert_with(Vec::new)
-            .push(entity.clone());
+            .push(entity);
     }
     groups
 }
 
-fn find_matching_pair(lhs: &[Entity], rhs: &[Entity]) -> Option<(usize, usize)> {
+fn find_matching_pair(lhs: &[IndexedEntity], rhs: &[IndexedEntity]) -> Option<(usize, usize)> {
     for (lhs_index, lhs_entity) in lhs.iter().enumerate() {
         for (rhs_index, rhs_entity) in rhs.iter().enumerate() {
-            if entity_content_eq(lhs_entity, rhs_entity) {
+            if entity_content_eq(&lhs_entity.entity, &rhs_entity.entity) {
                 return Some((lhs_index, rhs_index));
             }
         }
     }
     None
+}
+
+fn suppress_redundant_parents(
+    lhs: &Snapshot,
+    rhs: &Snapshot,
+    added: &mut Vec<IndexedEntity>,
+    deleted: &mut Vec<IndexedEntity>,
+    modified: &mut Vec<IndexedModifiedEntity>,
+) {
+    let rhs_changed = added
+        .iter()
+        .cloned()
+        .chain(modified.iter().map(|change| IndexedEntity {
+            id: change.rhs_id,
+            entity: change.rhs.clone(),
+        }))
+        .collect::<Vec<_>>();
+    let lhs_changed = deleted
+        .iter()
+        .cloned()
+        .chain(modified.iter().map(|change| IndexedEntity {
+            id: change.lhs_id,
+            entity: change.lhs.clone(),
+        }))
+        .collect::<Vec<_>>();
+
+    added.retain(|candidate| {
+        let descendants = descendant_ranges(rhs, candidate.id, &candidate.entity, &rhs_changed);
+        !is_redundant_add_or_delete(&candidate.entity, &descendants)
+    });
+    deleted.retain(|candidate| {
+        let descendants = descendant_ranges(lhs, candidate.id, &candidate.entity, &lhs_changed);
+        !is_redundant_add_or_delete(&candidate.entity, &descendants)
+    });
+    modified.retain(|candidate| {
+        let lhs_descendants =
+            descendant_ranges(lhs, candidate.lhs_id, &candidate.lhs, &lhs_changed);
+        let rhs_descendants =
+            descendant_ranges(rhs, candidate.rhs_id, &candidate.rhs, &rhs_changed);
+        !is_redundant_modified(
+            &candidate.lhs,
+            &lhs_descendants,
+            &candidate.rhs,
+            &rhs_descendants,
+        )
+    });
+}
+
+fn descendant_ranges(
+    snapshot: &Snapshot,
+    candidate_id: EntityId,
+    candidate: &Entity,
+    changed_entities: &[IndexedEntity],
+) -> Vec<Range<usize>> {
+    let mut ranges = changed_entities
+        .iter()
+        .filter_map(|entity| {
+            if entity.id == candidate_id || !is_descendant(snapshot, entity.id, candidate_id) {
+                return None;
+            }
+            relative_range(candidate, &entity.entity)
+        })
+        .collect::<Vec<_>>();
+    ranges.sort_by_key(|range| (range.start, range.end));
+    merge_ranges(ranges)
+}
+
+fn is_descendant(snapshot: &Snapshot, mut entity_id: EntityId, ancestor_id: EntityId) -> bool {
+    while let Some(parent_id) = snapshot.arena[entity_id].parent {
+        if parent_id == ancestor_id {
+            return true;
+        }
+        entity_id = parent_id;
+    }
+    false
+}
+
+fn is_redundant_add_or_delete(entity: &Entity, descendant_ranges: &[Range<usize>]) -> bool {
+    if descendant_ranges.is_empty() {
+        return false;
+    }
+    normalized_residual(entity, descendant_ranges).is_empty()
+}
+
+fn is_redundant_modified(
+    lhs: &Entity,
+    lhs_descendants: &[Range<usize>],
+    rhs: &Entity,
+    rhs_descendants: &[Range<usize>],
+) -> bool {
+    if lhs_descendants.is_empty() && rhs_descendants.is_empty() {
+        return false;
+    }
+
+    normalized_residual(lhs, lhs_descendants) == normalized_residual(rhs, rhs_descendants)
+}
+
+fn normalized_residual(entity: &Entity, descendant_ranges: &[Range<usize>]) -> String {
+    let mut residual = String::new();
+    let mut cursor = 0;
+    for range in descendant_ranges {
+        if cursor < range.start {
+            residual.push_str(&entity.source_text[cursor..range.start]);
+        }
+        cursor = cursor.max(range.end);
+    }
+    if cursor < entity.source_text.len() {
+        residual.push_str(&entity.source_text[cursor..]);
+    }
+    residual
+        .chars()
+        .filter(|ch| ch.is_alphanumeric() || *ch == '_')
+        .collect()
+}
+
+fn relative_range(parent: &Entity, child: &Entity) -> Option<Range<usize>> {
+    if parent.location.file_path != child.location.file_path {
+        return None;
+    }
+
+    let line_starts = compute_line_starts(&parent.source_text);
+    let start = offset_in_parent(
+        &line_starts,
+        &parent.location,
+        child.location.start_line,
+        child.location.start_col,
+    )?;
+    let end = offset_in_parent(
+        &line_starts,
+        &parent.location,
+        child.location.end_line,
+        child.location.end_col,
+    )?;
+    Some(start..end)
+}
+
+fn offset_in_parent(
+    line_starts: &[usize],
+    parent: &SourceLocation,
+    line: u32,
+    col: u32,
+) -> Option<usize> {
+    if line < parent.start_line {
+        return None;
+    }
+    let line_index = (line - parent.start_line) as usize;
+    let line_start = *line_starts.get(line_index)?;
+    let base_col = if line_index == 0 { parent.start_col } else { 1 };
+    if col < base_col {
+        return None;
+    }
+    Some(line_start + (col - base_col) as usize)
+}
+
+fn compute_line_starts(text: &str) -> Vec<usize> {
+    let mut starts = vec![0];
+    for (idx, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            starts.push(idx + 1);
+        }
+    }
+    starts
+}
+
+fn merge_ranges(ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    let mut merged: Vec<Range<usize>> = Vec::new();
+    for range in ranges {
+        if let Some(last) = merged.last_mut() {
+            if range.start <= last.end {
+                last.end = last.end.max(range.end);
+                continue;
+            }
+        }
+        merged.push(range);
+    }
+    merged
 }
 
 fn repo_workdir(repo: &gix::Repository) -> Result<PathBuf> {
@@ -411,6 +620,114 @@ mod tests {
         assert!(diff.modified.is_empty());
     }
 
+    #[test]
+    fn suppresses_redundant_root_change_but_keeps_module_change_with_unique_text() {
+        let file_path = PathBuf::from("/tmp/example.rs");
+        let lhs = snapshot_from_specs(
+            &file_path,
+            vec![
+                EntitySpec {
+                    name: "file",
+                    parent: None,
+                    start_line: 1,
+                    start_col: 1,
+                    end_line: 5,
+                    end_col: 2,
+                    source_text: "mod demo {\n    fn compute() {\n        1\n    }\n}\n",
+                    detail: EntityDetail::Module { is_inline: false },
+                },
+                EntitySpec {
+                    name: "file::demo",
+                    parent: Some(0),
+                    start_line: 1,
+                    start_col: 1,
+                    end_line: 5,
+                    end_col: 2,
+                    source_text: "mod demo {\n    fn compute() {\n        1\n    }\n}\n",
+                    detail: EntityDetail::Module { is_inline: true },
+                },
+                EntitySpec {
+                    name: "file::demo::compute",
+                    parent: Some(1),
+                    start_line: 2,
+                    start_col: 5,
+                    end_line: 4,
+                    end_col: 6,
+                    source_text: "fn compute() {\n        1\n    }\n",
+                    detail: EntityDetail::Function {
+                        signature: "()".to_owned(),
+                    },
+                },
+            ],
+        );
+        let rhs = snapshot_from_specs(
+            &file_path,
+            vec![
+                EntitySpec {
+                    name: "file",
+                    parent: None,
+                    start_line: 1,
+                    start_col: 1,
+                    end_line: 9,
+                    end_col: 2,
+                    source_text: "mod demo {\n    use std::fmt::Debug;\n\n    fn compute() {\n        2\n    }\n\n    fn render<T: Debug>(value: T) {}\n}\n",
+                    detail: EntityDetail::Module { is_inline: false },
+                },
+                EntitySpec {
+                    name: "file::demo",
+                    parent: Some(0),
+                    start_line: 1,
+                    start_col: 1,
+                    end_line: 9,
+                    end_col: 2,
+                    source_text: "mod demo {\n    use std::fmt::Debug;\n\n    fn compute() {\n        2\n    }\n\n    fn render<T: Debug>(value: T) {}\n}\n",
+                    detail: EntityDetail::Module { is_inline: true },
+                },
+                EntitySpec {
+                    name: "file::demo::compute",
+                    parent: Some(1),
+                    start_line: 4,
+                    start_col: 5,
+                    end_line: 6,
+                    end_col: 6,
+                    source_text: "fn compute() {\n        2\n    }\n",
+                    detail: EntityDetail::Function {
+                        signature: "()".to_owned(),
+                    },
+                },
+                EntitySpec {
+                    name: "file::demo::render",
+                    parent: Some(1),
+                    start_line: 8,
+                    start_col: 5,
+                    end_line: 8,
+                    end_col: 35,
+                    source_text: "fn render<T: Debug>(value: T) {}\n",
+                    detail: EntityDetail::Function {
+                        signature: "(value: T)".to_owned(),
+                    },
+                },
+            ],
+        );
+
+        let diff = diff_snapshots(&lhs, &rhs, &[]);
+
+        assert_eq!(diff.added.len(), 1);
+        assert_eq!(diff.added[0].name, "file::demo::render");
+        assert_eq!(diff.modified.len(), 2);
+        assert!(
+            diff.modified
+                .iter()
+                .any(|change| change.lhs.name == "file::demo")
+        );
+        assert!(
+            diff.modified
+                .iter()
+                .any(|change| change.lhs.name == "file::demo::compute")
+        );
+        assert!(!diff.modified.iter().any(|change| change.lhs.name == "file"));
+    }
+
     fn sample_entity(name: &str, location: SourceLocation) -> Entity {
         Entity {
             name: name.to_owned(),
@@ -429,6 +746,43 @@ mod tests {
             .into_iter()
             .map(|entity| arena.alloc(entity))
             .collect();
+        Snapshot { arena, entities }
+    }
+
+    #[derive(Clone)]
+    struct EntitySpec {
+        name: &'static str,
+        parent: Option<usize>,
+        start_line: u32,
+        start_col: u32,
+        end_line: u32,
+        end_col: u32,
+        source_text: &'static str,
+        detail: EntityDetail,
+    }
+
+    fn snapshot_from_specs(file_path: &Path, specs: Vec<EntitySpec>) -> Snapshot {
+        let mut arena = Arena::new();
+        let mut entities = Vec::new();
+
+        for spec in specs {
+            let parent = spec.parent.map(|index| entities[index]);
+            entities.push(arena.alloc(Entity {
+                name: spec.name.to_owned(),
+                parent,
+                location: SourceLocation {
+                    file_path: file_path.to_path_buf(),
+                    snapshot_path: PathBuf::from("example.rs"),
+                    start_line: spec.start_line,
+                    start_col: spec.start_col,
+                    end_line: spec.end_line,
+                    end_col: spec.end_col,
+                },
+                source_text: spec.source_text.to_owned(),
+                detail: spec.detail,
+            }));
+        }
+
         Snapshot { arena, entities }
     }
 }
