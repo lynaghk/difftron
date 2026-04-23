@@ -276,7 +276,7 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     (pcase (plist-get item :status)
       ('modified
        (rust-dive-magit--insert-ansi-block
-        (or (plist-get item :difftastic-display) "")))
+        (or (plist-get item :diff-display) "")))
       (_
        (when-let ((source (plist-get entity :source_text)))
          (rust-dive-magit--insert-faced-block
@@ -292,7 +292,7 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
   "Insert TEXT and apply ANSI color escapes."
   (let ((start (point)))
     (if (string-empty-p text)
-        (insert "No difftastic output.\n")
+        (insert "No diff output.\n")
       (insert text)
       (unless (string-suffix-p "\n" text)
         (insert "\n")))
@@ -343,7 +343,7 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
           :status 'modified
           :entity rhs
           :summary (format "M %s" (plist-get rhs :name))
-          :difftastic-display (plist-get change :difftastic_display))))
+          :diff-display (plist-get change :diff_display))))
 
 (defun rust-dive-magit--item-from-entity (status entity)
   "Build a display item from ENTITY with STATUS."

@@ -71,7 +71,7 @@ mod tests {
     }
 
     #[test]
-    fn plain_render_includes_line_numbers_and_both_sides() {
+    fn plain_render_includes_both_sides_without_line_numbers() {
         let lhs = "pub fn meaning() -> u32 { 41 }\n";
         let rhs = "pub fn meaning() -> u32 { 42 }\n";
         let diff_result = diff(Language::Rust, lhs, rhs, DiffOptions::default()).unwrap();
@@ -79,8 +79,8 @@ mod tests {
         let rendered =
             render_side_by_side(&diff_result, &render_options(OutputStyle::Plain)).unwrap();
 
-        assert!(rendered.contains("L1"));
-        assert!(rendered.contains("R1"));
+        assert!(!rendered.contains("L1"));
+        assert!(!rendered.contains("R1"));
         assert!(rendered.contains("41"));
         assert!(rendered.contains("42"));
     }

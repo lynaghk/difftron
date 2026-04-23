@@ -1,6 +1,5 @@
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -37,14 +36,9 @@ fn diff_json_emits_modified_entities() {
     repo.commit_all("initial");
     repo.write_lib("pub fn meaning() -> u32 { 42 }\n");
     repo.commit_all("change meaning");
-    let mock_difft = repo.write_executable(
-        "mock-difft",
-        "#!/usr/bin/env bash\nprintf 'mock difftastic output'\n",
-    );
 
     let output = Command::new(binary_path())
         .current_dir(repo.path())
-        .env("RUST_DIVE_DIFFT_PATH", &mock_difft)
         .args(["diff", "HEAD~1", "HEAD", "--format", "json"])
         .output()
         .expect("failed to run rust_dive");
@@ -62,12 +56,16 @@ fn diff_json_emits_modified_entities() {
     let modified = json["modified"]
         .as_array()
         .expect("modified should be an array");
-    assert!(modified.len() >= 1);
+    assert!(!modified.is_empty());
     let meaning = modified
         .iter()
         .find(|entry| entry["lhs"]["name"] == "demo::meaning")
         .expect("expected a modified function entry");
-    assert_eq!(meaning["difftastic_display"], "mock difftastic output");
+    let display = meaning["diff_display"]
+        .as_str()
+        .expect("diff display should be a string");
+    assert!(display.contains("pub fn meaning() -> u32 { 41 }"));
+    assert!(display.contains("pub fn meaning() -> u32 { 42 }"));
     assert_eq!(
         meaning["rhs"]["source_text"],
         "pub fn meaning() -> u32 { 42 }"
@@ -75,19 +73,16 @@ fn diff_json_emits_modified_entities() {
 }
 
 #[test]
-fn diff_width_is_forwarded_to_difftastic() {
+fn diff_width_changes_rendered_layout() {
     let repo = TestRepo::new();
     repo.commit_all("initial");
     repo.write_lib("pub fn meaning() -> u32 { 42 }\n");
     repo.commit_all("change meaning");
-    let mock_difft =
-        repo.write_executable("mock-difft", "#!/usr/bin/env bash\nprintf '%s' \"$*\"\n");
 
     let output = Command::new(binary_path())
         .current_dir(repo.path())
-        .env("RUST_DIVE_DIFFT_PATH", &mock_difft)
         .args([
-            "diff", "HEAD~1", "HEAD", "--format", "json", "--width", "120",
+            "diff", "HEAD~1", "HEAD", "--format", "json", "--width", "60",
         ])
         .output()
         .expect("failed to run rust_dive");
@@ -106,11 +101,12 @@ fn diff_width_is_forwarded_to_difftastic() {
         .iter()
         .find(|entry| entry["lhs"]["name"] == "demo::meaning")
         .expect("expected a modified function entry");
-    let display = meaning["difftastic_display"]
+    let display = meaning["diff_display"]
         .as_str()
-        .expect("difftastic display should be a string");
+        .expect("diff display should be a string");
 
-    assert!(display.contains("--width 120"), "display was: {display}");
+    let first_line = strip_ansi(display.lines().next().unwrap());
+    assert!(first_line.len() <= 80, "display was: {display}");
 }
 
 #[test]
@@ -118,23 +114,8 @@ fn diff_json_accepts_single_files() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let lhs = repo_root.join("example-diffs/parent-child-changes/lhs.rs");
     let rhs = repo_root.join("example-diffs/parent-child-changes/rhs.rs");
-    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
-    let mock_difft = temp_dir.path().join("mock-difft");
-    fs::write(
-        &mock_difft,
-        "#!/usr/bin/env bash\nprintf 'mock difftastic output'\n",
-    )
-    .expect("failed to write mock difftastic");
-    let mut permissions = fs::metadata(&mock_difft)
-        .expect("failed to stat mock difftastic")
-        .permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&mock_difft, permissions)
-        .expect("failed to set mock difftastic permissions");
-
     let output = Command::new(binary_path())
         .current_dir(&repo_root)
-        .env("RUST_DIVE_DIFFT_PATH", &mock_difft)
         .args([
             "diff",
             lhs.to_str().expect("lhs path should be valid utf-8"),
@@ -169,23 +150,8 @@ fn diff_json_suppresses_redundant_parent_entries_for_single_files() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let lhs = repo_root.join("example-diffs/parent-child-changes/lhs.rs");
     let rhs = repo_root.join("example-diffs/parent-child-changes/rhs.rs");
-    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
-    let mock_difft = temp_dir.path().join("mock-difft");
-    fs::write(
-        &mock_difft,
-        "#!/usr/bin/env bash\nprintf 'mock difftastic output'\n",
-    )
-    .expect("failed to write mock difftastic");
-    let mut permissions = fs::metadata(&mock_difft)
-        .expect("failed to stat mock difftastic")
-        .permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&mock_difft, permissions)
-        .expect("failed to set mock difftastic permissions");
-
     let output = Command::new(binary_path())
         .current_dir(&repo_root)
-        .env("RUST_DIVE_DIFFT_PATH", &mock_difft)
         .args([
             "diff",
             lhs.to_str().expect("lhs path should be valid utf-8"),
@@ -209,7 +175,9 @@ fn diff_json_suppresses_redundant_parent_entries_for_single_files() {
     let added = json["added"].as_array().expect("added should be an array");
 
     assert!(
-        modified.iter().any(|entry| entry["rhs"]["name"] == "file::demo"),
+        modified
+            .iter()
+            .any(|entry| entry["rhs"]["name"] == "file::demo"),
         "expected module change to remain: {modified:?}"
     );
     assert!(
@@ -223,7 +191,9 @@ fn diff_json_suppresses_redundant_parent_entries_for_single_files() {
         "redundant root entry should be suppressed: {modified:?}"
     );
     assert!(
-        added.iter().any(|entry| entry["name"] == "file::demo::render"),
+        added
+            .iter()
+            .any(|entry| entry["name"] == "file::demo::render"),
         "expected added child entry to remain: {added:?}"
     );
 }
@@ -267,20 +237,6 @@ impl TestRepo {
         fs::write(absolute_path, contents).expect("failed to write file");
     }
 
-    fn write_executable(&self, relative_path: &str, contents: &str) -> PathBuf {
-        let absolute_path = self.path().join(relative_path);
-        if let Some(parent) = absolute_path.parent() {
-            fs::create_dir_all(parent).expect("failed to create parent directories");
-        }
-        fs::write(&absolute_path, contents).expect("failed to write file");
-        let mut permissions = fs::metadata(&absolute_path)
-            .expect("failed to stat file")
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&absolute_path, permissions).expect("failed to set permissions");
-        absolute_path
-    }
-
     fn commit_all(&self, message: &str) {
         self.git(["add", "."]);
         self.git(["commit", "-m", message]);
@@ -303,4 +259,22 @@ impl TestRepo {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+fn strip_ansi(input: &str) -> String {
+    let mut stripped = String::new();
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            stripped.push(ch);
+        }
+    }
+    stripped
 }

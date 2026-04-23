@@ -23,7 +23,7 @@
           \"path\": \"src/lib.rs\",
           \"lhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"snapshot_path\": \"src/lib.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 41 }\"},
           \"rhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"snapshot_path\": \"src/lib.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 42 }\"},
-          \"difftastic_display\": \"ANSI-DIFF\"
+          \"diff_display\": \"ANSI-DIFF\"
         }
       ]
     }"
@@ -47,7 +47,7 @@
           \"path\": \"src/b.rs\",
           \"lhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning()\", \"file_path\": \"/tmp/repo/src/b.rs\", \"snapshot_path\": \"src/b.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 41 }\"},
           \"rhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning()\", \"file_path\": \"/tmp/repo/src/b.rs\", \"snapshot_path\": \"src/b.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 42 }\"},
-          \"difftastic_display\": \"ANSI-DIFF\"
+          \"diff_display\": \"ANSI-DIFF\"
         }
       ]
     }"

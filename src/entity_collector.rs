@@ -214,6 +214,7 @@ fn compute_line_starts(text: &str) -> Vec<usize> {
     starts
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_items(
     repo: &dyn SourceRepo,
     target: &TargetRoot,

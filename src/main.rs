@@ -3,9 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-mod difftastic_renderer;
 mod entity_collector;
 mod logging;
+mod minidiff_renderer;
 mod output;
 mod project_discovery;
 mod snapshot;

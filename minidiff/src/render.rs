@@ -46,12 +46,10 @@ pub fn render_side_by_side(diff: &DiffResult, options: &RenderOptions) -> Result
             row.inline.as_ref(),
             options,
         );
-        rendered.push_str(&format!(
-            "{:<width$} | {}\n",
-            left,
-            right,
-            width = options.column_width
-        ));
+        rendered.push_str(&pad_visible_width(&left, options.column_width));
+        rendered.push_str(" | ");
+        rendered.push_str(&right);
+        rendered.push('\n');
     }
     Ok(rendered)
 }
@@ -64,26 +62,16 @@ fn render_side(
     options: &RenderOptions,
 ) -> String {
     let raw = match line {
-        Some(line) => {
-            let prefix = format!("{}{} ", side_prefix(side), line.line_number);
-            let content = style_content(&line.text, kind, side, inline, options);
-            format!("{prefix}{content}")
-        }
-        None => format!("{}  ", side_prefix(side)),
+        Some(line) => line.text.clone(),
+        None => String::new(),
     };
 
-    match options.wrapping {
+    let wrapped = match options.wrapping {
         Wrapping::Wrap => raw.chars().take(options.column_width).collect(),
         Wrapping::NoWrap => raw,
-    }
-}
+    };
 
-fn side_prefix(side: ChangeSide) -> &'static str {
-    match side {
-        ChangeSide::Left => "L",
-        ChangeSide::Right => "R",
-        ChangeSide::Both => "B",
-    }
+    style_content(&wrapped, kind, side, inline, options)
 }
 
 fn style_content(
@@ -111,4 +99,28 @@ fn style_content(
             format!("{color}{text}\u{1b}[0m")
         }
     }
+}
+
+fn pad_visible_width(text: &str, width: usize) -> String {
+    let visible_width = visible_width(text);
+    let padding = width.saturating_sub(visible_width);
+    format!("{text}{}", " ".repeat(padding))
+}
+
+fn visible_width(text: &str) -> usize {
+    let mut width = 0;
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            width += 1;
+        }
+    }
+    width
 }
