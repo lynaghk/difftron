@@ -1,0 +1,10 @@
+[package]
+name = "minidiff"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+ra_ap_syntax = "0"
+tracing = "0"
+tracing-tree = "0"

@@ -1632,6 +1632,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "minidiff"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ra_ap_syntax",
+ "tracing",
+ "tracing-tree",
+]
+
+[[package]]
 name = "miow"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1924,6 +1934,7 @@ dependencies = [
  "env_logger",
  "gix",
  "id-arena",
+ "minidiff",
  "ra_ap_syntax",
  "serde",
  "serde_json",
