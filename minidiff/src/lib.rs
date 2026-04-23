@@ -100,6 +100,20 @@ mod tests {
     }
 
     #[test]
+    fn ansi_render_only_highlights_removed_clone_in_derive_attribute() {
+        let lhs = "#[derive(Debug, Clone)]\n";
+        let rhs = "#[derive(Debug)]\n";
+        let diff_result = diff(Language::Rust, lhs, rhs, DiffOptions::default()).unwrap();
+
+        let rendered =
+            render_side_by_side(&diff_result, &render_options(OutputStyle::Ansi)).unwrap();
+
+        assert!(rendered.contains("#[derive(Debug"));
+        assert!(rendered.contains("\u{1b}[31m, Clone\u{1b}[0m"));
+        assert!(!rendered.contains("\u{1b}[31m#[derive(Debug"));
+    }
+
+    #[test]
     fn clojure_quality_fixture_matches_snapshot() {
         let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/clojure");
         let lhs = fs::read_to_string(fixture_dir.join("nested-reshape.lhs.clj")).unwrap();

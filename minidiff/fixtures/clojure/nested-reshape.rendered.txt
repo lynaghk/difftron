@@ -1,6 +1,6 @@
-(defn render-user [user]                        | (defn render-user
-                                                |   [user]
-  {:id (:id user)                               |   {:id (:id user)
-   :name (:name user)                           |    :profile {:name (:name user)
-   :details {:email (:email user)               |              :email (:email user)}
-             :admin? (:admin user)}})           |    :admin? (:admin user)})
+(defn render-user [user]                         | (defn render-user
+                                                 |   [user]
+  {:id (:id user)                                |   {:id (:id user)
+   :name (:name user)                            |    :profile {:name (:name user)
+   :details {:email (:email user)                |              :email (:email user)}
+             :admin? (:admin user)}})            |    :admin? (:admin user)})

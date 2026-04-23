@@ -3,7 +3,7 @@ use tracing::info_span;
 
 use crate::{
     diff::{ChangeKind, ChangeSide, DiffResult, DisplayLine},
-    inline::InlineSegments,
+    inline::{InlineEmphasis, InlineSegments},
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -84,21 +84,51 @@ fn style_content(
     match options.output_style {
         OutputStyle::Plain => text.to_owned(),
         OutputStyle::Ansi => {
-            let color = match (kind, side) {
-                (ChangeKind::Novel(ChangeSide::Left), ChangeSide::Left) => "\u{1b}[31m",
-                (ChangeKind::Novel(ChangeSide::Right), ChangeSide::Right) => "\u{1b}[32m",
-                (ChangeKind::ReplacedCode, ChangeSide::Left)
-                | (ChangeKind::ReplacedComment, ChangeSide::Left)
-                | (ChangeKind::ReplacedString, ChangeSide::Left) => "\u{1b}[31m",
-                (ChangeKind::ReplacedCode, ChangeSide::Right)
-                | (ChangeKind::ReplacedComment, ChangeSide::Right)
-                | (ChangeKind::ReplacedString, ChangeSide::Right) => "\u{1b}[32m",
-                _ => "\u{1b}[0m",
-            };
-            let _ = inline;
-            format!("{color}{text}\u{1b}[0m")
+            if let Some(inline) = inline {
+                render_inline_segments(inline, side)
+            } else {
+                let color = match (kind, side) {
+                    (ChangeKind::Novel(ChangeSide::Left), ChangeSide::Left) => "\u{1b}[31m",
+                    (ChangeKind::Novel(ChangeSide::Right), ChangeSide::Right) => "\u{1b}[32m",
+                    (ChangeKind::ReplacedCode, ChangeSide::Left)
+                    | (ChangeKind::ReplacedComment, ChangeSide::Left)
+                    | (ChangeKind::ReplacedString, ChangeSide::Left) => "\u{1b}[31m",
+                    (ChangeKind::ReplacedCode, ChangeSide::Right)
+                    | (ChangeKind::ReplacedComment, ChangeSide::Right)
+                    | (ChangeKind::ReplacedString, ChangeSide::Right) => "\u{1b}[32m",
+                    _ => "\u{1b}[0m",
+                };
+                format!("{color}{text}\u{1b}[0m")
+            }
         }
     }
+}
+
+fn render_inline_segments(inline: &InlineSegments, side: ChangeSide) -> String {
+    let segments = match side {
+        ChangeSide::Left => &inline.left,
+        ChangeSide::Right => &inline.right,
+        ChangeSide::Both => &inline.left,
+    };
+
+    let novel_color = match side {
+        ChangeSide::Left => "\u{1b}[31m",
+        ChangeSide::Right => "\u{1b}[32m",
+        ChangeSide::Both => "\u{1b}[0m",
+    };
+
+    let mut rendered = String::new();
+    for segment in segments {
+        match segment.emphasis {
+            InlineEmphasis::Context => rendered.push_str(&segment.text),
+            InlineEmphasis::Novel => {
+                rendered.push_str(novel_color);
+                rendered.push_str(&segment.text);
+                rendered.push_str("\u{1b}[0m");
+            }
+        }
+    }
+    rendered
 }
 
 fn pad_visible_width(text: &str, width: usize) -> String {

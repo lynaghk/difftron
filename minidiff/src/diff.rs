@@ -137,7 +137,7 @@ fn flush_changed_block(lhs: &[DisplayLine], rhs: &[DisplayLine], rows: &mut Vec<
         let kind = classify_replacement(&left, &right);
         let inline = matches!(
             kind,
-            ChangeKind::ReplacedComment | ChangeKind::ReplacedString
+            ChangeKind::ReplacedCode | ChangeKind::ReplacedComment | ChangeKind::ReplacedString
         )
         .then(|| crate::inline::emphasize(&left.text, &right.text));
         rows.push(DiffRow {

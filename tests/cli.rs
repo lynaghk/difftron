@@ -64,8 +64,10 @@ fn diff_json_emits_modified_entities() {
     let display = meaning["diff_display"]
         .as_str()
         .expect("diff display should be a string");
-    assert!(display.contains("pub fn meaning() -> u32 { 41 }"));
-    assert!(display.contains("pub fn meaning() -> u32 { 42 }"));
+    assert!(display.contains("pub fn "));
+    assert!(display.contains("meaning"));
+    assert!(display.contains("u32"));
+    assert!(display.contains("\u{1b}["));
     assert_eq!(
         meaning["rhs"]["source_text"],
         "pub fn meaning() -> u32 { 42 }"

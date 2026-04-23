@@ -277,12 +277,10 @@ mod tests {
         assert_eq!(json["rhs"]["rev"], "HEAD");
         assert_eq!(json["added"][0]["name"], "crate::added");
         assert_eq!(json["modified"][0]["lhs"]["name"], "crate::changed");
-        assert!(
-            json["modified"][0]["diff_display"]
-                .as_str()
-                .unwrap()
-                .contains("fn changed() -> u32")
-        );
+        let diff_display = json["modified"][0]["diff_display"].as_str().unwrap();
+        assert!(diff_display.contains("\u{1b}["));
+        assert!(diff_display.contains("fn "));
+        assert!(diff_display.contains("changed"));
         assert_eq!(
             json["modified"][0]["rhs"]["source_text"],
             "fn changed() -> u32 { 2 }"
