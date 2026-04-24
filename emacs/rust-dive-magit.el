@@ -179,7 +179,7 @@ working tree rooted at the current repository."
    rust-dive-magit--command-args
    rust-dive-magit--payload)
   (with-current-buffer rust-dive-magit-buffer-name
-    (magit-section-show-level-2)))
+    (magit-section-show-level-3)))
 
 (defun rust-dive-magit-visit-thing ()
   "Visit the entity at point or activate a button."
@@ -187,9 +187,14 @@ working tree rooted at the current repository."
   (if-let* ((section (rust-dive-magit--entity-section-at-point))
             (entity (plist-get (oref section value) :entity)))
       (rust-dive-magit--visit-entity entity)
-    (if (button-at (point))
-        (push-button)
+    (if-let ((button (rust-dive-magit--button-at-point)))
+        (push-button (button-start button))
       (magit-section-toggle (magit-current-section)))))
+
+(defun rust-dive-magit--button-at-point ()
+  "Return the button at point, accepting point just after button text."
+  (or (button-at (point))
+      (and (> (point) (point-min)) (button-at (1- (point))))))
 
 (defun rust-dive-magit--display-buffer
     (repo-default-directory args payload)
@@ -207,7 +212,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         (setq rust-dive-magit--payload payload)
         (erase-buffer)
         (rust-dive-magit--insert-payload payload)
-        (magit-section-show-level-2)
+        (magit-section-show-level-3)
         (goto-char (point-min))))
     (pop-to-buffer buffer)))
 
@@ -244,23 +249,60 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
   "Insert a diff PAYLOAD into the current buffer."
   (let ((lhs (plist-get payload :lhs))
         (rhs (plist-get payload :rhs)))
-    (rust-dive-magit--insert-title
-     (format "rust_dive diff %s -> %s"
-             (plist-get lhs :label)
-             (plist-get rhs :label)))
+    (rust-dive-magit--insert-snapshot-line "lhs" lhs)
+    (rust-dive-magit--insert-snapshot-line "rhs" rhs)
+    (insert "\n")
     (rust-dive-magit--insert-items
      (rust-dive-magit--diff-items payload))))
+
+(defun rust-dive-magit--insert-snapshot-line (name snapshot)
+  "Insert one clickable diff endpoint NAME for SNAPSHOT."
+  (insert
+   (propertize (format "%s: " name)
+               'font-lock-face
+               'magit-section-heading))
+  (insert-text-button (rust-dive-magit--display-label
+                       (plist-get snapshot :label))
+                      'action
+                      (lambda (_button)
+                        (rust-dive-magit--visit-snapshot snapshot))
+                      'follow-link
+                      t
+                      'help-echo
+                      "RET visits snapshot"
+                      'font-lock-face
+                      'magit-section-heading)
+  (insert "\n"))
+
+(defun rust-dive-magit--visit-snapshot (snapshot)
+  "Visit SNAPSHOT using the best available Magit action."
+  (pcase (plist-get snapshot :kind)
+    ("git_revision"
+     (let ((rev (plist-get snapshot :rev))
+           (default-directory (plist-get snapshot :root)))
+       (unless rev
+         (user-error "Git revision snapshot has no revision"))
+       (require 'magit-diff)
+       (magit-show-commit rev)))
+    (_
+     (user-error "Don't know how to visit %s snapshots"
+                 (plist-get snapshot :kind)))))
+
+(defun rust-dive-magit--display-label (label)
+  "Return a compact display form for snapshot LABEL."
+  (if (string-match "\\`\\(.+\\)@\\(.+\\)\\'" label)
+      (let ((name (match-string 1 label))
+            (rev (match-string 2 label)))
+        (format "%s@%s"
+                (if (string-match-p "/" name)
+                    (file-name-nondirectory name)
+                  name)
+                rev))
+    label))
 
 (defun rust-dive-magit--insert-title (title)
   "Insert TITLE at the top of the current buffer."
   (insert (propertize title 'font-lock-face 'magit-section-heading))
-  (insert "\n")
-  (insert
-   (propertize (format "Grouping: %s"
-                       (pcase rust-dive-magit--grouping
-                         ('file "File -> Entity")
-                         (_ "Entity -> File")))
-               'font-lock-face 'magit-section-secondary-heading))
   (insert "\n\n"))
 
 (defun rust-dive-magit--insert-kind-groups (items)

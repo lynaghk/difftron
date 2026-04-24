@@ -265,8 +265,9 @@
            (file-section (car (oref kind-section children)))
            (entity-section (car (oref file-section children))))
       (should
-       (string-match-p
-        "rust_dive diff repo@HEAD~1 -> repo@HEAD" text))
+       (string-match-p "^lhs: repo@HEAD~1\nrhs: repo@HEAD\n\n" text))
+      (should-not (string-match-p "rust_dive diff" text))
+      (should-not (string-match-p "Grouping:" text))
       (should (derived-mode-p 'magit-section-mode))
       (should (equal (oref kind-section type) 'rust-dive-kind))
       (should (equal (oref file-section type) 'rust-dive-file))
@@ -308,8 +309,7 @@
         (get-text-property
          (match-beginning 0) 'font-lock-face)
         'rust-dive-magit-level-1-heading))
-      (should
-       (string-match-p "Grouping: Entity -> File" (buffer-string))))))
+      (should-not (string-match-p "Grouping:" (buffer-string))))))
 
 (ert-deftest rust-dive-magit-renders-file-grouping ()
   (with-temp-buffer
@@ -332,8 +332,7 @@
         'magit-section-heading))
       (should (string-match-p "^src/a\\.rs (1)$" (buffer-string)))
       (should (string-match-p "^  \\+ demo::added$" (buffer-string)))
-      (should
-       (string-match-p "Grouping: File -> Entity" (buffer-string))))))
+      (should-not (string-match-p "Grouping:" (buffer-string))))))
 
 (ert-deftest rust-dive-magit-display-buffer-uses-default-grouping ()
   (let ((rust-dive-magit-default-grouping 'file))
@@ -348,10 +347,9 @@
              (file-section (car (oref root children)))
              (entity-section (car (oref file-section children))))
         (should (eq rust-dive-magit--grouping 'file))
-        (should
-         (string-match-p "Grouping: File -> Entity" (buffer-string)))
+        (should-not (string-match-p "Grouping:" (buffer-string)))
         (should-not (oref file-section hidden))
-        (should (oref entity-section hidden))))))
+        (should-not (oref entity-section hidden))))))
 
 (ert-deftest rust-dive-magit-refresh-preserves-magit-display-state ()
   (let ((rust-dive-magit-default-grouping 'file))
@@ -558,9 +556,61 @@
              (file-section (car (oref root children)))
              (entity-section (car (oref file-section children)))
              (text (buffer-string)))
-        (should (string-match-p "Grouping: File -> Entity" text))
+        (should-not (string-match-p "Grouping:" text))
         (should-not (oref file-section hidden))
-        (should (oref entity-section hidden))))))
+        (should-not (oref entity-section hidden))))))
+
+(ert-deftest rust-dive-magit-shortens-path-backed-diff-labels ()
+  (with-temp-buffer
+    (rust-dive-magit-mode)
+    (let ((inhibit-read-only t))
+      (rust-dive-magit--insert-payload
+       (rust-dive-magit-tests--diff-payload
+        :lhs-label "/Users/dev/work/incubator/2026-04-21-diff@5767f35^"
+        :rhs-label "/Users/dev/work/incubator/2026-04-21-diff@5767f35")))
+    (should
+     (string-prefix-p
+      "lhs: 2026-04-21-diff@5767f35^\nrhs: 2026-04-21-diff@5767f35\n\n"
+      (buffer-string)))))
+
+(ert-deftest rust-dive-magit-renders-clickable-diff-snapshots ()
+  (with-temp-buffer
+    (rust-dive-magit-mode)
+    (let ((inhibit-read-only t))
+      (rust-dive-magit--insert-payload
+       rust-dive-magit-tests--sample-payload))
+    (goto-char (point-min))
+    (search-forward "repo@HEAD~1")
+    (should (button-at (1- (point))))
+    (search-forward "repo@HEAD")
+    (should (button-at (1- (point))))))
+
+(ert-deftest rust-dive-magit-visits-git-revision-snapshot ()
+  (let (visited-rev
+        visited-directory)
+    (cl-letf (((symbol-function 'magit-show-commit)
+               (lambda (rev &rest _)
+                 (setq visited-rev rev)
+                 (setq visited-directory default-directory))))
+      (rust-dive-magit--visit-snapshot
+       (rust-dive-magit-tests--git-revision "repo@HEAD~1" "HEAD~1")))
+    (should (equal visited-rev "HEAD~1"))
+    (should (equal visited-directory "/tmp/repo"))))
+
+(ert-deftest rust-dive-magit-ret-visits-diff-snapshot ()
+  (let (visited-rev)
+    (cl-letf (((symbol-function 'magit-show-commit)
+               (lambda (rev &rest _) (setq visited-rev rev))))
+      (with-temp-buffer
+        (rust-dive-magit-mode)
+        (let ((inhibit-read-only t))
+          (rust-dive-magit--insert-payload
+           rust-dive-magit-tests--sample-payload))
+        (goto-char (point-min))
+        (search-forward "rhs: ")
+        (search-forward "repo@HEAD")
+        (rust-dive-magit-visit-thing)))
+    (should (equal visited-rev "HEAD"))))
 
 (ert-deftest rust-dive-magit-dwim-endpoints-from-commit ()
   (should
