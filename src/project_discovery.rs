@@ -52,34 +52,53 @@ pub fn discover_targets(repo: &dyn SourceRepo) -> Result<Vec<TargetRoot>> {
         bail!("expected {} to contain a Cargo.toml", repo.root().display());
     }
 
+    let mut visited_manifests = HashSet::new();
     let mut visited_packages = HashSet::new();
     let mut targets = BTreeSet::new();
-    discover_manifest(repo, &root_manifest, &mut visited_packages, &mut targets)?;
+    discover_manifest(
+        repo,
+        &root_manifest,
+        &mut visited_manifests,
+        &mut visited_packages,
+        &mut targets,
+    )?;
     Ok(targets.into_iter().collect())
 }
 
 fn discover_manifest(
     repo: &dyn SourceRepo,
     manifest_path: &Path,
+    visited_manifests: &mut HashSet<PathBuf>,
     visited_packages: &mut HashSet<PathBuf>,
     targets: &mut BTreeSet<TargetRoot>,
 ) -> Result<()> {
-    let manifest = parse_manifest(repo, manifest_path)?;
-    let package_dir = manifest_dir(manifest_path);
+    let manifest_path = normalize_relative(manifest_path);
+    if !visited_manifests.insert(manifest_path.clone()) {
+        return Ok(());
+    }
+
+    let manifest = parse_manifest(repo, &manifest_path)?;
+    let package_dir = manifest_dir(&manifest_path);
 
     if manifest.package.is_some() && visited_packages.insert(package_dir.clone()) {
         targets.extend(targets_for_package(repo, &manifest, &package_dir)?);
     }
 
     if let Some(workspace) = manifest.workspace {
-        for member in workspace.members {
-            for member_dir in expand_member_pattern(repo, &package_dir, &member)? {
-                let member_manifest = member_dir.join("Cargo.toml");
-                if repo.is_file(&member_manifest)? {
-                    discover_manifest(repo, &member_manifest, visited_packages, targets)?;
+            for member in workspace.members {
+                for member_dir in expand_member_pattern(repo, &package_dir, &member)? {
+                    let member_manifest = member_dir.join("Cargo.toml");
+                    if repo.is_file(&member_manifest)? {
+                        discover_manifest(
+                            repo,
+                            &member_manifest,
+                            visited_manifests,
+                            visited_packages,
+                            targets,
+                        )?;
+                    }
                 }
             }
-        }
     }
 
     Ok(())
@@ -366,4 +385,136 @@ fn normalize_relative(path: &Path) -> PathBuf {
         }
     }
     normalized
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use super::*;
+    use crate::source_repo::SourceRepo;
+
+    #[derive(Debug)]
+    struct TestRepo {
+        files: BTreeMap<PathBuf, String>,
+        dirs: BTreeSet<PathBuf>,
+    }
+
+    impl TestRepo {
+        fn new(files: &[(&str, &str)]) -> Self {
+            let mut repo = Self {
+                files: BTreeMap::new(),
+                dirs: BTreeSet::from([PathBuf::new()]),
+            };
+
+            for (path, contents) in files {
+                let path = PathBuf::from(path);
+                repo.add_parent_dirs(&path);
+                repo.files.insert(path, (*contents).to_owned());
+            }
+
+            repo
+        }
+
+        fn add_parent_dirs(&mut self, path: &Path) {
+            let mut current = PathBuf::new();
+            for component in path.components().take(path.components().count().saturating_sub(1)) {
+                current.push(component.as_os_str());
+                self.dirs.insert(current.clone());
+            }
+        }
+    }
+
+    impl SourceRepo for TestRepo {
+        fn root(&self) -> &Path {
+            Path::new("/test")
+        }
+
+        fn file_path(&self, path: &Path) -> PathBuf {
+            self.root().join(path)
+        }
+
+        fn snapshot_path(&self, path: &Path) -> PathBuf {
+            path.to_path_buf()
+        }
+
+        fn read_file(&self, path: &Path) -> Result<Option<String>> {
+            Ok(self.files.get(path).cloned())
+        }
+
+        fn is_file(&self, path: &Path) -> Result<bool> {
+            Ok(self.files.contains_key(path))
+        }
+
+        fn is_dir(&self, path: &Path) -> Result<bool> {
+            Ok(self.dirs.contains(path))
+        }
+
+        fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>> {
+            let mut children = BTreeSet::new();
+            for dir in &self.dirs {
+                if let Ok(suffix) = dir.strip_prefix(path)
+                    && suffix.components().count() == 1
+                    && !suffix.as_os_str().is_empty()
+                {
+                    children.insert(dir.clone());
+                }
+            }
+            for file in self.files.keys() {
+                if let Some(parent) = file.parent()
+                    && parent == path
+                {
+                    children.insert(file.clone());
+                }
+            }
+            Ok(children.into_iter().collect())
+        }
+    }
+
+    #[test]
+    fn discover_targets_handles_workspace_self_member_without_recursing() {
+        let repo = TestRepo::new(&[
+            (
+                "Cargo.toml",
+                r#"
+                [workspace]
+                members = [".", "minidiff"]
+
+                [package]
+                name = "rust_dive"
+
+                [lib]
+                path = "src/lib.rs"
+                "#,
+            ),
+            ("src/lib.rs", "pub fn root() {}\n"),
+            (
+                "minidiff/Cargo.toml",
+                r#"
+                [package]
+                name = "minidiff"
+
+                [lib]
+                path = "src/lib.rs"
+                "#,
+            ),
+            ("minidiff/src/lib.rs", "pub fn nested() {}\n"),
+        ]);
+
+        let targets = discover_targets(&repo).unwrap();
+
+        assert_eq!(
+            targets,
+            vec![
+                TargetRoot {
+                    crate_name: "minidiff".to_owned(),
+                    root_file: PathBuf::from("minidiff/src/lib.rs"),
+                },
+                TargetRoot {
+                    crate_name: "rust_dive".to_owned(),
+                    root_file: PathBuf::from("src/lib.rs"),
+                },
+            ]
+        );
+    }
 }
