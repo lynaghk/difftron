@@ -2,117 +2,193 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'ert)
-(require 'json)
 
 (add-to-list 'load-path (file-name-directory (or load-file-name buffer-file-name)))
 (require 'rust-dive-magit)
 
+(defun rust-dive-magit-tests--git-revision (label rev)
+  (list :label label :kind "git_revision" :root "/tmp/repo" :rev rev))
+
+(cl-defun rust-dive-magit-tests--entity (name kind file-path snapshot-path source-text
+                                              &key
+                                              (start-line 1)
+                                              (start-col 1)
+                                              (end-line 1)
+                                              (end-col 10)
+                                              rendered-summary)
+  (list :name name
+        :kind kind
+        :rendered_summary (or rendered-summary (format "%s %s" kind name))
+        :file_path file-path
+        :snapshot_path snapshot-path
+        :start_line start-line
+        :start_col start-col
+        :end_line end-line
+        :end_col end-col
+        :source_text source-text))
+
+(defun rust-dive-magit-tests--segments (text novel)
+  (let ((match (string-match (regexp-quote novel) text)))
+    (list (list :text (substring text 0 match) :kind "context")
+          (list :text novel :kind "novel")
+          (list :text (substring text (+ match (length novel))) :kind "context"))))
+
+(defun rust-dive-magit-tests--side (text novel)
+  (list :line_number 1
+        :text text
+        :segments (rust-dive-magit-tests--segments text novel)))
+
+(defun rust-dive-magit-tests--modified-change (path lhs rhs lhs-novel rhs-novel)
+  (list :path path
+        :lhs lhs
+        :rhs rhs
+        :diff (list :rows
+                    (list (list :kind "replaced_code"
+                                :left (rust-dive-magit-tests--side
+                                       (plist-get lhs :source_text)
+                                       lhs-novel)
+                                :right (rust-dive-magit-tests--side
+                                        (plist-get rhs :source_text)
+                                        rhs-novel))))))
+
+(cl-defun rust-dive-magit-tests--diff-payload (&key
+                                                    added
+                                                    deleted
+                                                    modified
+                                                    (lhs-label "repo@HEAD~1")
+                                                    (rhs-label "repo@HEAD")
+                                                    (lhs-rev "HEAD~1")
+                                                    (rhs-rev "HEAD"))
+  (list :command "diff"
+        :lhs (rust-dive-magit-tests--git-revision lhs-label lhs-rev)
+        :rhs (rust-dive-magit-tests--git-revision rhs-label rhs-rev)
+        :added added
+        :deleted deleted
+        :modified modified))
+
 (defconst rust-dive-magit-tests--sample-payload
-  (json-parse-string
-   "{
-      \"command\": \"diff\",
-      \"lhs\": {\"label\": \"repo@HEAD~1\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD~1\"},
-      \"rhs\": {\"label\": \"repo@HEAD\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD\"},
-      \"added\": [
-        {\"name\": \"demo::added\", \"kind\": \"function\", \"rendered_summary\": \"function demo::added() @ /tmp/repo/src/lib.rs:10:1-12:2\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"snapshot_path\": \"src/lib.rs\", \"start_line\": 10, \"start_col\": 1, \"end_line\": 12, \"end_col\": 2, \"source_text\": \"fn added() {}\"}
-      ],
-      \"deleted\": [],
-      \"modified\": [
-        {
-          \"path\": \"src/lib.rs\",
-          \"lhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"snapshot_path\": \"src/lib.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 41 }\"},
-          \"rhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"snapshot_path\": \"src/lib.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 42 }\"},
-          \"diff\": {
-            \"rows\": [
-              {
-                \"kind\": \"replaced_code\",
-                \"left\": {\"line_number\": 1, \"text\": \"fn meaning() -> u32 { 41 }\", \"segments\": [{\"text\": \"fn meaning() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"41\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]},
-                \"right\": {\"line_number\": 1, \"text\": \"fn meaning() -> u32 { 42 }\", \"segments\": [{\"text\": \"fn meaning() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"42\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]}
-              }
-            ]
-          }
-        }
-      ]
-    }"
-   :object-type 'plist
-   :array-type 'list))
+  (let* ((added (rust-dive-magit-tests--entity
+                 "demo::added"
+                 "function"
+                 "/tmp/repo/src/lib.rs"
+                 "src/lib.rs"
+                 "fn added() {}"
+                 :start-line 10
+                 :end-line 12
+                 :end-col 2
+                 :rendered-summary
+                 "function demo::added() @ /tmp/repo/src/lib.rs:10:1-12:2"))
+         (lhs (rust-dive-magit-tests--entity
+               "demo::meaning"
+               "function"
+               "/tmp/repo/src/lib.rs"
+               "src/lib.rs"
+               "fn meaning() -> u32 { 41 }"
+               :rendered-summary
+               "function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10"))
+         (rhs (rust-dive-magit-tests--entity
+               "demo::meaning"
+               "function"
+               "/tmp/repo/src/lib.rs"
+               "src/lib.rs"
+               "fn meaning() -> u32 { 42 }"
+               :rendered-summary
+               "function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10")))
+    (rust-dive-magit-tests--diff-payload
+     :added (list added)
+     :deleted nil
+     :modified (list (rust-dive-magit-tests--modified-change
+                      "src/lib.rs" lhs rhs "41" "42")))))
 
 (defconst rust-dive-magit-tests--multi-file-payload
-  (json-parse-string
-   "{
-      \"command\": \"diff\",
-      \"lhs\": {\"label\": \"repo@HEAD~1\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD~1\"},
-      \"rhs\": {\"label\": \"repo@HEAD\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD\"},
-      \"added\": [
-        {\"name\": \"demo::added\", \"kind\": \"function\", \"rendered_summary\": \"function demo::added()\", \"file_path\": \"/tmp/repo/src/a.rs\", \"snapshot_path\": \"src/a.rs\", \"start_line\": 10, \"start_col\": 1, \"end_line\": 12, \"end_col\": 2, \"source_text\": \"fn added() {}\"}
-      ],
-      \"deleted\": [
-        {\"name\": \"demo::old_struct\", \"kind\": \"struct\", \"rendered_summary\": \"struct demo::old_struct\", \"file_path\": \"/tmp/repo/src/b.rs\", \"snapshot_path\": \"src/b.rs\", \"start_line\": 20, \"start_col\": 1, \"end_line\": 22, \"end_col\": 2, \"source_text\": \"struct Old;\"}
-      ],
-      \"modified\": [
-        {
-          \"path\": \"src/b.rs\",
-          \"lhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning()\", \"file_path\": \"/tmp/repo/src/b.rs\", \"snapshot_path\": \"src/b.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 41 }\"},
-          \"rhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning()\", \"file_path\": \"/tmp/repo/src/b.rs\", \"snapshot_path\": \"src/b.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 42 }\"},
-          \"diff\": {
-            \"rows\": [
-              {
-                \"kind\": \"replaced_code\",
-                \"left\": {\"line_number\": 1, \"text\": \"fn meaning() -> u32 { 41 }\", \"segments\": [{\"text\": \"fn meaning() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"41\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]},
-                \"right\": {\"line_number\": 1, \"text\": \"fn meaning() -> u32 { 42 }\", \"segments\": [{\"text\": \"fn meaning() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"42\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]}
-              }
-            ]
-          }
-        }
-      ]
-    }"
-   :object-type 'plist
-   :array-type 'list))
+  (let* ((added (rust-dive-magit-tests--entity
+                 "demo::added"
+                 "function"
+                 "/tmp/repo/src/a.rs"
+                 "src/a.rs"
+                 "fn added() {}"
+                 :start-line 10
+                 :end-line 12
+                 :end-col 2
+                 :rendered-summary "function demo::added()"))
+         (deleted (rust-dive-magit-tests--entity
+                   "demo::old_struct"
+                   "struct"
+                   "/tmp/repo/src/b.rs"
+                   "src/b.rs"
+                   "struct Old;"
+                   :start-line 20
+                   :end-line 22
+                   :end-col 2
+                   :rendered-summary "struct demo::old_struct"))
+         (lhs (rust-dive-magit-tests--entity
+               "demo::meaning"
+               "function"
+               "/tmp/repo/src/b.rs"
+               "src/b.rs"
+               "fn meaning() -> u32 { 41 }"
+               :rendered-summary "function demo::meaning()"))
+         (rhs (rust-dive-magit-tests--entity
+               "demo::meaning"
+               "function"
+               "/tmp/repo/src/b.rs"
+               "src/b.rs"
+               "fn meaning() -> u32 { 42 }"
+               :rendered-summary "function demo::meaning()")))
+    (rust-dive-magit-tests--diff-payload
+     :added (list added)
+     :deleted (list deleted)
+     :modified (list (rust-dive-magit-tests--modified-change
+                      "src/b.rs" lhs rhs "41" "42")))))
 
 (defconst rust-dive-magit-tests--refresh-payload
-  (json-parse-string
-   "{
-      \"command\": \"diff\",
-      \"lhs\": {\"label\": \"repo@HEAD~1\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD~1\"},
-      \"rhs\": {\"label\": \"repo@HEAD\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD\"},
-      \"added\": [
-        {\"name\": \"demo::alpha\", \"kind\": \"function\", \"rendered_summary\": \"function demo::alpha()\", \"file_path\": \"/tmp/repo/src/a.rs\", \"snapshot_path\": \"src/a.rs\", \"start_line\": 10, \"start_col\": 1, \"end_line\": 12, \"end_col\": 2, \"source_text\": \"fn alpha() {}\"}
-      ],
-      \"deleted\": [],
-      \"modified\": [
-        {
-          \"path\": \"src/b.rs\",
-          \"lhs\": {\"name\": \"demo::beta\", \"kind\": \"function\", \"rendered_summary\": \"function demo::beta()\", \"file_path\": \"/tmp/repo/src/b.rs\", \"snapshot_path\": \"src/b.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn beta() -> u32 { 41 }\"},
-          \"rhs\": {\"name\": \"demo::beta\", \"kind\": \"function\", \"rendered_summary\": \"function demo::beta()\", \"file_path\": \"/tmp/repo/src/b.rs\", \"snapshot_path\": \"src/b.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn beta() -> u32 { 42 }\"},
-          \"diff\": {
-            \"rows\": [
-              {
-                \"kind\": \"replaced_code\",
-                \"left\": {\"line_number\": 1, \"text\": \"fn beta() -> u32 { 41 }\", \"segments\": [{\"text\": \"fn beta() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"41\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]},
-                \"right\": {\"line_number\": 1, \"text\": \"fn beta() -> u32 { 42 }\", \"segments\": [{\"text\": \"fn beta() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"42\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]}
-              }
-            ]
-          }
-        },
-        {
-          \"path\": \"src/c.rs\",
-          \"lhs\": {\"name\": \"demo::gamma\", \"kind\": \"function\", \"rendered_summary\": \"function demo::gamma()\", \"file_path\": \"/tmp/repo/src/c.rs\", \"snapshot_path\": \"src/c.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn gamma() -> u32 { 7 }\"},
-          \"rhs\": {\"name\": \"demo::gamma\", \"kind\": \"function\", \"rendered_summary\": \"function demo::gamma()\", \"file_path\": \"/tmp/repo/src/c.rs\", \"snapshot_path\": \"src/c.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn gamma() -> u32 { 8 }\"},
-          \"diff\": {
-            \"rows\": [
-              {
-                \"kind\": \"replaced_code\",
-                \"left\": {\"line_number\": 1, \"text\": \"fn gamma() -> u32 { 7 }\", \"segments\": [{\"text\": \"fn gamma() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"7\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]},
-                \"right\": {\"line_number\": 1, \"text\": \"fn gamma() -> u32 { 8 }\", \"segments\": [{\"text\": \"fn gamma() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"8\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]}
-              }
-            ]
-          }
-        }
-      ]
-    }"
-   :object-type 'plist
-   :array-type 'list))
+  (let* ((added (rust-dive-magit-tests--entity
+                 "demo::alpha"
+                 "function"
+                 "/tmp/repo/src/a.rs"
+                 "src/a.rs"
+                 "fn alpha() {}"
+                 :start-line 10
+                 :end-line 12
+                 :end-col 2
+                 :rendered-summary "function demo::alpha()"))
+         (beta-lhs (rust-dive-magit-tests--entity
+                    "demo::beta"
+                    "function"
+                    "/tmp/repo/src/b.rs"
+                    "src/b.rs"
+                    "fn beta() -> u32 { 41 }"
+                    :rendered-summary "function demo::beta()"))
+         (beta-rhs (rust-dive-magit-tests--entity
+                    "demo::beta"
+                    "function"
+                    "/tmp/repo/src/b.rs"
+                    "src/b.rs"
+                    "fn beta() -> u32 { 42 }"
+                    :rendered-summary "function demo::beta()"))
+         (gamma-lhs (rust-dive-magit-tests--entity
+                     "demo::gamma"
+                     "function"
+                     "/tmp/repo/src/c.rs"
+                     "src/c.rs"
+                     "fn gamma() -> u32 { 7 }"
+                     :rendered-summary "function demo::gamma()"))
+         (gamma-rhs (rust-dive-magit-tests--entity
+                     "demo::gamma"
+                     "function"
+                     "/tmp/repo/src/c.rs"
+                     "src/c.rs"
+                     "fn gamma() -> u32 { 8 }"
+                     :rendered-summary "function demo::gamma()")))
+    (rust-dive-magit-tests--diff-payload
+     :added (list added)
+     :deleted nil
+     :modified (list (rust-dive-magit-tests--modified-change
+                      "src/b.rs" beta-lhs beta-rhs "41" "42")
+                     (rust-dive-magit-tests--modified-change
+                      "src/c.rs" gamma-lhs gamma-rhs "7" "8")))))
 
 (ert-deftest rust-dive-magit-groups-items-by-kind ()
   (let* ((items (rust-dive-magit--diff-items rust-dive-magit-tests--sample-payload))
@@ -279,21 +355,28 @@
             (should (eq (magit-current-section) new-entity-section-c))))))))
 
 (ert-deftest rust-dive-magit-faces-added-and-deleted-entities ()
-  (let* ((payload (json-parse-string
-                   "{
-                      \"command\": \"diff\",
-                      \"lhs\": {\"label\": \"repo@HEAD~1\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD~1\"},
-                      \"rhs\": {\"label\": \"repo@HEAD\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD\"},
-                      \"added\": [
-                        {\"name\": \"demo::added\", \"kind\": \"function\", \"rendered_summary\": \"function demo::added()\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"snapshot_path\": \"src/lib.rs\", \"start_line\": 10, \"start_col\": 1, \"end_line\": 12, \"end_col\": 2, \"source_text\": \"fn added() {}\"}
-                      ],
-                      \"deleted\": [
-                        {\"name\": \"demo::deleted\", \"kind\": \"function\", \"rendered_summary\": \"function demo::deleted()\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"snapshot_path\": \"src/lib.rs\", \"start_line\": 20, \"start_col\": 1, \"end_line\": 22, \"end_col\": 2, \"source_text\": \"fn deleted() {}\"}
-                      ],
-                      \"modified\": []
-                    }"
-                   :object-type 'plist
-                   :array-type 'list)))
+  (let* ((payload (rust-dive-magit-tests--diff-payload
+                   :added (list (rust-dive-magit-tests--entity
+                                 "demo::added"
+                                 "function"
+                                 "/tmp/repo/src/lib.rs"
+                                 "src/lib.rs"
+                                 "fn added() {}"
+                                 :start-line 10
+                                 :end-line 12
+                                 :end-col 2
+                                 :rendered-summary "function demo::added()"))
+                   :deleted (list (rust-dive-magit-tests--entity
+                                   "demo::deleted"
+                                   "function"
+                                   "/tmp/repo/src/lib.rs"
+                                   "src/lib.rs"
+                                   "fn deleted() {}"
+                                   :start-line 20
+                                   :end-line 22
+                                   :end-col 2
+                                   :rendered-summary "function demo::deleted()"))
+                   :modified nil)))
     (with-temp-buffer
       (rust-dive-magit-mode)
       (let ((inhibit-read-only t))

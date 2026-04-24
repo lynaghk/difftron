@@ -279,14 +279,14 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         (plist-get item :diff)))
       (_
        (when-let ((source (plist-get entity :source_text)))
-         (rust-dive-magit--insert-faced-block
-          source
-          (rust-dive-magit--status-face (plist-get item :status)))
+         (insert (propertize source
+                             'font-lock-face
+                             (rust-dive-magit--status-face (plist-get item :status))))
          (unless (string-suffix-p "\n" source)
            (insert "\n")))))
     (unless (eq (char-before) ?\n)
       (insert "\n"))
-      (insert "\n"))))
+    (insert "\n"))))
 
 (defun rust-dive-magit--insert-structured-diff (diff)
   "Insert structured DIFF rows using Emacs layout and faces."
@@ -349,22 +349,6 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
   "Return the per-side width for structured modified diffs."
   (max 24 (/ (- (rust-dive-magit--current-display-width) 3) 2)))
 
-(defun rust-dive-magit--insert-faced-block (text face)
-  "Insert TEXT with FACE."
-  (insert (propertize text 'font-lock-face face)))
-
-(defun rust-dive-magit--insert-location-button (entity)
-  "Insert a button for ENTITY's source location."
-  (let ((label (format "%s:%s"
-                       (plist-get entity :snapshot_path)
-                       (plist-get entity :start_line))))
-    (insert-text-button
-     label
-     'follow-link t
-     'help-echo "Visit source location"
-     'action (lambda (_button)
-               (rust-dive-magit--visit-entity entity)))))
-
 (defun rust-dive-magit--visit-entity (entity)
   "Visit ENTITY in another buffer."
   (let ((file (plist-get entity :file_path))
@@ -415,38 +399,40 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         :entity entity
         :summary (plist-get entity :name)))
 
+(defun rust-dive-magit--group-items (items key-fn group-lessp &optional item-lessp)
+  "Group ITEMS by KEY-FN, sorting groups with GROUP-LESSP.
+When ITEM-LESSP is non-nil, sort items within each group using it."
+  (let ((table (make-hash-table :test #'equal))
+        keys)
+    (dolist (item items)
+      (let ((key (funcall key-fn item)))
+        (unless (gethash key table)
+          (push key keys)
+          (puthash key nil table))
+        (puthash key (cons item (gethash key table)) table)))
+    (mapcar
+     (lambda (key)
+       (cons key
+             (let ((group-items (nreverse (gethash key table))))
+               (if item-lessp
+                   (sort group-items item-lessp)
+                 group-items))))
+     (sort keys group-lessp))))
+
 (defun rust-dive-magit--group-items-by-kind (items)
   "Group ITEMS by entity kind in display order."
-  (let ((table (make-hash-table :test #'equal))
-        kinds)
-    (dolist (item items)
-      (let ((kind (plist-get item :kind)))
-        (unless (gethash kind table)
-          (push kind kinds)
-          (puthash kind nil table))
-        (puthash kind (cons item (gethash kind table)) table)))
-    (mapcar
-     (lambda (kind)
-       (cons kind
-             (nreverse (gethash kind table))))
-     (sort kinds #'rust-dive-magit--kind-lessp))))
+  (rust-dive-magit--group-items
+   items
+   (lambda (item) (plist-get item :kind))
+   #'rust-dive-magit--kind-lessp))
 
 (defun rust-dive-magit--group-items-by-file (items)
   "Group ITEMS by relative path."
-  (let ((table (make-hash-table :test #'equal))
-        files)
-    (dolist (item items)
-      (let ((file (plist-get (plist-get item :entity) :snapshot_path)))
-        (unless (gethash file table)
-          (push file files)
-          (puthash file nil table))
-        (puthash file (cons item (gethash file table)) table)))
-    (mapcar
-     (lambda (file)
-       (cons file
-             (sort (nreverse (gethash file table))
-                   #'rust-dive-magit--item-lessp)))
-     (sort files #'string<))))
+  (rust-dive-magit--group-items
+   items
+   (lambda (item) (plist-get (plist-get item :entity) :snapshot_path))
+   #'string<
+   #'rust-dive-magit--item-lessp))
 
 (defun rust-dive-magit--item-lessp (lhs rhs)
   "Return non-nil when LHS should sort before RHS."
