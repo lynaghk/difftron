@@ -7,15 +7,15 @@
 
 ;;; Code:
 
-(load (expand-file-name "bootstrap.el"
-                        (file-name-directory
-                         (or load-file-name buffer-file-name)))
-      nil 'nomessage)
+(load
+  (expand-file-name "bootstrap.el"
+    (file-name-directory (or load-file-name buffer-file-name)))
+  nil 'nomessage)
 (require 'package)
 
 (setq package-user-dir
-      (expand-file-name "rust-dive-emacs-package-cache"
-                        temporary-file-directory))
+  (expand-file-name "rust-dive-emacs-package-cache"
+    temporary-file-directory))
 (setq package-archives '(("melpa" . "https://melpa.org/packages/")))
 (package-initialize)
 (unless package-archive-contents
@@ -27,15 +27,15 @@
 (straight-use-package 'elisp-autofmt)
 
 (use-package
- magit
- :straight (magit :type git :host github :repo "magit/magit")
- :demand t)
+  magit
+  :straight (magit :type git :host github :repo "magit/magit")
+  :demand t)
 
 (use-package
- rust-dive-magit-lint
- :straight nil
- :load-path rust-dive-elisp-root
- :demand t)
+  rust-dive-magit-lint
+  :straight nil
+  :load-path rust-dive-elisp-root
+  :demand t)
 
 (provide 'lint-init)
 
