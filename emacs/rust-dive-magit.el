@@ -67,6 +67,11 @@
     (define-key map (kbd "h") #'rust-dive-magit-dispatch)
     (define-key map (kbd "?") #'rust-dive-magit-dispatch)
     (define-key map (kbd "RET") #'rust-dive-magit-visit-thing)
+    ;; These are shifted number keys on standard US keyboard layouts.
+    (define-key map (kbd "!") #'magit-section-show-level-1-all)
+    (define-key map (kbd "@") #'magit-section-show-level-2-all)
+    (define-key map (kbd "#") #'magit-section-show-level-3-all)
+    (define-key map (kbd "$") #'magit-section-show-level-4-all)
     map)
   "Keymap for `rust-dive-magit-mode'.")
 
@@ -108,7 +113,12 @@
    ("<backtab>" "Cycle all" magit-section-cycle-global)
    ("1" "Level 1" magit-section-show-level-1)
    ("2" "Level 2" magit-section-show-level-2)
-   ("3" "Level 3" magit-section-show-level-3)]
+   ("3" "Level 3" magit-section-show-level-3)
+   ("4" "Level 4" magit-section-show-level-4)
+   ("!" "All level 1" magit-section-show-level-1-all)
+   ("@" "All level 2" magit-section-show-level-2-all)
+   ("#" "All level 3" magit-section-show-level-3-all)
+   ("$" "All level 4" magit-section-show-level-4-all)]
   ["Movement"
    ("n" "Next section" magit-section-forward)
    ("p" "Previous section" magit-section-backward)
@@ -272,6 +282,12 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
                       "RET visits snapshot"
                       'font-lock-face
                       'magit-section-heading)
+  (when-let ((summary (plist-get snapshot :summary)))
+    (unless (string-empty-p summary)
+      (insert
+       (propertize (format "  %s" summary)
+                   'font-lock-face
+                   'magit-section-secondary-heading))))
   (insert "\n"))
 
 (defun rust-dive-magit--visit-snapshot (snapshot)

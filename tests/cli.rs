@@ -53,6 +53,8 @@ fn diff_json_emits_modified_entities() {
     assert_eq!(json["command"], "diff");
     assert_eq!(json["lhs"]["rev"], "HEAD~1");
     assert_eq!(json["rhs"]["rev"], "HEAD");
+    assert_eq!(json["lhs"]["summary"], "initial");
+    assert_eq!(json["rhs"]["summary"], "change meaning");
     let modified = json["modified"]
         .as_array()
         .expect("modified should be an array");

@@ -1,5 +1,7 @@
 use anyhow::Result;
+use gix::bstr::ByteSlice;
 use serde::Serialize;
+use std::path::Path;
 use tracing::{info, info_span};
 
 use crate::{
@@ -145,6 +147,7 @@ struct SnapshotOutput {
     kind: &'static str,
     root: String,
     rev: Option<String>,
+    summary: Option<String>,
 }
 
 impl From<&SnapshotSpec> for SnapshotOutput {
@@ -155,21 +158,44 @@ impl From<&SnapshotSpec> for SnapshotOutput {
                 kind: "directory",
                 root: root.display().to_string(),
                 rev: None,
+                summary: None,
             },
             SnapshotSpec::File { path, .. } => Self {
                 label: snapshot_label(value),
                 kind: "file",
                 root: path.display().to_string(),
                 rev: None,
+                summary: None,
             },
             SnapshotSpec::GitRevision { repo_root, rev } => Self {
                 label: snapshot_label(value),
                 kind: "git_revision",
                 root: repo_root.display().to_string(),
                 rev: Some(rev.clone()),
+                summary: commit_summary(repo_root, rev),
             },
         }
     }
+}
+
+fn commit_summary(repo_root: &Path, rev: &str) -> Option<String> {
+    let repo = gix::open(repo_root).ok()?;
+    let commit = repo
+        .rev_parse_single(rev)
+        .ok()?
+        .object()
+        .ok()?
+        .peel_to_commit()
+        .ok()?;
+    commit
+        .message_raw()
+        .ok()?
+        .to_str_lossy()
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+        .map(str::to_owned)
 }
 
 #[derive(Debug, Serialize)]

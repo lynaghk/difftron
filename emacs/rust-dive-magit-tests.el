@@ -11,7 +11,12 @@
 (require 'rust-dive-magit)
 
 (defun rust-dive-magit-tests--git-revision (label rev)
-  (list :label label :kind "git_revision" :root "/tmp/repo" :rev rev))
+  (list
+   :label label
+   :kind "git_revision"
+   :root "/tmp/repo"
+   :rev rev
+   :summary (format "Commit %s" rev)))
 
 (cl-defun
  rust-dive-magit-tests--entity
@@ -265,7 +270,11 @@
            (file-section (car (oref kind-section children)))
            (entity-section (car (oref file-section children))))
       (should
-       (string-match-p "^lhs: repo@HEAD~1\nrhs: repo@HEAD\n\n" text))
+       (string-match-p
+        "^lhs: repo@HEAD~1  Commit HEAD~1\nrhs: repo@HEAD  Commit HEAD\n\n"
+        text))
+      (should (string-match-p "repo@HEAD~1  Commit HEAD~1" text))
+      (should (string-match-p "repo@HEAD  Commit HEAD" text))
       (should-not (string-match-p "rust_dive diff" text))
       (should-not (string-match-p "Grouping:" text))
       (should (derived-mode-p 'magit-section-mode))
@@ -350,6 +359,24 @@
         (should-not (string-match-p "Grouping:" (buffer-string)))
         (should-not (oref file-section hidden))
         (should-not (oref entity-section hidden))))))
+
+(ert-deftest rust-dive-magit-shifted-number-keys-show-all-levels ()
+  (should
+   (eq
+    (lookup-key rust-dive-magit-mode-map (kbd "!"))
+    #'magit-section-show-level-1-all))
+  (should
+   (eq
+    (lookup-key rust-dive-magit-mode-map (kbd "@"))
+    #'magit-section-show-level-2-all))
+  (should
+   (eq
+    (lookup-key rust-dive-magit-mode-map (kbd "#"))
+    #'magit-section-show-level-3-all))
+  (should
+   (eq
+    (lookup-key rust-dive-magit-mode-map (kbd "$"))
+    #'magit-section-show-level-4-all)))
 
 (ert-deftest rust-dive-magit-refresh-preserves-magit-display-state ()
   (let ((rust-dive-magit-default-grouping 'file))
@@ -570,7 +597,9 @@
         :rhs-label "/Users/dev/work/incubator/2026-04-21-diff@5767f35")))
     (should
      (string-prefix-p
-      "lhs: 2026-04-21-diff@5767f35^\nrhs: 2026-04-21-diff@5767f35\n\n"
+      (concat
+       "lhs: 2026-04-21-diff@5767f35^  Commit HEAD~1\n"
+       "rhs: 2026-04-21-diff@5767f35  Commit HEAD\n\n")
       (buffer-string)))))
 
 (ert-deftest rust-dive-magit-renders-clickable-diff-snapshots ()
