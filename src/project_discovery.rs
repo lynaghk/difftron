@@ -85,20 +85,20 @@ fn discover_manifest(
     }
 
     if let Some(workspace) = manifest.workspace {
-            for member in workspace.members {
-                for member_dir in expand_member_pattern(repo, &package_dir, &member)? {
-                    let member_manifest = member_dir.join("Cargo.toml");
-                    if repo.is_file(&member_manifest)? {
-                        discover_manifest(
-                            repo,
-                            &member_manifest,
-                            visited_manifests,
-                            visited_packages,
-                            targets,
-                        )?;
-                    }
+        for member in workspace.members {
+            for member_dir in expand_member_pattern(repo, &package_dir, &member)? {
+                let member_manifest = member_dir.join("Cargo.toml");
+                if repo.is_file(&member_manifest)? {
+                    discover_manifest(
+                        repo,
+                        &member_manifest,
+                        visited_manifests,
+                        visited_packages,
+                        targets,
+                    )?;
                 }
             }
+        }
     }
 
     Ok(())
@@ -418,7 +418,10 @@ mod tests {
 
         fn add_parent_dirs(&mut self, path: &Path) {
             let mut current = PathBuf::new();
-            for component in path.components().take(path.components().count().saturating_sub(1)) {
+            for component in path
+                .components()
+                .take(path.components().count().saturating_sub(1))
+            {
                 current.push(component.as_os_str());
                 self.dirs.insert(current.clone());
             }

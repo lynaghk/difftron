@@ -10,9 +10,12 @@
 Run the project test entrypoints from the workspace root:
 
 ```bash
-./scripts/run-rust-tests.sh
-./scripts/run-emacs-tests.sh
-./scripts/run-tests.sh
+./scripts/format.sh
+./scripts/format.sh rust
+./scripts/format.sh emacs
+./scripts/test.sh
+./scripts/test.sh rust
+./scripts/test.sh emacs
 ```
 
 ## Emacs Usage
