@@ -24,10 +24,10 @@ pub enum ParsedDocument {
 }
 
 impl ParsedDocument {
-    pub fn lines(&self) -> Vec<DisplayLine> {
+    pub fn lines(&self) -> &[DisplayLine] {
         match self {
-            ParsedDocument::SyntaxAware(doc) => doc.lines.clone(),
-            ParsedDocument::FallbackText(doc) => doc.lines.clone(),
+            ParsedDocument::SyntaxAware(doc) => &doc.lines,
+            ParsedDocument::FallbackText(doc) => &doc.lines,
         }
     }
 }

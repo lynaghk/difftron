@@ -9,7 +9,9 @@ use id_arena::Arena;
 use tracing::{info, info_span};
 
 use crate::{
-    entity_collector::{Entity, EntityDetail, EntityId, SourceLocation, collect_entities},
+    entity_collector::{
+        Entity, EntityDetail, EntityId, SourceLocation, collect_entities, render_entity,
+    },
     project_discovery::TargetRoot,
     project_discovery::discover_targets,
     source_repo::{FsSourceRepo, GitTreeSourceRepo, SingleFileSourceRepo, SourceRepo},
@@ -196,27 +198,15 @@ pub fn render_diff_raw(diff: &DiffResult) -> Vec<String> {
     let mut lines = Vec::new();
 
     for entity in &diff.deleted {
-        lines.push(format!(
-            "- {}",
-            crate::entity_collector::render_entity(entity)
-        ));
+        lines.push(format!("- {}", render_entity(entity)));
     }
     for entity in &diff.added {
-        lines.push(format!(
-            "+ {}",
-            crate::entity_collector::render_entity(entity)
-        ));
+        lines.push(format!("+ {}", render_entity(entity)));
     }
     for change in &diff.modified {
         lines.push(format!("~ {}", change.lhs.name));
-        lines.push(format!(
-            "  lhs: {}",
-            crate::entity_collector::render_entity(&change.lhs)
-        ));
-        lines.push(format!(
-            "  rhs: {}",
-            crate::entity_collector::render_entity(&change.rhs)
-        ));
+        lines.push(format!("  lhs: {}", render_entity(&change.lhs)));
+        lines.push(format!("  rhs: {}", render_entity(&change.rhs)));
     }
 
     lines
@@ -274,17 +264,6 @@ fn path_starts_with(path: &Path, base: &Path) -> bool {
 }
 
 fn filtered_entities(snapshot: &Snapshot, path_filters: &[PathBuf]) -> Vec<IndexedEntity> {
-    if path_filters.is_empty() {
-        return snapshot
-            .entities
-            .iter()
-            .map(|id| IndexedEntity {
-                id: *id,
-                entity: snapshot.arena[*id].clone(),
-            })
-            .collect();
-    }
-
     snapshot
         .entities
         .iter()
@@ -293,19 +272,20 @@ fn filtered_entities(snapshot: &Snapshot, path_filters: &[PathBuf]) -> Vec<Index
             entity: snapshot.arena[*id].clone(),
         })
         .filter(|entity| {
-            path_filters
-                .iter()
-                .any(|filter| entity.entity.location.snapshot_path.starts_with(filter))
+            path_filters.is_empty()
+                || path_filters
+                    .iter()
+                    .any(|filter| entity.entity.location.snapshot_path.starts_with(filter))
         })
         .collect()
 }
 
 fn group_by_identity(entities: Vec<IndexedEntity>) -> BTreeMap<EntityIdentity, Vec<IndexedEntity>> {
-    let mut groups = BTreeMap::new();
+    let mut groups: BTreeMap<EntityIdentity, Vec<IndexedEntity>> = BTreeMap::new();
     for entity in entities {
         groups
             .entry(entity_identity(&entity.entity))
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(entity);
     }
     groups

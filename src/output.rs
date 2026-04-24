@@ -59,7 +59,7 @@ pub fn render_diff(
             let modified = diff
                 .modified
                 .iter()
-                .map(|change| ModifiedEntityOutput::try_from_change(change, width))
+                .map(ModifiedEntityOutput::try_from_change)
                 .collect::<Result<Vec<_>>>()?;
             info!("serializing diff json");
             serde_json::to_string_pretty(&DiffOutput {
@@ -76,12 +76,21 @@ pub fn render_diff(
 }
 
 fn render_list_text(snapshot: &Snapshot) -> String {
-    let lines = snapshot
-        .entities
-        .iter()
-        .map(|id| render_entity(&snapshot.arena[*id]))
-        .collect::<Vec<_>>();
-    render_lines(lines)
+    render_lines(
+        snapshot
+            .entities
+            .iter()
+            .map(|id| render_entity(&snapshot.arena[*id])),
+    )
+}
+
+fn render_lines(lines: impl IntoIterator<Item = String>) -> String {
+    let lines = lines.into_iter().collect::<Vec<_>>();
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
+    }
 }
 
 fn render_diff_text(diff: &DiffResult, width: Option<usize>) -> Result<String> {
@@ -109,18 +118,14 @@ fn render_diff_text(diff: &DiffResult, width: Option<usize>) -> Result<String> {
         )?);
     }
 
-    if sections.is_empty() {
-        Ok(String::new())
-    } else {
-        Ok(format!("{}\n", sections.join("\n\n")))
-    }
+    Ok(render_sections(sections))
 }
 
-fn render_lines(lines: Vec<String>) -> String {
-    if lines.is_empty() {
+fn render_sections(sections: Vec<String>) -> String {
+    if sections.is_empty() {
         String::new()
     } else {
-        format!("{}\n", lines.join("\n"))
+        format!("{}\n", sections.join("\n\n"))
     }
 }
 
@@ -207,7 +212,7 @@ struct ModifiedEntityOutput {
 }
 
 impl ModifiedEntityOutput {
-    fn try_from_change(value: &ModifiedEntity, _width: Option<usize>) -> Result<Self> {
+    fn try_from_change(value: &ModifiedEntity) -> Result<Self> {
         Ok(Self {
             path: value.lhs.location.snapshot_path.display().to_string(),
             lhs: EntityOutput::from(&value.lhs),

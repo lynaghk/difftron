@@ -103,7 +103,7 @@ pub fn diff(language: Language, lhs: &str, rhs: &str, _options: DiffOptions) -> 
 fn build_rows(lhs: &ParsedDocument, rhs: &ParsedDocument) -> Vec<DiffRow> {
     let lhs_lines = lhs.lines();
     let rhs_lines = rhs.lines();
-    let matches = lcs_matches(&lhs_lines, &rhs_lines);
+    let matches = lcs_matches(lhs_lines, rhs_lines);
 
     let mut rows = Vec::new();
     let mut lhs_index = 0;
@@ -167,12 +167,10 @@ fn flush_changed_block(lhs: &[DisplayLine], rhs: &[DisplayLine], rows: &mut Vec<
 }
 
 fn classify_replacement(left: &DisplayLine, right: &DisplayLine) -> ChangeKind {
-    let left_roles = line_roles(left);
-    let right_roles = line_roles(right);
-    if left_roles.contains(&TokenRole::Comment) || right_roles.contains(&TokenRole::Comment) {
+    if line_has_role(left, TokenRole::Comment) || line_has_role(right, TokenRole::Comment) {
         ChangeKind::ReplacedComment
-    } else if left_roles.contains(&TokenRole::StringLiteral)
-        || right_roles.contains(&TokenRole::StringLiteral)
+    } else if line_has_role(left, TokenRole::StringLiteral)
+        || line_has_role(right, TokenRole::StringLiteral)
     {
         ChangeKind::ReplacedString
     } else {
@@ -180,8 +178,8 @@ fn classify_replacement(left: &DisplayLine, right: &DisplayLine) -> ChangeKind {
     }
 }
 
-fn line_roles(line: &DisplayLine) -> Vec<TokenRole> {
-    line.tokens.iter().map(|token| token.role).collect()
+fn line_has_role(line: &DisplayLine, role: TokenRole) -> bool {
+    line.tokens.iter().any(|token| token.role == role)
 }
 
 fn lcs_matches(lhs: &[DisplayLine], rhs: &[DisplayLine]) -> Vec<(usize, usize)> {

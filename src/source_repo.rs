@@ -49,14 +49,7 @@ impl SourceRepo for FsSourceRepo {
     }
 
     fn read_file(&self, path: &Path) -> Result<Option<String>> {
-        let absolute_path = self.absolute_path(path);
-        match fs::read_to_string(&absolute_path) {
-            Ok(text) => Ok(Some(text)),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(err) => {
-                Err(err).with_context(|| format!("failed to read {}", absolute_path.display()))
-            }
-        }
+        read_file_if_present(&self.absolute_path(path))
     }
 
     fn is_file(&self, path: &Path) -> Result<bool> {
@@ -69,23 +62,11 @@ impl SourceRepo for FsSourceRepo {
 
     fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>> {
         let absolute_path = self.absolute_path(path);
-        let entries = fs::read_dir(&absolute_path)
-            .with_context(|| format!("failed to read directory {}", absolute_path.display()))?;
-        let mut children = Vec::new();
-
-        for entry in entries {
-            let entry = entry
-                .with_context(|| format!("failed to read entry in {}", absolute_path.display()))?;
-            let relative_path = entry
-                .path()
-                .strip_prefix(&self.root)
-                .expect("directory entries should stay within the source root")
-                .to_path_buf();
-            children.push(relative_path);
-        }
-
-        children.sort();
-        Ok(children)
+        read_dir_relative(
+            &absolute_path,
+            &self.root,
+            "directory entries should stay within the source root",
+        )
     }
 }
 
@@ -141,14 +122,7 @@ impl SourceRepo for SingleFileSourceRepo {
     }
 
     fn read_file(&self, path: &Path) -> Result<Option<String>> {
-        let absolute_path = self.absolute_path(path);
-        match fs::read_to_string(&absolute_path) {
-            Ok(text) => Ok(Some(text)),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(err) => {
-                Err(err).with_context(|| format!("failed to read {}", absolute_path.display()))
-            }
-        }
+        read_file_if_present(&self.absolute_path(path))
     }
 
     fn is_file(&self, path: &Path) -> Result<bool> {
@@ -161,24 +135,45 @@ impl SourceRepo for SingleFileSourceRepo {
 
     fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>> {
         let absolute_path = self.absolute_path(path);
-        let entries = fs::read_dir(&absolute_path)
-            .with_context(|| format!("failed to read directory {}", absolute_path.display()))?;
-        let mut children = Vec::new();
-
-        for entry in entries {
-            let entry = entry
-                .with_context(|| format!("failed to read entry in {}", absolute_path.display()))?;
-            let child = entry.path();
-            let snapshot_path = child
-                .strip_prefix(&self.base_dir)
-                .expect("directory entries should stay within the source base")
-                .to_path_buf();
-            children.push(snapshot_path);
-        }
-
-        children.sort();
-        Ok(children)
+        read_dir_relative(
+            &absolute_path,
+            &self.base_dir,
+            "directory entries should stay within the source base",
+        )
     }
+}
+
+fn read_file_if_present(path: &Path) -> Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("failed to read {}", path.display())),
+    }
+}
+
+fn read_dir_relative(
+    absolute_path: &Path,
+    base_dir: &Path,
+    strip_prefix_expectation: &'static str,
+) -> Result<Vec<PathBuf>> {
+    let entries = fs::read_dir(absolute_path)
+        .with_context(|| format!("failed to read directory {}", absolute_path.display()))?;
+    let mut children = Vec::new();
+
+    for entry in entries {
+        let entry = entry
+            .with_context(|| format!("failed to read entry in {}", absolute_path.display()))?;
+        children.push(
+            entry
+                .path()
+                .strip_prefix(base_dir)
+                .expect(strip_prefix_expectation)
+                .to_path_buf(),
+        );
+    }
+
+    children.sort();
+    Ok(children)
 }
 
 pub struct GitTreeSourceRepo {

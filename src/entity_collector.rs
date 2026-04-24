@@ -272,16 +272,14 @@ fn collect_items(
                     entities,
                     trait_entity(target, parsed, &trait_def, context),
                 );
-                let mut nested = context.clone();
-                nested.container = Some(ast_name(&trait_def));
-                nested.parent = Some(trait_id);
+                let nested = nested_assoc_context(context, ast_name(&trait_def), trait_id);
                 collect_assoc_functions(
                     target,
                     parsed,
                     trait_def
                         .assoc_item_list()
-                        .map(|list| list.assoc_items().collect())
-                        .unwrap_or_default(),
+                        .into_iter()
+                        .flat_map(|list| list.assoc_items()),
                     &nested,
                     arena,
                     entities,
@@ -300,16 +298,14 @@ fn collect_items(
                     entities,
                     impl_entity(target, parsed, &impl_def, context),
                 );
-                let mut nested = context.clone();
-                nested.container = Some(impl_container_name(&impl_def));
-                nested.parent = Some(impl_id);
+                let nested = nested_assoc_context(context, impl_container_name(&impl_def), impl_id);
                 collect_assoc_functions(
                     target,
                     parsed,
                     impl_def
                         .assoc_item_list()
-                        .map(|list| list.assoc_items().collect())
-                        .unwrap_or_default(),
+                        .into_iter()
+                        .flat_map(|list| list.assoc_items()),
                     &nested,
                     arena,
                     entities,
@@ -370,10 +366,21 @@ fn collect_items(
     Ok(())
 }
 
+fn nested_assoc_context(
+    context: &TraversalContext,
+    container: String,
+    parent_id: EntityId,
+) -> TraversalContext {
+    let mut nested = context.clone();
+    nested.container = Some(container);
+    nested.parent = Some(parent_id);
+    nested
+}
+
 fn collect_assoc_functions(
     target: &TargetRoot,
     parsed: &ParsedFile,
-    assoc_items: Vec<ast::AssocItem>,
+    assoc_items: impl IntoIterator<Item = ast::AssocItem>,
     context: &TraversalContext,
     arena: &mut Arena<Entity>,
     entities: &mut Vec<EntityId>,
