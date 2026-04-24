@@ -4,6 +4,12 @@
 
 (setq package-enable-at-startup nil)
 
+(defvar comp-async-report-warnings-errors)
+(defvar native-comp-async-report-warnings-errors)
+
+(setq comp-async-report-warnings-errors nil)
+(setq native-comp-async-report-warnings-errors nil)
+
 (defconst rust-dive-test-config-root
   (file-name-directory (or load-file-name buffer-file-name)))
 
