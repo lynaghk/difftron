@@ -70,6 +70,50 @@
    :object-type 'plist
    :array-type 'list))
 
+(defconst rust-dive-magit-tests--refresh-payload
+  (json-parse-string
+   "{
+      \"command\": \"diff\",
+      \"lhs\": {\"label\": \"repo@HEAD~1\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD~1\"},
+      \"rhs\": {\"label\": \"repo@HEAD\", \"kind\": \"git_revision\", \"root\": \"/tmp/repo\", \"rev\": \"HEAD\"},
+      \"added\": [
+        {\"name\": \"demo::alpha\", \"kind\": \"function\", \"rendered_summary\": \"function demo::alpha()\", \"file_path\": \"/tmp/repo/src/a.rs\", \"snapshot_path\": \"src/a.rs\", \"start_line\": 10, \"start_col\": 1, \"end_line\": 12, \"end_col\": 2, \"source_text\": \"fn alpha() {}\"}
+      ],
+      \"deleted\": [],
+      \"modified\": [
+        {
+          \"path\": \"src/b.rs\",
+          \"lhs\": {\"name\": \"demo::beta\", \"kind\": \"function\", \"rendered_summary\": \"function demo::beta()\", \"file_path\": \"/tmp/repo/src/b.rs\", \"snapshot_path\": \"src/b.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn beta() -> u32 { 41 }\"},
+          \"rhs\": {\"name\": \"demo::beta\", \"kind\": \"function\", \"rendered_summary\": \"function demo::beta()\", \"file_path\": \"/tmp/repo/src/b.rs\", \"snapshot_path\": \"src/b.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn beta() -> u32 { 42 }\"},
+          \"diff\": {
+            \"rows\": [
+              {
+                \"kind\": \"replaced_code\",
+                \"left\": {\"line_number\": 1, \"text\": \"fn beta() -> u32 { 41 }\", \"segments\": [{\"text\": \"fn beta() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"41\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]},
+                \"right\": {\"line_number\": 1, \"text\": \"fn beta() -> u32 { 42 }\", \"segments\": [{\"text\": \"fn beta() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"42\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]}
+              }
+            ]
+          }
+        },
+        {
+          \"path\": \"src/c.rs\",
+          \"lhs\": {\"name\": \"demo::gamma\", \"kind\": \"function\", \"rendered_summary\": \"function demo::gamma()\", \"file_path\": \"/tmp/repo/src/c.rs\", \"snapshot_path\": \"src/c.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn gamma() -> u32 { 7 }\"},
+          \"rhs\": {\"name\": \"demo::gamma\", \"kind\": \"function\", \"rendered_summary\": \"function demo::gamma()\", \"file_path\": \"/tmp/repo/src/c.rs\", \"snapshot_path\": \"src/c.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn gamma() -> u32 { 8 }\"},
+          \"diff\": {
+            \"rows\": [
+              {
+                \"kind\": \"replaced_code\",
+                \"left\": {\"line_number\": 1, \"text\": \"fn gamma() -> u32 { 7 }\", \"segments\": [{\"text\": \"fn gamma() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"7\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]},
+                \"right\": {\"line_number\": 1, \"text\": \"fn gamma() -> u32 { 8 }\", \"segments\": [{\"text\": \"fn gamma() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"8\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]}
+              }
+            ]
+          }
+        }
+      ]
+    }"
+   :object-type 'plist
+   :array-type 'list))
+
 (ert-deftest rust-dive-magit-groups-items-by-kind ()
   (let* ((items (rust-dive-magit--diff-items rust-dive-magit-tests--sample-payload))
          (grouped (rust-dive-magit--group-items-by-kind items)))
@@ -168,6 +212,71 @@
         (should (string-match-p "Grouping: File -> Entity" (buffer-string)))
         (should-not (oref file-section hidden))
         (should (oref entity-section hidden))))))    
+
+(ert-deftest rust-dive-magit-refresh-preserves-magit-display-state ()
+  (let ((rust-dive-magit-default-grouping 'file))
+    (with-temp-buffer
+      (rename-buffer rust-dive-magit-buffer-name t)
+      (rust-dive-magit-mode)
+      (setq rust-dive-magit--default-directory "/tmp/repo/")
+      (setq rust-dive-magit--command-args '("diff" "HEAD~1" "HEAD"))
+      (setq rust-dive-magit--payload rust-dive-magit-tests--refresh-payload)
+      (setq rust-dive-magit--grouping 'kind)
+      (let ((inhibit-read-only t))
+        (rust-dive-magit--insert-payload rust-dive-magit-tests--refresh-payload))
+      (let* ((root magit-root-section)
+             (kind-section (car (oref root children)))
+             (file-section-a (nth 0 (oref kind-section children)))
+             (file-section-b (nth 1 (oref kind-section children)))
+             (file-section-c (nth 2 (oref kind-section children)))
+             (entity-section-a (car (oref file-section-a children)))
+             (entity-section-b (car (oref file-section-b children)))
+             (entity-section-c (car (oref file-section-c children))))
+        (magit-section-show kind-section)
+        (magit-section-show file-section-b)
+        (magit-section-show entity-section-b)
+        (magit-section-show file-section-c)
+        (magit-section-show entity-section-c)
+        (goto-char (oref entity-section-c content))
+        (search-forward "7")
+        (backward-char 1)
+        (let ((expected-point-line (line-number-at-pos))
+              (expected-point-column (current-column)))
+          (cl-letf (((symbol-function 'rust-dive-magit--run-command)
+                     (lambda (_default-directory _args)
+                       rust-dive-magit-tests--refresh-payload))
+                    ((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
+            (rust-dive-magit-refresh))
+          (let* ((new-root magit-root-section)
+                 (new-kind-section (car (oref new-root children)))
+                 (new-file-section-a (nth 0 (oref new-kind-section children)))
+                 (new-file-section-b (nth 1 (oref new-kind-section children)))
+                 (new-file-section-c (nth 2 (oref new-kind-section children)))
+                 (new-entity-section-a (car (oref new-file-section-a children)))
+                 (new-entity-section-b (car (oref new-file-section-b children)))
+                 (new-entity-section-c (car (oref new-file-section-c children)))
+                 (actual-visibility
+                  (mapcar (lambda (section)
+                            (cons (magit-section-ident section) (oref section hidden)))
+                          (list new-kind-section
+                                new-file-section-a
+                                new-entity-section-a
+                                new-file-section-b
+                                new-entity-section-b
+                                new-file-section-c
+                                new-entity-section-c))))
+            (should (eq rust-dive-magit--grouping 'kind))
+            (should (equal (car actual-visibility)
+                           (cons (magit-section-ident new-kind-section) nil)))
+            (should (oref new-file-section-a hidden))
+            (should (oref new-entity-section-a hidden))
+            (should-not (oref new-file-section-b hidden))
+            (should-not (oref new-entity-section-b hidden))
+            (should-not (oref new-file-section-c hidden))
+            (should-not (oref new-entity-section-c hidden))
+            (should (equal (line-number-at-pos) expected-point-line))
+            (should (equal (current-column) expected-point-column))
+            (should (eq (magit-current-section) new-entity-section-c))))))))
 
 (ert-deftest rust-dive-magit-faces-added-and-deleted-entities ()
   (let* ((payload (json-parse-string

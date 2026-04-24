@@ -13,6 +13,7 @@
 (require 'button)
 (require 'cl-lib)
 (require 'json)
+(require 'magit-mode)
 (require 'magit-section)
 (require 'seq)
 (require 'subr-x)
@@ -126,13 +127,7 @@ working tree rooted at the current repository."
   (interactive)
   (unless (and rust-dive-magit--command-args rust-dive-magit--default-directory)
     (user-error "No rust_dive command is associated with this buffer"))
-  (let ((payload (rust-dive-magit--run-command
-                  rust-dive-magit--default-directory
-                  rust-dive-magit--command-args)))
-    (rust-dive-magit--display-buffer
-     rust-dive-magit--default-directory
-     rust-dive-magit--command-args
-     payload)))
+  (magit-refresh-buffer))
 
 (defun rust-dive-magit-cycle-grouping ()
   "Cycle the Rust Dive grouping mode for the current buffer."
@@ -167,16 +162,24 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
   (let ((buffer (get-buffer-create rust-dive-magit-buffer-name)))
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
-        (erase-buffer)
         (rust-dive-magit-mode)
         (setq rust-dive-magit--grouping rust-dive-magit-default-grouping)
         (setq rust-dive-magit--default-directory default-directory)
         (setq rust-dive-magit--command-args args)
         (setq rust-dive-magit--payload payload)
+        (erase-buffer)
         (rust-dive-magit--insert-payload payload)
         (magit-section-show-level-2)
         (goto-char (point-min))))
     (pop-to-buffer buffer)))
+
+(defun rust-dive-magit-refresh-buffer ()
+  "Refresh the current Rust Dive buffer using Magit's refresh machinery."
+  (setq rust-dive-magit--payload
+        (rust-dive-magit--run-command
+         rust-dive-magit--default-directory
+         rust-dive-magit--command-args))
+  (rust-dive-magit--insert-payload rust-dive-magit--payload))
 
 (defun rust-dive-magit--insert-payload (payload)
   "Insert PAYLOAD into the current buffer."
