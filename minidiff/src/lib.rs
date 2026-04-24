@@ -80,7 +80,7 @@ mod tests {
         let lhs = "pub fn meaning() -> u32 { 41 }\n";
         let rhs = "pub fn meaning() -> u32 { 42 }\n";
         let diff_result = diff(Language::Rust, lhs, rhs, DiffOptions::default()).unwrap();
-        let presentation = present_side_by_side(&diff_result, &PresentationOptions::default());
+        let presentation = present_side_by_side(&diff_result, &PresentationOptions);
 
         let rendered =
             render_side_by_side(&presentation, &render_options(OutputStyle::Plain)).unwrap();
@@ -96,7 +96,7 @@ mod tests {
         let lhs = "const NOTE: &str = \"alpha beta\";\n";
         let rhs = "const NOTE: &str = \"alpha gamma\";\n";
         let diff_result = diff(Language::Rust, lhs, rhs, DiffOptions::default()).unwrap();
-        let presentation = present_side_by_side(&diff_result, &PresentationOptions::default());
+        let presentation = present_side_by_side(&diff_result, &PresentationOptions);
 
         let rendered =
             render_side_by_side(&presentation, &render_options(OutputStyle::Ansi)).unwrap();
@@ -111,7 +111,7 @@ mod tests {
         let lhs = "#[derive(Debug, Clone)]\n";
         let rhs = "#[derive(Debug)]\n";
         let diff_result = diff(Language::Rust, lhs, rhs, DiffOptions::default()).unwrap();
-        let presentation = present_side_by_side(&diff_result, &PresentationOptions::default());
+        let presentation = present_side_by_side(&diff_result, &PresentationOptions);
 
         let rendered =
             render_side_by_side(&presentation, &render_options(OutputStyle::Ansi)).unwrap();
@@ -129,7 +129,7 @@ mod tests {
         let expected = fs::read_to_string(fixture_dir.join("nested-reshape.rendered.txt")).unwrap();
 
         let diff_result = diff(Language::Rust, &lhs, &rhs, DiffOptions::default()).unwrap();
-        let presentation = present_side_by_side(&diff_result, &PresentationOptions::default());
+        let presentation = present_side_by_side(&diff_result, &PresentationOptions);
         let rendered =
             render_side_by_side(&presentation, &render_options(OutputStyle::Plain)).unwrap();
 
@@ -142,7 +142,7 @@ mod tests {
         let rhs = "#[derive(Debug)]\n";
 
         let diff_result = diff(Language::Rust, lhs, rhs, DiffOptions::default()).unwrap();
-        let presentation = present_side_by_side(&diff_result, &PresentationOptions::default());
+        let presentation = present_side_by_side(&diff_result, &PresentationOptions);
 
         assert_eq!(presentation.rows.len(), 1);
         assert_eq!(
@@ -181,7 +181,7 @@ mod tests {
         let rhs = "fn meaning() { 42 }\n";
 
         let diff_result = diff(Language::Rust, lhs, rhs, DiffOptions::default()).unwrap();
-        let presentation = present_side_by_side(&diff_result, &PresentationOptions::default());
+        let presentation = present_side_by_side(&diff_result, &PresentationOptions);
 
         assert_eq!(presentation.rows.len(), 1);
         assert_eq!(

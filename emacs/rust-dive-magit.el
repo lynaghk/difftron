@@ -10,7 +10,6 @@
 
 ;;; Code:
 
-(require 'ansi-color)
 (require 'button)
 (require 'cl-lib)
 (require 'json)
@@ -117,9 +116,7 @@ working tree rooted at the current repository."
      (list lhs rhs (rust-dive-magit--split-paths path-input))))
   (let* ((default-directory (rust-dive-magit--repo-root))
          (args (append (list "diff" lhs rhs
-                             "--format" "json"
-                             "--width" (number-to-string
-                                        (rust-dive-magit--current-display-width)))
+                             "--format" "json")
                        (cl-mapcan (lambda (path) (list "--path" path)) paths)))
          (payload (rust-dive-magit--run-command default-directory args)))
     (rust-dive-magit--display-buffer default-directory args payload)))
@@ -275,8 +272,8 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
          help-echo "RET visits source, TAB toggles section"))
     (pcase (plist-get item :status)
       ('modified
-       (rust-dive-magit--insert-ansi-block
-        (or (plist-get item :diff-display) "")))
+       (rust-dive-magit--insert-structured-diff
+        (plist-get item :diff)))
       (_
        (when-let ((source (plist-get entity :source_text)))
          (rust-dive-magit--insert-faced-block
@@ -288,15 +285,66 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
       (insert "\n"))
       (insert "\n"))))
 
-(defun rust-dive-magit--insert-ansi-block (text)
-  "Insert TEXT and apply ANSI color escapes."
-  (let ((start (point)))
-    (if (string-empty-p text)
-        (insert "No diff output.\n")
-      (insert text)
-      (unless (string-suffix-p "\n" text)
-        (insert "\n")))
-    (ansi-color-apply-on-region start (point))))
+(defun rust-dive-magit--insert-structured-diff (diff)
+  "Insert structured DIFF rows using Emacs layout and faces."
+  (let ((rows (plist-get diff :rows)))
+    (if rows
+        (let ((column-width (rust-dive-magit--modified-column-width)))
+          (dolist (row rows)
+            (rust-dive-magit--insert-structured-diff-row row column-width)))
+      (insert "No diff output.\n"))))
+
+(defun rust-dive-magit--insert-structured-diff-row (row column-width)
+  "Insert one structured diff ROW using COLUMN-WIDTH per side."
+  (rust-dive-magit--insert-structured-side (plist-get row :left) 'left column-width)
+  (insert " | ")
+  (rust-dive-magit--insert-structured-side (plist-get row :right) 'right column-width)
+  (insert "\n"))
+
+(defun rust-dive-magit--insert-structured-side (side side-name column-width)
+  "Insert SIDE for SIDE-NAME truncated to COLUMN-WIDTH."
+  (if side
+      (let ((start (point)))
+        (rust-dive-magit--insert-structured-segments
+         (plist-get side :segments)
+         side-name
+         column-width)
+        (when (eq side-name 'left)
+          (insert (make-string
+                   (max 0 (- column-width (- (point) start)))
+                   ?\s))))
+    (when (eq side-name 'left)
+      (insert (make-string column-width ?\s)))))
+
+(defun rust-dive-magit--insert-structured-segments (segments side-name remaining-width)
+  "Insert SEGMENTS for SIDE-NAME within REMAINING-WIDTH columns."
+  (let ((remaining remaining-width))
+    (dolist (segment segments)
+      (when (> remaining 0)
+                (let* ((text (truncate-string-to-width
+                              (or (plist-get segment :text) "")
+                              remaining
+                              0
+                              nil))
+               (face (rust-dive-magit--segment-face
+                      side-name
+                      (plist-get segment :kind))))
+          (unless (string-empty-p text)
+            (insert (propertize text 'font-lock-face face))
+            (setq remaining (- remaining (string-width text)))))))))
+
+(defun rust-dive-magit--segment-face (side-name kind)
+  "Return the face for segment KIND on SIDE-NAME."
+  (pcase kind
+    ("novel"
+     (pcase side-name
+       ('left 'magit-diff-removed)
+       (_ 'magit-diff-added)))
+    (_ 'default)))
+
+(defun rust-dive-magit--modified-column-width ()
+  "Return the per-side width for structured modified diffs."
+  (max 24 (/ (- (rust-dive-magit--current-display-width) 3) 2)))
 
 (defun rust-dive-magit--insert-faced-block (text face)
   "Insert TEXT with FACE."
@@ -343,7 +391,7 @@ DEFAULT-DIRECTORY and ARGS are stored to support refresh."
           :status 'modified
           :entity rhs
           :summary (format "M %s" (plist-get rhs :name))
-          :diff-display (plist-get change :diff_display))))
+          :diff (plist-get change :diff))))
 
 (defun rust-dive-magit--item-from-entity (status entity)
   "Build a display item from ENTITY with STATUS."

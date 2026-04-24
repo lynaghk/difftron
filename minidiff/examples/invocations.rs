@@ -23,7 +23,7 @@ pub struct Snapshot {
 "#;
 
     let diff = minidiff::diff(Language::Rust, lhs, rhs, DiffOptions::default())?;
-    let presentation = minidiff::present_side_by_side(&diff, &PresentationOptions::default());
+    let presentation = minidiff::present_side_by_side(&diff, &PresentationOptions);
     let rendered = minidiff::render_side_by_side(&presentation, &plain_options())?;
 
     println!("== Structural Change ==");
@@ -39,7 +39,7 @@ fn render_inline_change() -> Result<()> {
 "#;
 
     let diff = minidiff::diff(Language::Rust, lhs, rhs, DiffOptions::default())?;
-    let presentation = minidiff::present_side_by_side(&diff, &PresentationOptions::default());
+    let presentation = minidiff::present_side_by_side(&diff, &PresentationOptions);
     let rendered = minidiff::render_side_by_side(&presentation, &ansi_options())?;
 
     println!("== Inline Change ==");
@@ -52,7 +52,7 @@ fn render_parse_fallback() -> Result<()> {
     let rhs = "fn broken() { 42 }\n";
 
     let diff = minidiff::diff(Language::Rust, lhs, rhs, DiffOptions::default())?;
-    let presentation = minidiff::present_side_by_side(&diff, &PresentationOptions::default());
+    let presentation = minidiff::present_side_by_side(&diff, &PresentationOptions);
     let rendered = minidiff::render_side_by_side(&presentation, &plain_options())?;
 
     println!("== Parse Fallback ==");

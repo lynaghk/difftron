@@ -61,13 +61,15 @@ fn diff_json_emits_modified_entities() {
         .iter()
         .find(|entry| entry["lhs"]["name"] == "demo::meaning")
         .expect("expected a modified function entry");
-    let display = meaning["diff_display"]
-        .as_str()
-        .expect("diff display should be a string");
-    assert!(display.contains("pub fn "));
-    assert!(display.contains("meaning"));
-    assert!(display.contains("u32"));
-    assert!(display.contains("\u{1b}["));
+    assert!(meaning.get("diff_display").is_none());
+    let diff = &meaning["diff"];
+    assert_eq!(diff["rows"][0]["kind"], "replaced_code");
+    assert_eq!(
+        diff["rows"][0]["left"]["text"],
+        "pub fn meaning() -> u32 { 41 }"
+    );
+    assert_eq!(diff["rows"][0]["right"]["segments"][1]["text"], "42");
+    assert_eq!(diff["rows"][0]["right"]["segments"][1]["kind"], "novel");
     assert_eq!(
         meaning["rhs"]["source_text"],
         "pub fn meaning() -> u32 { 42 }"
@@ -103,12 +105,14 @@ fn diff_width_changes_rendered_layout() {
         .iter()
         .find(|entry| entry["lhs"]["name"] == "demo::meaning")
         .expect("expected a modified function entry");
-    let display = meaning["diff_display"]
+    let left_text = meaning["diff"]["rows"][0]["left"]["text"]
         .as_str()
-        .expect("diff display should be a string");
-
-    let first_line = strip_ansi(display.lines().next().unwrap());
-    assert!(first_line.len() <= 80, "display was: {display}");
+        .expect("left text should be present");
+    let right_text = meaning["diff"]["rows"][0]["right"]["text"]
+        .as_str()
+        .expect("right text should be present");
+    assert!(left_text.contains("pub fn meaning"));
+    assert!(right_text.contains("42"));
 }
 
 #[test]
@@ -261,22 +265,4 @@ impl TestRepo {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-}
-
-fn strip_ansi(input: &str) -> String {
-    let mut stripped = String::new();
-    let mut chars = input.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
-            chars.next();
-            for next in chars.by_ref() {
-                if next.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else {
-            stripped.push(ch);
-        }
-    }
-    stripped
 }

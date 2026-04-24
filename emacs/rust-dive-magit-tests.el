@@ -23,7 +23,15 @@
           \"path\": \"src/lib.rs\",
           \"lhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"snapshot_path\": \"src/lib.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 41 }\"},
           \"rhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10\", \"file_path\": \"/tmp/repo/src/lib.rs\", \"snapshot_path\": \"src/lib.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 42 }\"},
-          \"diff_display\": \"ANSI-DIFF\"
+          \"diff\": {
+            \"rows\": [
+              {
+                \"kind\": \"replaced_code\",
+                \"left\": {\"line_number\": 1, \"text\": \"fn meaning() -> u32 { 41 }\", \"segments\": [{\"text\": \"fn meaning() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"41\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]},
+                \"right\": {\"line_number\": 1, \"text\": \"fn meaning() -> u32 { 42 }\", \"segments\": [{\"text\": \"fn meaning() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"42\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]}
+              }
+            ]
+          }
         }
       ]
     }"
@@ -47,7 +55,15 @@
           \"path\": \"src/b.rs\",
           \"lhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning()\", \"file_path\": \"/tmp/repo/src/b.rs\", \"snapshot_path\": \"src/b.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 41 }\"},
           \"rhs\": {\"name\": \"demo::meaning\", \"kind\": \"function\", \"rendered_summary\": \"function demo::meaning()\", \"file_path\": \"/tmp/repo/src/b.rs\", \"snapshot_path\": \"src/b.rs\", \"start_line\": 1, \"start_col\": 1, \"end_line\": 1, \"end_col\": 10, \"source_text\": \"fn meaning() -> u32 { 42 }\"},
-          \"diff_display\": \"ANSI-DIFF\"
+          \"diff\": {
+            \"rows\": [
+              {
+                \"kind\": \"replaced_code\",
+                \"left\": {\"line_number\": 1, \"text\": \"fn meaning() -> u32 { 41 }\", \"segments\": [{\"text\": \"fn meaning() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"41\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]},
+                \"right\": {\"line_number\": 1, \"text\": \"fn meaning() -> u32 { 42 }\", \"segments\": [{\"text\": \"fn meaning() -> u32 { \", \"kind\": \"context\"}, {\"text\": \"42\", \"kind\": \"novel\"}, {\"text\": \" }\", \"kind\": \"context\"}]}
+              }
+            ]
+          }
         }
       ]
     }"
@@ -93,7 +109,8 @@
       (should (string-match-p "^    M demo::meaning$" text))
       (should (string-match-p "M demo::meaning" text))
       (should (string-match-p "\\+ demo::added" text))
-      (should (string-match-p "ANSI-DIFF" text))
+      (should (string-match-p "fn meaning() -> u32" text))
+      (should-not (string-match-p "ANSI-DIFF" text))
       (should-not (string-match-p "Location:" text))
       (should-not (string-match-p "function demo::added() @ /tmp/repo/src/lib.rs:10:1-12:2"
                                   text)))))
@@ -187,22 +204,33 @@
       (should (eq (get-text-property (match-beginning 0) 'font-lock-face)
                   'magit-diff-removed)))))
 
+(ert-deftest rust-dive-magit-renders-structured-modified-diff-faces ()
+  (with-temp-buffer
+    (rust-dive-magit-mode)
+    (let ((inhibit-read-only t))
+      (rust-dive-magit--insert-payload rust-dive-magit-tests--sample-payload))
+    (goto-char (point-min))
+    (search-forward "41")
+    (should (eq (get-text-property (match-beginning 0) 'font-lock-face)
+                'magit-diff-removed))
+    (goto-char (point-min))
+    (search-forward "42")
+    (should (eq (get-text-property (match-beginning 0) 'font-lock-face)
+                'magit-diff-added))))
+
 (ert-deftest rust-dive-magit-splits-path-input ()
   (should (equal (rust-dive-magit--split-paths "src/lib.rs, src/main.rs ,")
                  '("src/lib.rs" "src/main.rs")))
   (should-not (rust-dive-magit--split-paths "")))
 
-(ert-deftest rust-dive-magit-diff-includes-current-width ()
+(ert-deftest rust-dive-magit-diff-omits-width-for-json-output ()
   (cl-letf (((symbol-function 'rust-dive-magit--repo-root)
              (lambda () "/tmp/repo/"))
-            ((symbol-function 'rust-dive-magit--current-display-width)
-             (lambda () 123))
             ((symbol-function 'rust-dive-magit--run-command)
              (lambda (_default-directory args)
                (should (equal args
                               '("diff" "HEAD~1" "HEAD"
                                 "--format" "json"
-                                "--width" "123"
                                 "--path" "src/lib.rs")))
                rust-dive-magit-tests--sample-payload))
             ((symbol-function 'rust-dive-magit--display-buffer)

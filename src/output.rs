@@ -177,17 +177,138 @@ struct ModifiedEntityOutput {
     path: String,
     lhs: EntityOutput,
     rhs: EntityOutput,
-    diff_display: String,
+    diff: StructuredDiffOutput,
 }
 
 impl ModifiedEntityOutput {
-    fn try_from_change(value: &ModifiedEntity, width: Option<usize>) -> Result<Self> {
+    fn try_from_change(value: &ModifiedEntity, _width: Option<usize>) -> Result<Self> {
         Ok(Self {
             path: value.lhs.location.snapshot_path.display().to_string(),
             lhs: EntityOutput::from(&value.lhs),
             rhs: EntityOutput::from(&value.rhs),
-            diff_display: crate::minidiff_renderer::render_modified_entity(value, width)?,
+            diff: StructuredDiffOutput::try_from_change(value)?,
         })
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct StructuredDiffOutput {
+    rows: Vec<StructuredDiffRowOutput>,
+}
+
+impl StructuredDiffOutput {
+    fn try_from_change(value: &ModifiedEntity) -> Result<Self> {
+        let _span = info_span!(
+            "render_modified_entity_json",
+            entity = %value.lhs.name,
+            path = %value.lhs.location.snapshot_path.display()
+        )
+        .entered();
+        let presentation = crate::minidiff_renderer::present_modified_entity(value)?;
+        info!(
+            rows = presentation.rows.len(),
+            "built structured diff presentation"
+        );
+        Ok(Self {
+            rows: presentation
+                .rows
+                .iter()
+                .map(StructuredDiffRowOutput::from)
+                .collect(),
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct StructuredDiffRowOutput {
+    kind: StructuredDiffChangeKind,
+    left: Option<StructuredDiffSideOutput>,
+    right: Option<StructuredDiffSideOutput>,
+}
+
+impl From<&minidiff::PresentationRow> for StructuredDiffRowOutput {
+    fn from(value: &minidiff::PresentationRow) -> Self {
+        Self {
+            kind: StructuredDiffChangeKind::from(value.kind),
+            left: value.left.as_ref().map(StructuredDiffSideOutput::from),
+            right: value.right.as_ref().map(StructuredDiffSideOutput::from),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct StructuredDiffSideOutput {
+    line_number: usize,
+    text: String,
+    segments: Vec<StructuredDiffSegmentOutput>,
+}
+
+impl From<&minidiff::PresentationSide> for StructuredDiffSideOutput {
+    fn from(value: &minidiff::PresentationSide) -> Self {
+        Self {
+            line_number: value.line_number,
+            text: value.text.clone(),
+            segments: value
+                .segments
+                .iter()
+                .map(StructuredDiffSegmentOutput::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct StructuredDiffSegmentOutput {
+    text: String,
+    kind: StructuredDiffSegmentKind,
+}
+
+impl From<&minidiff::PresentationSegment> for StructuredDiffSegmentOutput {
+    fn from(value: &minidiff::PresentationSegment) -> Self {
+        Self {
+            text: value.text.clone(),
+            kind: StructuredDiffSegmentKind::from(value.kind),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StructuredDiffChangeKind {
+    Unchanged,
+    NovelLeft,
+    NovelRight,
+    ReplacedCode,
+    ReplacedComment,
+    ReplacedString,
+}
+
+impl From<minidiff::PresentationChangeKind> for StructuredDiffChangeKind {
+    fn from(value: minidiff::PresentationChangeKind) -> Self {
+        match value {
+            minidiff::PresentationChangeKind::Unchanged => Self::Unchanged,
+            minidiff::PresentationChangeKind::NovelLeft => Self::NovelLeft,
+            minidiff::PresentationChangeKind::NovelRight => Self::NovelRight,
+            minidiff::PresentationChangeKind::ReplacedCode => Self::ReplacedCode,
+            minidiff::PresentationChangeKind::ReplacedComment => Self::ReplacedComment,
+            minidiff::PresentationChangeKind::ReplacedString => Self::ReplacedString,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StructuredDiffSegmentKind {
+    Context,
+    Novel,
+}
+
+impl From<minidiff::PresentationSegmentKind> for StructuredDiffSegmentKind {
+    fn from(value: minidiff::PresentationSegmentKind) -> Self {
+        match value {
+            minidiff::PresentationSegmentKind::Context => Self::Context,
+            minidiff::PresentationSegmentKind::Novel => Self::Novel,
+        }
     }
 }
 
@@ -277,10 +398,22 @@ mod tests {
         assert_eq!(json["rhs"]["rev"], "HEAD");
         assert_eq!(json["added"][0]["name"], "crate::added");
         assert_eq!(json["modified"][0]["lhs"]["name"], "crate::changed");
-        let diff_display = json["modified"][0]["diff_display"].as_str().unwrap();
-        assert!(diff_display.contains("\u{1b}["));
-        assert!(diff_display.contains("fn "));
-        assert!(diff_display.contains("changed"));
+        assert!(json["modified"][0].get("diff_display").is_none());
+        assert_eq!(
+            json["modified"][0]["diff"]["rows"][0]["kind"],
+            "replaced_code"
+        );
+        assert_eq!(
+            json["modified"][0]["diff"]["rows"][0]["left"]["segments"][1]["kind"],
+            "novel"
+        );
+        assert!(
+            json["modified"][0]["diff"]["rows"][0]["right"]["segments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|segment| segment["kind"] == "novel")
+        );
         assert_eq!(
             json["modified"][0]["rhs"]["source_text"],
             "fn changed() -> u32 { 2 }"
