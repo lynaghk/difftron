@@ -1,5 +1,5 @@
 use anyhow::Result;
-use minidiff::{DiffOptions, Language, OutputStyle, RenderOptions, Wrapping};
+use minidiff::{DiffOptions, Language, OutputStyle, PresentationOptions, RenderOptions, Wrapping};
 
 fn main() -> Result<()> {
     render_structural_change()?;
@@ -23,7 +23,8 @@ pub struct Snapshot {
 "#;
 
     let diff = minidiff::diff(Language::Rust, lhs, rhs, DiffOptions::default())?;
-    let rendered = minidiff::render_side_by_side(&diff, &plain_options())?;
+    let presentation = minidiff::present_side_by_side(&diff, &PresentationOptions::default());
+    let rendered = minidiff::render_side_by_side(&presentation, &plain_options())?;
 
     println!("== Structural Change ==");
     println!("{rendered}");
@@ -38,7 +39,8 @@ fn render_inline_change() -> Result<()> {
 "#;
 
     let diff = minidiff::diff(Language::Rust, lhs, rhs, DiffOptions::default())?;
-    let rendered = minidiff::render_side_by_side(&diff, &ansi_options())?;
+    let presentation = minidiff::present_side_by_side(&diff, &PresentationOptions::default());
+    let rendered = minidiff::render_side_by_side(&presentation, &ansi_options())?;
 
     println!("== Inline Change ==");
     println!("{rendered}");
@@ -50,7 +52,8 @@ fn render_parse_fallback() -> Result<()> {
     let rhs = "fn broken() { 42 }\n";
 
     let diff = minidiff::diff(Language::Rust, lhs, rhs, DiffOptions::default())?;
-    let rendered = minidiff::render_side_by_side(&diff, &plain_options())?;
+    let presentation = minidiff::present_side_by_side(&diff, &PresentationOptions::default());
+    let rendered = minidiff::render_side_by_side(&presentation, &plain_options())?;
 
     println!("== Parse Fallback ==");
     println!("parse outcome: {:?}", diff.parse_outcome);

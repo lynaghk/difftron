@@ -1,9 +1,8 @@
 use anyhow::Result;
 use tracing::info_span;
 
-use crate::{
-    diff::{ChangeKind, ChangeSide, DiffResult, DisplayLine},
-    inline::{InlineEmphasis, InlineSegments},
+use crate::presentation::{
+    PresentationSegment, PresentationSegmentKind, PresentationSide, StructuredPresentation,
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -25,27 +24,18 @@ pub struct RenderOptions {
     pub column_width: usize,
 }
 
-pub fn render_side_by_side(diff: &DiffResult, options: &RenderOptions) -> Result<String> {
+pub fn render_side_by_side(
+    presentation: &StructuredPresentation,
+    options: &RenderOptions,
+) -> Result<String> {
     let _span =
-        info_span!(target: crate::logging::TARGET, "minidiff_render", rows = diff.rows.len())
+        info_span!(target: crate::logging::TARGET, "minidiff_render", rows = presentation.rows.len())
             .entered();
 
     let mut rendered = String::new();
-    for row in &diff.rows {
-        let left = render_side(
-            row.left.as_ref(),
-            &row.kind,
-            ChangeSide::Left,
-            row.inline.as_ref(),
-            options,
-        );
-        let right = render_side(
-            row.right.as_ref(),
-            &row.kind,
-            ChangeSide::Right,
-            row.inline.as_ref(),
-            options,
-        );
+    for row in &presentation.rows {
+        let left = render_side(row.left.as_ref(), true, options);
+        let right = render_side(row.right.as_ref(), false, options);
         rendered.push_str(&pad_visible_width(&left, options.column_width));
         rendered.push_str(" | ");
         rendered.push_str(&right);
@@ -54,81 +44,55 @@ pub fn render_side_by_side(diff: &DiffResult, options: &RenderOptions) -> Result
     Ok(rendered)
 }
 
-fn render_side(
-    line: Option<&DisplayLine>,
-    kind: &ChangeKind,
-    side: ChangeSide,
-    inline: Option<&InlineSegments>,
-    options: &RenderOptions,
-) -> String {
-    let raw = match line {
-        Some(line) => line.text.clone(),
+fn render_side(side: Option<&PresentationSide>, is_left: bool, options: &RenderOptions) -> String {
+    match side {
+        Some(side) => render_segments(&side.segments, is_left, options),
         None => String::new(),
-    };
-
-    let wrapped = match options.wrapping {
-        Wrapping::Wrap => raw.chars().take(options.column_width).collect(),
-        Wrapping::NoWrap => raw,
-    };
-
-    style_content(&wrapped, kind, side, inline, options)
-}
-
-fn style_content(
-    text: &str,
-    kind: &ChangeKind,
-    side: ChangeSide,
-    inline: Option<&InlineSegments>,
-    options: &RenderOptions,
-) -> String {
-    match options.output_style {
-        OutputStyle::Plain => text.to_owned(),
-        OutputStyle::Ansi => {
-            if let Some(inline) = inline {
-                render_inline_segments(inline, side)
-            } else {
-                let color = match (kind, side) {
-                    (ChangeKind::Novel(ChangeSide::Left), ChangeSide::Left) => "\u{1b}[31m",
-                    (ChangeKind::Novel(ChangeSide::Right), ChangeSide::Right) => "\u{1b}[32m",
-                    (ChangeKind::ReplacedCode, ChangeSide::Left)
-                    | (ChangeKind::ReplacedComment, ChangeSide::Left)
-                    | (ChangeKind::ReplacedString, ChangeSide::Left) => "\u{1b}[31m",
-                    (ChangeKind::ReplacedCode, ChangeSide::Right)
-                    | (ChangeKind::ReplacedComment, ChangeSide::Right)
-                    | (ChangeKind::ReplacedString, ChangeSide::Right) => "\u{1b}[32m",
-                    _ => "\u{1b}[0m",
-                };
-                format!("{color}{text}\u{1b}[0m")
-            }
-        }
     }
 }
 
-fn render_inline_segments(inline: &InlineSegments, side: ChangeSide) -> String {
-    let segments = match side {
-        ChangeSide::Left => &inline.left,
-        ChangeSide::Right => &inline.right,
-        ChangeSide::Both => &inline.left,
-    };
-
-    let novel_color = match side {
-        ChangeSide::Left => "\u{1b}[31m",
-        ChangeSide::Right => "\u{1b}[32m",
-        ChangeSide::Both => "\u{1b}[0m",
-    };
-
+fn render_segments(
+    segments: &[PresentationSegment],
+    is_left: bool,
+    options: &RenderOptions,
+) -> String {
     let mut rendered = String::new();
+    let mut remaining = options.column_width;
+
     for segment in segments {
-        match segment.emphasis {
-            InlineEmphasis::Context => rendered.push_str(&segment.text),
-            InlineEmphasis::Novel => {
-                rendered.push_str(novel_color);
-                rendered.push_str(&segment.text);
-                rendered.push_str("\u{1b}[0m");
-            }
+        if remaining == 0 && matches!(options.wrapping, Wrapping::Wrap) {
+            break;
+        }
+
+        let text = truncate_segment(&segment.text, &mut remaining, options.wrapping);
+        if text.is_empty() {
+            continue;
+        }
+
+        match options.output_style {
+            OutputStyle::Plain => rendered.push_str(&text),
+            OutputStyle::Ansi => match segment.kind {
+                PresentationSegmentKind::Context => rendered.push_str(&text),
+                PresentationSegmentKind::Novel => {
+                    rendered.push_str(if is_left { "\u{1b}[31m" } else { "\u{1b}[32m" });
+                    rendered.push_str(&text);
+                    rendered.push_str("\u{1b}[0m");
+                }
+            },
         }
     }
     rendered
+}
+
+fn truncate_segment(text: &str, remaining: &mut usize, wrapping: Wrapping) -> String {
+    match wrapping {
+        Wrapping::NoWrap => text.to_owned(),
+        Wrapping::Wrap => {
+            let taken: String = text.chars().take(*remaining).collect();
+            *remaining = remaining.saturating_sub(taken.chars().count());
+            taken
+        }
+    }
 }
 
 fn pad_visible_width(text: &str, width: usize) -> String {

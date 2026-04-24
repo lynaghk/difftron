@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use minidiff::{DiffOptions, Language, OutputStyle, RenderOptions, Wrapping};
+use minidiff::{DiffOptions, Language, OutputStyle, PresentationOptions, RenderOptions, Wrapping};
 use tracing::{info, info_span};
 
 use crate::snapshot::ModifiedEntity;
@@ -26,8 +26,9 @@ pub fn render_modified_entity(change: &ModifiedEntity, width: Option<usize>) -> 
         wrapping: Wrapping::NoWrap,
         column_width: per_side_width(width),
     };
+    let presentation = minidiff::present_side_by_side(&diff, &PresentationOptions::default());
 
-    let rendered = minidiff::render_side_by_side(&diff, &render_options)
+    let rendered = minidiff::render_side_by_side(&presentation, &render_options)
         .with_context(|| format!("failed to render {}", change.lhs.name))?;
 
     info!(output_bytes = rendered.len(), "rendered minidiff output");
