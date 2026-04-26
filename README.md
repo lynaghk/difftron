@@ -18,6 +18,12 @@ Run the project test entrypoints from the workspace root:
 ./scripts/test.sh emacs
 ```
 
+To install the pre-commit hook in your Git checkout:
+
+```bash
+ln -sf ../../scripts/pre-commit.sh .git/hooks/pre-commit
+```
+
 ## Emacs Usage
 
 The Emacs package assumes a normal `rust_dive` binary by default.
