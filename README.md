@@ -10,18 +10,19 @@
 Run the project test entrypoints from the workspace root:
 
 ```bash
-./scripts/format.sh
-./scripts/format.sh rust
-./scripts/format.sh emacs
-./scripts/test.sh
-./scripts/test.sh rust
-./scripts/test.sh emacs
+./script/format.sh [rust | emacs]
+./script/test.sh [rust | emacs]
 ```
 
 To install the pre-commit hook in your Git checkout:
 
 ```bash
-ln -sf ../../scripts/pre-commit.sh .git/hooks/pre-commit
+cat <<'EOF' > .git/hooks/pre-commit
+#!/usr/bin/env bash
+set -euo pipefail
+"$(git rev-parse --show-toplevel)/script/pre-commit.sh"
+EOF
+chmod +x .git/hooks/pre-commit
 ```
 
 ## Emacs Usage
@@ -40,7 +41,7 @@ Example Emacs config:
 (require 'rust-dive-magit)
 
 (setq rust-dive-magit-executable
-      "/path/to/rust_dive/scripts/rust_dive_dev")
+      "/path/to/rust_dive/script/rust_dive_dev")
 
 (rust-dive-magit-bindings-mode 1)
 ```
@@ -53,7 +54,7 @@ Example with `use-package`:
   :commands (rust-dive-magit-diff)
   :init
   (setq rust-dive-magit-executable
-        "/path/to/rust_dive/scripts/rust_dive_dev")
+        "/path/to/rust_dive/script/rust_dive_dev")
   :config
   (rust-dive-magit-bindings-mode 1))
 ```
