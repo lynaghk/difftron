@@ -16,9 +16,24 @@
 (defconst rust-dive-elisp-root
   (expand-file-name ".." rust-dive-test-config-root))
 
+(defun rust-dive-test-config--path-segment (value)
+  "Return VALUE as a filesystem-friendly path segment."
+  (replace-regexp-in-string
+    "[^[:alnum:]._-]+"
+    "-"
+    (format "%s" value)))
+
+(defun rust-dive-test-config-straight-build-dir ()
+  "Return the host-specific straight.el build directory name."
+  (format "build-%s-%s-%s"
+    (rust-dive-test-config--path-segment emacs-version)
+    (rust-dive-test-config--path-segment system-type)
+    (rust-dive-test-config--path-segment system-configuration)))
+
 (defun rust-dive-test-config-bootstrap ()
   "Bootstrap straight.el and `use-package' for local test config."
   (setq straight-base-dir rust-dive-test-config-root)
+  (setq straight-build-dir (rust-dive-test-config-straight-build-dir))
   (setq straight-use-package-by-default t)
   (defvar bootstrap-version)
   (let
