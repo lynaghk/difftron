@@ -359,8 +359,10 @@
       (
         (root magit-root-section)
         (file-section (car (oref root children)))
-        (entity-section (car (oref file-section children))))
+        (kind-section (car (oref file-section children)))
+        (entity-section (car (oref kind-section children))))
       (should (equal (oref file-section type) 'rust-dive-file))
+      (should (equal (oref kind-section type) 'rust-dive-kind))
       (should (equal (oref entity-section type) 'rust-dive-entity))
       (goto-char (point-min))
       (search-forward "src/a.rs (1)")
@@ -369,7 +371,9 @@
           (get-text-property (match-beginning 0) 'font-lock-face)
           'magit-section-heading))
       (should (string-match-p "^src/a\\.rs (1)$" (buffer-string)))
-      (should (string-match-p "^  \\+ demo::added$" (buffer-string)))
+      (should (string-match-p "^  Functions (1)$" (buffer-string)))
+      (should
+        (string-match-p "^    \\+ demo::added$" (buffer-string)))
       (should-not (string-match-p "Grouping:" (buffer-string))))))
 
 (ert-deftest rust-dive-magit-display-buffer-uses-default-grouping ()
@@ -385,11 +389,13 @@
         (
           (root magit-root-section)
           (file-section (car (oref root children)))
-          (entity-section (car (oref file-section children))))
+          (kind-section (car (oref file-section children)))
+          (entity-section (car (oref kind-section children))))
         (should (eq rust-dive-magit--grouping 'file))
         (should-not (string-match-p "Grouping:" (buffer-string)))
         (should-not (oref file-section hidden))
-        (should-not (oref entity-section hidden))))))
+        (should-not (oref kind-section hidden))
+        (should (oref entity-section hidden))))))
 
 (ert-deftest rust-dive-magit-shifted-number-keys-show-all-levels ()
   (should
@@ -620,11 +626,13 @@
         (
           (root magit-root-section)
           (file-section (car (oref root children)))
-          (entity-section (car (oref file-section children)))
+          (kind-section (car (oref file-section children)))
+          (entity-section (car (oref kind-section children)))
           (text (buffer-string)))
         (should-not (string-match-p "Grouping:" text))
         (should-not (oref file-section hidden))
-        (should-not (oref entity-section hidden))))))
+        (should-not (oref kind-section hidden))
+        (should (oref entity-section hidden))))))
 
 (ert-deftest rust-dive-magit-shortens-path-backed-diff-labels ()
   (with-temp-buffer

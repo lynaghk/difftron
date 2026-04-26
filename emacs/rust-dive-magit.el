@@ -337,7 +337,10 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
   (let ((groups (rust-dive-magit--group-items-by-kind items)))
     (if groups
       (dolist (group groups)
-        (rust-dive-magit--insert-kind-group (car group) (cdr group)))
+        (rust-dive-magit--insert-kind-file-group
+          (car group)
+          (cdr group)
+          0))
       (insert "No entities\n"))))
 
 (defun rust-dive-magit--insert-file-groups (items)
@@ -345,38 +348,75 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
   (let ((groups (rust-dive-magit--group-items-by-file items)))
     (if groups
       (dolist (group groups)
-        (rust-dive-magit--insert-file-group
+        (rust-dive-magit--insert-file-kind-group
           (car group)
           (cdr group)
           0))
       (insert "No entities\n"))))
 
-(defun rust-dive-magit--insert-kind-group (kind items)
-  "Insert a kind heading for KIND and its ITEMS."
+(defun rust-dive-magit--insert-kind-file-group (kind items depth)
+  "Insert a kind heading for KIND and file groups for ITEMS at DEPTH."
   (magit-insert-section
     (rust-dive-kind kind t)
     (magit-insert-heading
-      (format "%s (%d)"
-        (rust-dive-magit--kind-label kind)
-        (length items)))
+      (rust-dive-magit--kind-heading kind items depth))
     (dolist (group (rust-dive-magit--group-items-by-file items))
-      (rust-dive-magit--insert-file-group (car group) (cdr group) 1))
+      (rust-dive-magit--insert-file-entity-group
+        (car group)
+        (cdr group)
+        (1+ depth)))
     (insert "\n")))
 
-(defun rust-dive-magit--insert-file-group (file items depth)
-  "Insert a file heading for FILE and its ITEMS at DEPTH."
+(defun rust-dive-magit--insert-file-kind-group (file items depth)
+  "Insert a file heading for FILE and kind groups for ITEMS at DEPTH."
   (magit-insert-section
     (rust-dive-file file t)
     (magit-insert-heading
-      (propertize
-        (format "%s%s (%d)"
-          (rust-dive-magit--indent depth)
-          file
-          (length items))
-        'font-lock-face (rust-dive-magit--heading-face depth)))
+      (rust-dive-magit--file-heading file items depth))
+    (dolist (group (rust-dive-magit--group-items-by-kind items))
+      (rust-dive-magit--insert-kind-entity-group
+        (car group)
+        (cdr group)
+        (1+ depth)))
+    (insert "\n")))
+
+(defun rust-dive-magit--insert-kind-entity-group (kind items depth)
+  "Insert a kind heading for KIND and entity ITEMS at DEPTH."
+  (magit-insert-section
+    (rust-dive-kind kind t)
+    (magit-insert-heading
+      (rust-dive-magit--kind-heading kind items depth))
     (dolist (item items)
       (rust-dive-magit--insert-item item (1+ depth)))
     (insert "\n")))
+
+(defun rust-dive-magit--insert-file-entity-group (file items depth)
+  "Insert a file heading for FILE and entity ITEMS at DEPTH."
+  (magit-insert-section
+    (rust-dive-file file t)
+    (magit-insert-heading
+      (rust-dive-magit--file-heading file items depth))
+    (dolist (item items)
+      (rust-dive-magit--insert-item item (1+ depth)))
+    (insert "\n")))
+
+(defun rust-dive-magit--kind-heading (kind items depth)
+  "Return the heading text for KIND containing ITEMS at DEPTH."
+  (propertize
+    (format "%s%s (%d)"
+      (rust-dive-magit--indent depth)
+      (rust-dive-magit--kind-label kind)
+      (length items))
+    'font-lock-face (rust-dive-magit--heading-face depth)))
+
+(defun rust-dive-magit--file-heading (file items depth)
+  "Return the heading text for FILE containing ITEMS at DEPTH."
+  (propertize
+    (format "%s%s (%d)"
+      (rust-dive-magit--indent depth)
+      file
+      (length items))
+    'font-lock-face (rust-dive-magit--heading-face depth)))
 
 (defun rust-dive-magit--insert-item (item depth)
   "Insert ITEM as a foldable heading at DEPTH."
