@@ -288,6 +288,40 @@ fn diff_json_accepts_single_clojure_files() {
     );
 }
 
+#[test]
+fn diff_json_accepts_pure_clojure_repositories() {
+    let repo = TestRepo::new_clojure();
+    repo.commit_all("initial");
+    repo.write_file(
+        "src/windowtron/core.clj",
+        "(ns windowtron.core)\n\n(defn meaning [] 42)\n",
+    );
+    repo.commit_all("change meaning");
+
+    let output = Command::new(binary_path())
+        .current_dir(repo.path())
+        .args(["diff", "HEAD~1", "HEAD", "--format", "json"])
+        .output()
+        .expect("failed to run rust_dive");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    let modified = json["modified"]
+        .as_array()
+        .expect("modified should be an array");
+    assert!(
+        modified
+            .iter()
+            .any(|entry| entry["rhs"]["name"] == "windowtron.core::meaning"),
+        "expected modified Clojure function: {modified:?}"
+    );
+}
+
 fn binary_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_rust_dive"))
 }
@@ -305,6 +339,20 @@ impl TestRepo {
             "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
         );
         repo.write_lib("pub fn meaning() -> u32 { 41 }\n");
+        repo.git(["init"]);
+        repo.git(["config", "user.name", "Test User"]);
+        repo.git(["config", "user.email", "test@example.com"]);
+        repo
+    }
+
+    fn new_clojure() -> Self {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let repo = Self { dir };
+        repo.write_file("deps.edn", "{:paths [\"src\"]}\n");
+        repo.write_file(
+            "src/windowtron/core.clj",
+            "(ns windowtron.core)\n\n(defn meaning [] 41)\n",
+        );
         repo.git(["init"]);
         repo.git(["config", "user.name", "Test User"]);
         repo.git(["config", "user.email", "test@example.com"]);

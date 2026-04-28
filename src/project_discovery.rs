@@ -51,7 +51,14 @@ struct TargetManifest {
 pub fn discover_targets(repo: &dyn SourceRepo) -> Result<Vec<TargetRoot>> {
     let root_manifest = PathBuf::from("Cargo.toml");
     if !repo.is_file(&root_manifest)? {
-        bail!("expected {} to contain a Cargo.toml", repo.root().display());
+        let targets = discover_clojure_targets(repo)?;
+        if targets.is_empty() {
+            bail!(
+                "expected {} to contain a Cargo.toml or Clojure source files",
+                repo.root().display()
+            );
+        }
+        return Ok(targets);
     }
 
     let mut visited_manifests = HashSet::new();
@@ -65,6 +72,73 @@ pub fn discover_targets(repo: &dyn SourceRepo) -> Result<Vec<TargetRoot>> {
         &mut targets,
     )?;
     Ok(targets.into_iter().collect())
+}
+
+fn discover_clojure_targets(repo: &dyn SourceRepo) -> Result<Vec<TargetRoot>> {
+    let mut targets = BTreeSet::new();
+    collect_clojure_targets(repo, Path::new(""), &mut targets)?;
+    Ok(targets.into_iter().collect())
+}
+
+fn collect_clojure_targets(
+    repo: &dyn SourceRepo,
+    dir: &Path,
+    targets: &mut BTreeSet<TargetRoot>,
+) -> Result<()> {
+    if !repo.is_dir(dir)? {
+        return Ok(());
+    }
+
+    for child in repo.read_dir(dir)? {
+        if repo.is_dir(&child)? {
+            if should_skip_clojure_dir(&child) {
+                continue;
+            }
+            collect_clojure_targets(repo, &child, targets)?;
+        } else if repo.is_file(&child)? && is_clojure_code_file(&child) {
+            targets.insert(TargetRoot {
+                crate_name: clojure_target_name(&child),
+                root_file: child,
+                language: Language::Clojure,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn should_skip_clojure_dir(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            matches!(
+                name,
+                ".git" | ".clj-kondo" | ".cpcache" | ".shadow-cljs" | "node_modules" | "target"
+            )
+        })
+}
+
+fn is_clojure_code_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("clj" | "cljs" | "cljc")
+    )
+}
+
+fn clojure_target_name(path: &Path) -> String {
+    let parts = path
+        .with_extension("")
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(part) => part.to_str().map(normalize_crate_name),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if parts.is_empty() {
+        "clojure".to_owned()
+    } else {
+        parts.join(".")
+    }
 }
 
 fn discover_manifest(
@@ -523,6 +597,34 @@ mod tests {
                     crate_name: "rust_dive".to_owned(),
                     root_file: PathBuf::from("src/lib.rs"),
                     language: Language::Rust,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn discover_targets_falls_back_to_clojure_sources_without_cargo_manifest() {
+        let repo = TestRepo::new(&[
+            ("deps.edn", "{:paths [\"src\"]}\n"),
+            ("src/windowtron/core.clj", "(ns windowtron.core)\n"),
+            ("src/windowtron/ui.cljs", "(ns windowtron.ui)\n"),
+            ("target/generated/ignored.clj", "(ns generated.ignored)\n"),
+        ]);
+
+        let targets = discover_targets(&repo).unwrap();
+
+        assert_eq!(
+            targets,
+            vec![
+                TargetRoot {
+                    crate_name: "src.windowtron.core".to_owned(),
+                    root_file: PathBuf::from("src/windowtron/core.clj"),
+                    language: Language::Clojure,
+                },
+                TargetRoot {
+                    crate_name: "src.windowtron.ui".to_owned(),
+                    root_file: PathBuf::from("src/windowtron/ui.cljs"),
+                    language: Language::Clojure,
                 },
             ]
         );
