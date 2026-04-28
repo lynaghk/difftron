@@ -11,7 +11,7 @@ use tracing::{info, info_span};
 
 use crate::{
     entity_collector::{
-        Entity, EntityDetail, EntityId, SourceLocation, collect_entities, render_entity,
+        Entity, EntityId, SourceLocation, collect_entities, entity_kind_name, render_entity,
     },
     project_discovery::TargetRoot,
     project_discovery::discover_targets,
@@ -499,55 +499,14 @@ fn repo_workdir(repo: &gix::Repository) -> Result<PathBuf> {
 struct EntityIdentity {
     name: String,
     language: Language,
-    kind: EntityKind,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-enum EntityKind {
-    Module,
-    Namespace,
-    Function,
-    Macro,
-    Multimethod,
-    Method,
-    Var,
-    Struct,
-    Enum,
-    Union,
-    Trait,
-    Protocol,
-    Record,
-    ClojureType,
-    TypeAlias,
-    Impl,
+    kind: &'static str,
 }
 
 fn entity_identity(entity: &Entity) -> EntityIdentity {
     EntityIdentity {
         name: entity.name.clone(),
         language: entity.language,
-        kind: entity_kind(&entity.detail),
-    }
-}
-
-fn entity_kind(detail: &EntityDetail) -> EntityKind {
-    match detail {
-        EntityDetail::Module { .. } => EntityKind::Module,
-        EntityDetail::Namespace => EntityKind::Namespace,
-        EntityDetail::Function { .. } => EntityKind::Function,
-        EntityDetail::Macro { .. } => EntityKind::Macro,
-        EntityDetail::Multimethod { .. } => EntityKind::Multimethod,
-        EntityDetail::Method { .. } => EntityKind::Method,
-        EntityDetail::Var { .. } => EntityKind::Var,
-        EntityDetail::Struct { .. } => EntityKind::Struct,
-        EntityDetail::Enum { .. } => EntityKind::Enum,
-        EntityDetail::Union { .. } => EntityKind::Union,
-        EntityDetail::Trait { .. } => EntityKind::Trait,
-        EntityDetail::Protocol { .. } => EntityKind::Protocol,
-        EntityDetail::Record { .. } => EntityKind::Record,
-        EntityDetail::ClojureType { .. } => EntityKind::ClojureType,
-        EntityDetail::TypeAlias { .. } => EntityKind::TypeAlias,
-        EntityDetail::Impl { .. } => EntityKind::Impl,
+        kind: entity_kind_name(&entity.detail),
     }
 }
 
@@ -560,7 +519,10 @@ fn entity_content_eq(lhs: &Entity, rhs: &Entity) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entity_collector::SourceLocation;
+    use crate::{
+        entity_collector::{EntityDetail, SourceLocation},
+        languages::{clojure::ClojureEntityDetail, rust::RustEntityDetail},
+    };
 
     #[test]
     fn ignores_location_only_changes_when_matching_entities() {
@@ -620,7 +582,45 @@ mod tests {
                 end_col: 10,
             },
             source_text: "struct thing;".to_owned(),
-            detail: EntityDetail::Struct { fields: Vec::new() },
+            detail: EntityDetail::Rust(RustEntityDetail::Struct { fields: Vec::new() }),
+        }]);
+
+        let diff = diff_snapshots(&lhs, &rhs, &[]);
+
+        assert_eq!(diff.deleted.len(), 1);
+        assert_eq!(diff.added.len(), 1);
+        assert!(diff.modified.is_empty());
+    }
+
+    #[test]
+    fn same_name_same_external_kind_different_language_does_not_match() {
+        let location = SourceLocation {
+            file_path: PathBuf::from("/tmp/project/src/core"),
+            snapshot_path: PathBuf::from("src/core"),
+            start_line: 1,
+            start_col: 1,
+            end_line: 1,
+            end_col: 10,
+        };
+        let lhs = snapshot_from_entities(vec![Entity {
+            name: "demo::meaning".to_owned(),
+            parent: None,
+            language: Language::Rust,
+            location: location.clone(),
+            source_text: "fn meaning() {}".to_owned(),
+            detail: EntityDetail::Rust(RustEntityDetail::Function {
+                signature: "()".to_owned(),
+            }),
+        }]);
+        let rhs = snapshot_from_entities(vec![Entity {
+            name: "demo::meaning".to_owned(),
+            parent: None,
+            language: Language::Clojure,
+            location,
+            source_text: "(defn meaning [] nil)".to_owned(),
+            detail: EntityDetail::Clojure(ClojureEntityDetail::Function {
+                signature: "[]".to_owned(),
+            }),
         }]);
 
         let diff = diff_snapshots(&lhs, &rhs, &[]);
@@ -654,7 +654,7 @@ mod tests {
                     end_line: 5,
                     end_col: 2,
                     source_text: "mod demo {\n    fn compute() {\n        1\n    }\n}\n",
-                    detail: EntityDetail::Module { is_inline: false },
+                    detail: EntityDetail::Rust(RustEntityDetail::Module { is_inline: false }),
                 },
                 EntitySpec {
                     name: "file::demo",
@@ -664,7 +664,7 @@ mod tests {
                     end_line: 5,
                     end_col: 2,
                     source_text: "mod demo {\n    fn compute() {\n        1\n    }\n}\n",
-                    detail: EntityDetail::Module { is_inline: true },
+                    detail: EntityDetail::Rust(RustEntityDetail::Module { is_inline: true }),
                 },
                 EntitySpec {
                     name: "file::demo::compute",
@@ -674,9 +674,9 @@ mod tests {
                     end_line: 4,
                     end_col: 6,
                     source_text: "fn compute() {\n        1\n    }\n",
-                    detail: EntityDetail::Function {
+                    detail: EntityDetail::Rust(RustEntityDetail::Function {
                         signature: "()".to_owned(),
-                    },
+                    }),
                 },
             ],
         );
@@ -691,7 +691,7 @@ mod tests {
                     end_line: 9,
                     end_col: 2,
                     source_text: "mod demo {\n    use std::fmt::Debug;\n\n    fn compute() {\n        2\n    }\n\n    fn render<T: Debug>(value: T) {}\n}\n",
-                    detail: EntityDetail::Module { is_inline: false },
+                    detail: EntityDetail::Rust(RustEntityDetail::Module { is_inline: false }),
                 },
                 EntitySpec {
                     name: "file::demo",
@@ -701,7 +701,7 @@ mod tests {
                     end_line: 9,
                     end_col: 2,
                     source_text: "mod demo {\n    use std::fmt::Debug;\n\n    fn compute() {\n        2\n    }\n\n    fn render<T: Debug>(value: T) {}\n}\n",
-                    detail: EntityDetail::Module { is_inline: true },
+                    detail: EntityDetail::Rust(RustEntityDetail::Module { is_inline: true }),
                 },
                 EntitySpec {
                     name: "file::demo::compute",
@@ -711,9 +711,9 @@ mod tests {
                     end_line: 6,
                     end_col: 6,
                     source_text: "fn compute() {\n        2\n    }\n",
-                    detail: EntityDetail::Function {
+                    detail: EntityDetail::Rust(RustEntityDetail::Function {
                         signature: "()".to_owned(),
-                    },
+                    }),
                 },
                 EntitySpec {
                     name: "file::demo::render",
@@ -723,9 +723,9 @@ mod tests {
                     end_line: 8,
                     end_col: 35,
                     source_text: "fn render<T: Debug>(value: T) {}\n",
-                    detail: EntityDetail::Function {
+                    detail: EntityDetail::Rust(RustEntityDetail::Function {
                         signature: "(value: T)".to_owned(),
-                    },
+                    }),
                 },
             ],
         );
@@ -755,9 +755,9 @@ mod tests {
             language: Language::Rust,
             location,
             source_text: "fn thing() {}".to_owned(),
-            detail: EntityDetail::Function {
+            detail: EntityDetail::Rust(RustEntityDetail::Function {
                 signature: "()".to_owned(),
-            },
+            }),
         }
     }
 

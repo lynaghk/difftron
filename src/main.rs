@@ -4,6 +4,7 @@ use std::{
 };
 
 mod entity_collector;
+mod languages;
 mod logging;
 mod minidiff_renderer;
 mod output;

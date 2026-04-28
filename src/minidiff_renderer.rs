@@ -64,6 +64,7 @@ mod tests {
     use super::*;
     use crate::{
         entity_collector::{Entity, EntityDetail, SourceLocation},
+        languages::clojure::ClojureEntityDetail,
         snapshot::ModifiedEntity,
     };
 
@@ -97,7 +98,9 @@ mod tests {
                 end_col: source_text.len() as u32,
             },
             source_text: source_text.to_owned(),
-            detail: EntityDetail::Module { is_inline: false },
+            detail: EntityDetail::Clojure(ClojureEntityDetail::Var {
+                value: source_text.trim().to_owned(),
+            }),
         }
     }
 }

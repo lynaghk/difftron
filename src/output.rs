@@ -533,7 +533,10 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
-    use crate::entity_collector::{EntityDetail, SourceLocation};
+    use crate::{
+        entity_collector::{EntityDetail, SourceLocation},
+        languages::rust::RustEntityDetail,
+    };
 
     #[test]
     fn renders_list_json_with_snapshot_metadata() {
@@ -657,9 +660,9 @@ mod tests {
                 end_col: 20,
             },
             source_text: "fn demo() {}".to_owned(),
-            detail: EntityDetail::Function {
+            detail: EntityDetail::Rust(RustEntityDetail::Function {
                 signature: "()".to_owned(),
-            },
+            }),
         }
     }
 
