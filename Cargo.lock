@@ -1980,6 +1980,7 @@ name = "rust_dive"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arborium-clojure",
  "clap",
  "env_logger",
  "gix",
@@ -1994,6 +1995,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tree",
+ "tree-sitter-patched-arborium",
 ]
 
 [[package]]

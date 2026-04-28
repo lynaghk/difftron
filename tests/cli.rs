@@ -206,6 +206,47 @@ fn diff_json_suppresses_redundant_parent_entries_for_single_files() {
     );
 }
 
+#[test]
+fn list_json_accepts_single_clojure_files() {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let source_path = dir.path().join("core.clj");
+    fs::write(
+        &source_path,
+        "(ns demo.core)\n\n(defn meaning [] 41)\n(def message \"hello\")\n",
+    )
+    .expect("failed to write Clojure file");
+
+    let output = Command::new(binary_path())
+        .args([
+            "list",
+            source_path.to_str().expect("path should be valid utf-8"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("failed to run rust_dive");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    let names = json["entities"]
+        .as_array()
+        .expect("entities should be an array")
+        .iter()
+        .map(|entity| entity["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        names,
+        vec!["demo.core", "demo.core::meaning", "demo.core::message"]
+    );
+    assert_eq!(json["entities"][1]["kind"], "function");
+}
+
 fn binary_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_rust_dive"))
 }

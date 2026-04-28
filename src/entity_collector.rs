@@ -10,6 +10,7 @@ use ra_ap_syntax::{
     AstNode, Edition, SourceFile, TextRange, TextSize,
     ast::{self, HasAttrs, HasModuleItem, HasName},
 };
+use tree_sitter_patched_arborium::{Language as TreeSitterLanguage, Node, Parser};
 use tracing::{info, info_span};
 
 use crate::{project_discovery::TargetRoot, source_repo::SourceRepo};
@@ -54,6 +55,15 @@ struct ParsedFile {
     snapshot_path: PathBuf,
     file_path: PathBuf,
     source_file: SourceFile,
+    line_starts: Vec<usize>,
+}
+
+#[derive(Debug)]
+struct ParsedClojureFile {
+    repo_path: PathBuf,
+    snapshot_path: PathBuf,
+    file_path: PathBuf,
+    source_text: String,
     line_starts: Vec<usize>,
 }
 
@@ -161,6 +171,10 @@ fn collect_target_entities(
     arena: &mut Arena<Entity>,
     entities: &mut Vec<EntityId>,
 ) -> Result<()> {
+    if target.language == Language::Clojure {
+        return collect_clojure_target_entities(repo, target, arena, entities);
+    }
+
     let parsed = parse_file(repo, &target.root_file)?;
     visited.insert(parsed.repo_path.clone());
     let root_id = insert_entity(
@@ -191,6 +205,52 @@ fn collect_target_entities(
     )
 }
 
+fn collect_clojure_target_entities(
+    repo: &dyn SourceRepo,
+    target: &TargetRoot,
+    arena: &mut Arena<Entity>,
+    entities: &mut Vec<EntityId>,
+) -> Result<()> {
+    let parsed = parse_clojure_file(repo, &target.root_file)?;
+    let mut parser = Parser::new();
+    let language = TreeSitterLanguage::from(arborium_clojure::language());
+    parser.set_language(&language)?;
+    let Some(tree) = parser.parse(&parsed.source_text, None) else {
+        anyhow::bail!("failed to parse {}", target.root_file.display());
+    };
+    let root = tree.root_node();
+    if root.has_error() {
+        anyhow::bail!("failed to parse {}", target.root_file.display());
+    }
+
+    let forms = top_level_clojure_forms(&parsed.source_text, root);
+    let namespace = forms
+        .iter()
+        .find_map(|form| clojure_namespace(&parsed.source_text, *form))
+        .unwrap_or_else(|| target.crate_name.clone());
+
+    let root_id = insert_entity(
+        arena,
+        entities,
+        Entity {
+            name: namespace.clone(),
+            parent: None,
+            language: Language::Clojure,
+            location: source_location_bytes(&parsed, root.byte_range()),
+            source_text: parsed.source_text.clone(),
+            detail: EntityDetail::Module { is_inline: false },
+        },
+    );
+
+    for form in forms {
+        if let Some(entity) = clojure_top_level_entity(&parsed, &namespace, form, root_id) {
+            insert_entity(arena, entities, entity);
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_file(repo: &dyn SourceRepo, snapshot_path: &Path) -> Result<ParsedFile> {
     let text = repo
         .read_file(snapshot_path)?
@@ -203,6 +263,21 @@ fn parse_file(repo: &dyn SourceRepo, snapshot_path: &Path) -> Result<ParsedFile>
         snapshot_path: repo.snapshot_path(snapshot_path),
         file_path: repo.file_path(snapshot_path),
         source_file,
+        line_starts,
+    })
+}
+
+fn parse_clojure_file(repo: &dyn SourceRepo, snapshot_path: &Path) -> Result<ParsedClojureFile> {
+    let source_text = repo
+        .read_file(snapshot_path)?
+        .with_context(|| format!("missing {}", snapshot_path.display()))?;
+    let line_starts = compute_line_starts(&source_text);
+
+    Ok(ParsedClojureFile {
+        repo_path: snapshot_path.to_path_buf(),
+        snapshot_path: repo.snapshot_path(snapshot_path),
+        file_path: repo.file_path(snapshot_path),
+        source_text,
         line_starts,
     })
 }
@@ -401,6 +476,92 @@ fn collect_assoc_functions(
             );
         }
     }
+}
+
+fn top_level_clojure_forms<'tree>(source: &str, root: Node<'tree>) -> Vec<Node<'tree>> {
+    let mut forms = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if source[child.byte_range()].trim_start().starts_with('(') {
+            forms.push(child);
+        }
+    }
+    forms
+}
+
+fn clojure_namespace(source: &str, form: Node<'_>) -> Option<String> {
+    let elements = clojure_form_elements(source, form);
+    let head = elements.first()?;
+    if clojure_node_text(source, *head) != "ns" {
+        return None;
+    }
+    elements.get(1).map(|node| clojure_node_text(source, *node))
+}
+
+fn clojure_top_level_entity(
+    parsed: &ParsedClojureFile,
+    namespace: &str,
+    form: Node<'_>,
+    parent: EntityId,
+) -> Option<Entity> {
+    let source = &parsed.source_text;
+    let elements = clojure_form_elements(source, form);
+    let head = elements.first().map(|node| clojure_node_text(source, *node))?;
+    let name = elements.get(1).map(|node| clojure_node_text(source, *node))?;
+
+    let detail = match head.as_str() {
+        "defn" | "defn-" | "defmacro" | "defmulti" | "defmethod" => EntityDetail::Function {
+            signature: clojure_function_signature(source, &elements),
+        },
+        "def" | "defonce" | "defrecord" | "deftype" | "defprotocol" => EntityDetail::TypeAlias {
+            target: clojure_form_tail(source, &elements, 2),
+        },
+        _ => return None,
+    };
+
+    Some(Entity {
+        name: format!("{namespace}::{name}"),
+        parent: Some(parent),
+        language: Language::Clojure,
+        location: source_location_bytes(parsed, form.byte_range()),
+        source_text: source[form.byte_range()].to_owned(),
+        detail,
+    })
+}
+
+fn clojure_form_elements<'tree>(source: &str, form: Node<'tree>) -> Vec<Node<'tree>> {
+    let mut elements = Vec::new();
+    let mut cursor = form.walk();
+    for child in form.children(&mut cursor) {
+        let text = source[child.byte_range()].trim();
+        if text.is_empty() || matches!(text, "(" | ")" | "[" | "]" | "{" | "}" | "#{") {
+            continue;
+        }
+        elements.push(child);
+    }
+    elements
+}
+
+fn clojure_node_text(source: &str, node: Node<'_>) -> String {
+    source[node.byte_range()].trim().to_owned()
+}
+
+fn clojure_function_signature(source: &str, elements: &[Node<'_>]) -> String {
+    elements
+        .iter()
+        .skip(2)
+        .map(|node| clojure_node_text(source, *node))
+        .find(|text| text.starts_with('['))
+        .unwrap_or_else(|| "[]".to_owned())
+}
+
+fn clojure_form_tail(source: &str, elements: &[Node<'_>], start: usize) -> String {
+    elements
+        .iter()
+        .skip(start)
+        .map(|node| clojure_node_text(source, *node))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn insert_entity(
@@ -731,8 +892,26 @@ fn source_location(parsed: &ParsedFile, range: TextRange) -> SourceLocation {
     }
 }
 
+fn source_location_bytes(parsed: &ParsedClojureFile, range: std::ops::Range<usize>) -> SourceLocation {
+    debug_assert!(!parsed.repo_path.as_os_str().is_empty());
+    let start = line_col_usize(&parsed.line_starts, range.start);
+    let end = line_col_usize(&parsed.line_starts, range.end);
+
+    SourceLocation {
+        file_path: parsed.file_path.clone(),
+        snapshot_path: parsed.snapshot_path.clone(),
+        start_line: start.0,
+        start_col: start.1,
+        end_line: end.0,
+        end_col: end.1,
+    }
+}
+
 fn line_col(line_starts: &[usize], offset: TextSize) -> (u32, u32) {
-    let offset = usize::from(offset);
+    line_col_usize(line_starts, usize::from(offset))
+}
+
+fn line_col_usize(line_starts: &[usize], offset: usize) -> (u32, u32) {
     let line_index = match line_starts.binary_search(&offset) {
         Ok(idx) => idx,
         Err(idx) => idx.saturating_sub(1),
