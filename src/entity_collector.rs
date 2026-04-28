@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use id_arena::{Arena, Id};
+use minidiff::Language;
 use ra_ap_syntax::{
     AstNode, Edition, SourceFile, TextRange, TextSize,
     ast::{self, HasAttrs, HasModuleItem, HasName},
@@ -19,6 +20,7 @@ pub type EntityId = Id<Entity>;
 pub struct Entity {
     pub name: String,
     pub parent: Option<EntityId>,
+    pub language: Language,
     pub location: SourceLocation,
     pub source_text: String,
     pub detail: EntityDetail,
@@ -167,6 +169,7 @@ fn collect_target_entities(
         Entity {
             name: target.crate_name.clone(),
             parent: None,
+            language: target.language,
             location: source_location(&parsed, parsed.source_file.syntax().text_range()),
             source_text: parsed.source_file.syntax().text().to_string(),
             detail: EntityDetail::Module { is_inline: false },
@@ -419,6 +422,7 @@ fn module_entity(
     Entity {
         name: qualified_name(target, context, &ast_name(module)),
         parent: context.parent,
+        language: target.language,
         location: source_location(parsed, module.syntax().text_range()),
         source_text: module.syntax().text().to_string(),
         detail: EntityDetail::Module {
@@ -442,6 +446,7 @@ fn function_entity(
     Entity {
         name: name.join("::"),
         parent: context.parent,
+        language: target.language,
         location: source_location(parsed, function.syntax().text_range()),
         source_text: function.syntax().text().to_string(),
         detail: EntityDetail::Function {
@@ -459,6 +464,7 @@ fn struct_entity(
     Entity {
         name: qualified_name(target, context, &ast_name(struct_def)),
         parent: context.parent,
+        language: target.language,
         location: source_location(parsed, struct_def.syntax().text_range()),
         source_text: struct_def.syntax().text().to_string(),
         detail: EntityDetail::Struct {
@@ -479,6 +485,7 @@ fn enum_entity(
     Entity {
         name: qualified_name(target, context, &ast_name(enum_def)),
         parent: context.parent,
+        language: target.language,
         location: source_location(parsed, enum_def.syntax().text_range()),
         source_text: enum_def.syntax().text().to_string(),
         detail: EntityDetail::Enum {
@@ -509,6 +516,7 @@ fn union_entity(
     Entity {
         name: qualified_name(target, context, &ast_name(union_def)),
         parent: context.parent,
+        language: target.language,
         location: source_location(parsed, union_def.syntax().text_range()),
         source_text: union_def.syntax().text().to_string(),
         detail: EntityDetail::Union {
@@ -534,6 +542,7 @@ fn trait_entity(
     Entity {
         name: qualified_name(target, context, &ast_name(trait_def)),
         parent: context.parent,
+        language: target.language,
         location: source_location(parsed, trait_def.syntax().text_range()),
         source_text: trait_def.syntax().text().to_string(),
         detail: EntityDetail::Trait {
@@ -559,6 +568,7 @@ fn type_alias_entity(
     Entity {
         name: qualified_name(target, context, &ast_name(type_alias)),
         parent: context.parent,
+        language: target.language,
         location: source_location(parsed, type_alias.syntax().text_range()),
         source_text: type_alias.syntax().text().to_string(),
         detail: EntityDetail::TypeAlias {
@@ -580,6 +590,7 @@ fn impl_entity(
     Entity {
         name: format!("{}::{}", path_prefix(target, context).join("::"), header),
         parent: context.parent,
+        language: target.language,
         location: source_location(parsed, impl_def.syntax().text_range()),
         source_text: impl_def.syntax().text().to_string(),
         detail: EntityDetail::Impl {

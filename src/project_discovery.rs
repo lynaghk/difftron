@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use minidiff::Language;
 use serde::Deserialize;
 
 use crate::source_repo::SourceRepo;
@@ -12,6 +13,7 @@ use crate::source_repo::SourceRepo;
 pub struct TargetRoot {
     pub crate_name: String,
     pub root_file: PathBuf,
+    pub language: Language,
 }
 
 #[derive(Debug, Deserialize)]
@@ -209,6 +211,7 @@ fn add_directory_targets(
             targets.insert(TargetRoot {
                 crate_name,
                 root_file: child,
+                language: Language::Rust,
             });
         } else if repo.is_dir(&child)? {
             let candidate = child.join("main.rs");
@@ -221,6 +224,7 @@ fn add_directory_targets(
                 targets.insert(TargetRoot {
                     crate_name,
                     root_file: candidate,
+                    language: Language::Rust,
                 });
             }
         }
@@ -244,6 +248,7 @@ fn add_target_if_present(
         targets.insert(TargetRoot {
             crate_name,
             root_file: relative_path,
+            language: Language::Rust,
         });
     }
     Ok(())
@@ -512,10 +517,12 @@ mod tests {
                 TargetRoot {
                     crate_name: "minidiff".to_owned(),
                     root_file: PathBuf::from("minidiff/src/lib.rs"),
+                    language: Language::Rust,
                 },
                 TargetRoot {
                     crate_name: "rust_dive".to_owned(),
                     root_file: PathBuf::from("src/lib.rs"),
+                    language: Language::Rust,
                 },
             ]
         );

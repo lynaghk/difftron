@@ -19,7 +19,7 @@ pub use presentation::{
 };
 pub use render::{OutputStyle, RenderOptions, Wrapping, render_side_by_side};
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Language {
     Clojure,
     Rust,

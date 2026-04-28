@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use id_arena::Arena;
+use minidiff::Language;
 use tracing::{info, info_span};
 
 use crate::{
@@ -256,7 +257,17 @@ fn single_file_target(path: &Path) -> Result<TargetRoot> {
     Ok(TargetRoot {
         crate_name: "file".to_owned(),
         root_file: snapshot_path,
+        language: language_for_path(path)
+            .with_context(|| format!("unsupported source file extension: {}", path.display()))?,
     })
+}
+
+fn language_for_path(path: &Path) -> Option<Language> {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("rs") => Some(Language::Rust),
+        Some("clj" | "cljs" | "cljc" | "edn") => Some(Language::Clojure),
+        Some(_) | None => None,
+    }
 }
 
 fn path_starts_with(path: &Path, base: &Path) -> bool {
@@ -487,6 +498,7 @@ fn repo_workdir(repo: &gix::Repository) -> Result<PathBuf> {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct EntityIdentity {
     name: String,
+    language: Language,
     kind: EntityKind,
 }
 
@@ -505,6 +517,7 @@ enum EntityKind {
 fn entity_identity(entity: &Entity) -> EntityIdentity {
     EntityIdentity {
         name: entity.name.clone(),
+        language: entity.language,
         kind: entity_kind(&entity.detail),
     }
 }
@@ -581,6 +594,7 @@ mod tests {
         let rhs = snapshot_from_entities(vec![Entity {
             name: "crate::thing".to_owned(),
             parent: None,
+            language: Language::Rust,
             location: SourceLocation {
                 file_path: PathBuf::from("/tmp/rhs.rs"),
                 snapshot_path: PathBuf::from("src/lib.rs"),
@@ -598,6 +612,13 @@ mod tests {
         assert_eq!(diff.deleted.len(), 1);
         assert_eq!(diff.added.len(), 1);
         assert!(diff.modified.is_empty());
+    }
+
+    #[test]
+    fn single_file_target_rejects_unknown_extensions() {
+        let err = single_file_target(Path::new("/tmp/example.txt")).unwrap_err();
+
+        assert!(err.to_string().contains("unsupported source file extension"));
     }
 
     #[test]
@@ -712,6 +733,7 @@ mod tests {
         Entity {
             name: name.to_owned(),
             parent: None,
+            language: Language::Rust,
             location,
             source_text: "fn thing() {}".to_owned(),
             detail: EntityDetail::Function {
@@ -750,6 +772,7 @@ mod tests {
             entities.push(arena.alloc(Entity {
                 name: spec.name.to_owned(),
                 parent,
+                language: Language::Rust,
                 location: SourceLocation {
                     file_path: file_path.to_path_buf(),
                     snapshot_path: PathBuf::from("example.rs"),

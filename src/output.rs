@@ -467,6 +467,7 @@ mod tests {
         Entity {
             name: name.to_owned(),
             parent: None,
+            language: minidiff::Language::Rust,
             location: SourceLocation {
                 file_path: PathBuf::from(format!("/tmp/project/{relative_path}")),
                 snapshot_path: PathBuf::from(relative_path),
