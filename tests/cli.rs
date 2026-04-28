@@ -252,10 +252,8 @@ fn diff_json_accepts_single_clojure_files() {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let lhs = dir.path().join("lhs.clj");
     let rhs = dir.path().join("rhs.clj");
-    fs::write(&lhs, "(ns demo.core)\n\n(defn meaning [] 41)\n")
-        .expect("failed to write lhs");
-    fs::write(&rhs, "(ns demo.core)\n\n(defn meaning [] 42)\n")
-        .expect("failed to write rhs");
+    fs::write(&lhs, "(ns demo.core)\n\n(defn meaning [] 41)\n").expect("failed to write lhs");
+    fs::write(&rhs, "(ns demo.core)\n\n(defn meaning [] 42)\n").expect("failed to write rhs");
 
     let output = Command::new(binary_path())
         .args([
@@ -284,7 +282,10 @@ fn diff_json_accepts_single_clojure_files() {
         .expect("expected modified Clojure function");
 
     assert_eq!(meaning["diff"]["rows"][0]["kind"], "replaced_code");
-    assert_eq!(meaning["diff"]["rows"][0]["right"]["segments"][1]["text"], "42");
+    assert_eq!(
+        meaning["diff"]["rows"][0]["right"]["segments"][1]["text"],
+        "42"
+    );
 }
 
 fn binary_path() -> PathBuf {

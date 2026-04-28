@@ -77,7 +77,10 @@ mod tests {
         let presentation = present_modified_entity(&change).unwrap();
 
         assert_eq!(presentation.rows.len(), 1);
-        assert_eq!(presentation.rows[0].kind, PresentationChangeKind::ReplacedString);
+        assert_eq!(
+            presentation.rows[0].kind,
+            PresentationChangeKind::ReplacedString
+        );
     }
 
     fn sample_clojure_entity(source_text: &str) -> Entity {

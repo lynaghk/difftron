@@ -10,8 +10,8 @@ use ra_ap_syntax::{
     AstNode, Edition, SourceFile, TextRange, TextSize,
     ast::{self, HasAttrs, HasModuleItem, HasName},
 };
-use tree_sitter_patched_arborium::{Language as TreeSitterLanguage, Node, Parser};
 use tracing::{info, info_span};
+use tree_sitter_patched_arborium::{Language as TreeSitterLanguage, Node, Parser};
 
 use crate::{project_discovery::TargetRoot, source_repo::SourceRepo};
 
@@ -506,8 +506,12 @@ fn clojure_top_level_entity(
 ) -> Option<Entity> {
     let source = &parsed.source_text;
     let elements = clojure_form_elements(source, form);
-    let head = elements.first().map(|node| clojure_node_text(source, *node))?;
-    let name = elements.get(1).map(|node| clojure_node_text(source, *node))?;
+    let head = elements
+        .first()
+        .map(|node| clojure_node_text(source, *node))?;
+    let name = elements
+        .get(1)
+        .map(|node| clojure_node_text(source, *node))?;
 
     let detail = match head.as_str() {
         "defn" | "defn-" | "defmacro" | "defmulti" | "defmethod" => EntityDetail::Function {
@@ -892,7 +896,10 @@ fn source_location(parsed: &ParsedFile, range: TextRange) -> SourceLocation {
     }
 }
 
-fn source_location_bytes(parsed: &ParsedClojureFile, range: std::ops::Range<usize>) -> SourceLocation {
+fn source_location_bytes(
+    parsed: &ParsedClojureFile,
+    range: std::ops::Range<usize>,
+) -> SourceLocation {
     debug_assert!(!parsed.repo_path.as_os_str().is_empty());
     let start = line_col_usize(&parsed.line_starts, range.start);
     let end = line_col_usize(&parsed.line_starts, range.end);

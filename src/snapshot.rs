@@ -618,7 +618,10 @@ mod tests {
     fn single_file_target_rejects_unknown_extensions() {
         let err = single_file_target(Path::new("/tmp/example.txt")).unwrap_err();
 
-        assert!(err.to_string().contains("unsupported source file extension"));
+        assert!(
+            err.to_string()
+                .contains("unsupported source file extension")
+        );
     }
 
     #[test]
