@@ -1,7 +1,7 @@
 use anyhow::Result;
 use gix::bstr::ByteSlice;
 use serde::Serialize;
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 use tracing::{info, info_span};
 
 use crate::{
@@ -25,6 +25,8 @@ pub fn render_list(
         OutputFormat::Text => Ok(render_list_text(entities)),
         OutputFormat::Json => serde_json::to_string_pretty(&ListOutput {
             command: "list",
+            entity_kind_order: entity_kind_order(),
+            entity_kinds: entity_kinds(),
             snapshot: SnapshotOutput::from(snapshot),
             entities: entities
                 .entities
@@ -64,6 +66,8 @@ pub fn render_diff(
             info!("serializing diff json");
             serde_json::to_string_pretty(&DiffOutput {
                 command: "diff",
+                entity_kind_order: entity_kind_order(),
+                entity_kinds: entity_kinds(),
                 lhs: SnapshotOutput::from(lhs),
                 rhs: SnapshotOutput::from(rhs),
                 added: diff.added.iter().map(EntityOutput::from).collect(),
@@ -132,6 +136,8 @@ fn render_sections(sections: Vec<String>) -> String {
 #[derive(Debug, Serialize)]
 struct ListOutput {
     command: &'static str,
+    entity_kind_order: &'static [&'static str],
+    entity_kinds: BTreeMap<&'static str, EntityKindMetadataOutput>,
     snapshot: SnapshotOutput,
     entities: Vec<EntityOutput>,
 }
@@ -139,11 +145,93 @@ struct ListOutput {
 #[derive(Debug, Serialize)]
 struct DiffOutput {
     command: &'static str,
+    entity_kind_order: &'static [&'static str],
+    entity_kinds: BTreeMap<&'static str, EntityKindMetadataOutput>,
     lhs: SnapshotOutput,
     rhs: SnapshotOutput,
     added: Vec<EntityOutput>,
     deleted: Vec<EntityOutput>,
     modified: Vec<ModifiedEntityOutput>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+struct EntityKindMetadataOutput {
+    label: &'static str,
+    group_label: &'static str,
+}
+
+fn entity_kind_order() -> &'static [&'static str] {
+    &[
+        "struct",
+        "enum",
+        "union",
+        "trait",
+        "type_alias",
+        "function",
+        "impl",
+        "module",
+    ]
+}
+
+fn entity_kinds() -> BTreeMap<&'static str, EntityKindMetadataOutput> {
+    BTreeMap::from([
+        (
+            "struct",
+            EntityKindMetadataOutput {
+                label: "Struct",
+                group_label: "Structs",
+            },
+        ),
+        (
+            "enum",
+            EntityKindMetadataOutput {
+                label: "Enum",
+                group_label: "Enums",
+            },
+        ),
+        (
+            "union",
+            EntityKindMetadataOutput {
+                label: "Union",
+                group_label: "Unions",
+            },
+        ),
+        (
+            "trait",
+            EntityKindMetadataOutput {
+                label: "Trait",
+                group_label: "Traits",
+            },
+        ),
+        (
+            "type_alias",
+            EntityKindMetadataOutput {
+                label: "Type Alias",
+                group_label: "Type Aliases",
+            },
+        ),
+        (
+            "function",
+            EntityKindMetadataOutput {
+                label: "Function",
+                group_label: "Functions",
+            },
+        ),
+        (
+            "impl",
+            EntityKindMetadataOutput {
+                label: "Impl",
+                group_label: "Impls",
+            },
+        ),
+        (
+            "module",
+            EntityKindMetadataOutput {
+                label: "Module",
+                group_label: "Modules",
+            },
+        ),
+    ])
 }
 
 #[derive(Debug, Serialize)]
@@ -394,6 +482,25 @@ mod tests {
         let json: Value = serde_json::from_str(&rendered).unwrap();
 
         assert_eq!(json["command"], "list");
+        assert_eq!(
+            json["entity_kind_order"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|kind| kind.as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "struct",
+                "enum",
+                "union",
+                "trait",
+                "type_alias",
+                "function",
+                "impl",
+                "module"
+            ]
+        );
+        assert_eq!(json["entity_kinds"]["function"]["group_label"], "Functions");
         assert_eq!(json["snapshot"]["kind"], "directory");
         assert_eq!(json["entities"][0]["kind"], "function");
         assert_eq!(json["entities"][0]["snapshot_path"], "src/lib.rs");
@@ -425,6 +532,7 @@ mod tests {
         let json: Value = serde_json::from_str(&rendered).unwrap();
 
         assert_eq!(json["command"], "diff");
+        assert_eq!(json["entity_kinds"]["struct"]["label"], "Struct");
         assert_eq!(json["lhs"]["rev"], "HEAD~1");
         assert_eq!(json["rhs"]["rev"], "HEAD");
         assert_eq!(json["added"][0]["name"], "crate::added");

@@ -10,6 +10,28 @@
   (file-name-directory (or load-file-name buffer-file-name)))
 (require 'rust-dive-magit)
 
+(defconst rust-dive-magit-tests--entity-kind-order
+  '
+  ("struct"
+    "enum"
+    "union"
+    "trait"
+    "type_alias"
+    "function"
+    "impl"
+    "module"))
+
+(defconst rust-dive-magit-tests--entity-kinds
+  (list
+    :struct (list :label "Struct" :group_label "Structs")
+    :enum (list :label "Enum" :group_label "Enums")
+    :union (list :label "Union" :group_label "Unions")
+    :trait (list :label "Trait" :group_label "Traits")
+    :type_alias (list :label "Type Alias" :group_label "Type Aliases")
+    :function (list :label "Function" :group_label "Functions")
+    :impl (list :label "Impl" :group_label "Impls")
+    :module (list :label "Module" :group_label "Modules")))
+
 (defun rust-dive-magit-tests--git-revision (label rev)
   (list
     :label label
@@ -91,6 +113,8 @@
     (rhs-rev "HEAD"))
   (list
     :command "diff"
+    :entity_kind_order rust-dive-magit-tests--entity-kind-order
+    :entity_kinds rust-dive-magit-tests--entity-kinds
     :lhs (rust-dive-magit-tests--git-revision lhs-label lhs-rev)
     :rhs (rust-dive-magit-tests--git-revision rhs-label rhs-rev)
     :added added

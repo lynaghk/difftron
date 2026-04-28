@@ -71,20 +71,11 @@
     map)
   "Keymap for `rust-dive-magit-mode'.")
 
-(defconst rust-dive-magit--kind-order
-  '
-  ("struct"
-    "enum"
-    "union"
-    "trait"
-    "type_alias"
-    "function"
-    "impl"
-    "module"))
-
 (defvar-local rust-dive-magit--command-args nil)
 (defvar-local rust-dive-magit--default-directory nil)
 (defvar-local rust-dive-magit--payload nil)
+(defvar-local rust-dive-magit--entity-kind-order nil)
+(defvar-local rust-dive-magit--entity-kinds nil)
 (defvar-local rust-dive-magit--grouping nil
   "Current grouping mode for the Rust Dive buffer.")
 
@@ -237,6 +228,10 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
 
 (defun rust-dive-magit--insert-payload (payload)
   "Insert PAYLOAD into the current buffer."
+  (setq rust-dive-magit--entity-kind-order
+    (plist-get payload :entity_kind_order))
+  (setq rust-dive-magit--entity-kinds
+    (plist-get payload :entity_kinds))
   (magit-insert-section
     (rust-dive-root)
     (pcase (plist-get payload :command)
@@ -637,26 +632,33 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
 
 (defun rust-dive-magit--kind-lessp (lhs rhs)
   "Return non-nil when kind LHS should sort before RHS."
-  (< (rust-dive-magit--kind-rank lhs)
-    (rust-dive-magit--kind-rank rhs)))
+  (let
+    (
+      (lhs-rank (rust-dive-magit--kind-rank lhs))
+      (rhs-rank (rust-dive-magit--kind-rank rhs)))
+    (if (= lhs-rank rhs-rank)
+      (string< lhs rhs)
+      (< lhs-rank rhs-rank))))
 
 (defun rust-dive-magit--kind-rank (kind)
   "Return the display rank for KIND."
-  (or (cl-position kind rust-dive-magit--kind-order :test #'equal)
-    (length rust-dive-magit--kind-order)))
+  (or
+    (cl-position
+      kind
+      rust-dive-magit--entity-kind-order
+      :test #'equal)
+    (length rust-dive-magit--entity-kind-order)))
 
 (defun rust-dive-magit--kind-label (kind)
   "Return the user-facing heading label for KIND."
-  (pcase kind
-    ("struct" "Structs")
-    ("enum" "Enums")
-    ("union" "Unions")
-    ("trait" "Traits")
-    ("type_alias" "Type Aliases")
-    ("function" "Functions")
-    ("impl" "Impls")
-    ("module" "Modules")
-    (_ (capitalize kind))))
+  (or (plist-get (rust-dive-magit--kind-metadata kind) :group_label)
+    kind))
+
+(defun rust-dive-magit--kind-metadata (kind)
+  "Return the metadata plist for KIND."
+  (plist-get
+    rust-dive-magit--entity-kinds
+    (intern (concat ":" kind))))
 
 (defun rust-dive-magit--status-rank (status)
   "Return the display rank for STATUS."
