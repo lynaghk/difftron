@@ -505,11 +505,19 @@ struct EntityIdentity {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 enum EntityKind {
     Module,
+    Namespace,
     Function,
+    Macro,
+    Multimethod,
+    Method,
+    Var,
     Struct,
     Enum,
     Union,
     Trait,
+    Protocol,
+    Record,
+    ClojureType,
     TypeAlias,
     Impl,
 }
@@ -525,11 +533,19 @@ fn entity_identity(entity: &Entity) -> EntityIdentity {
 fn entity_kind(detail: &EntityDetail) -> EntityKind {
     match detail {
         EntityDetail::Module { .. } => EntityKind::Module,
+        EntityDetail::Namespace => EntityKind::Namespace,
         EntityDetail::Function { .. } => EntityKind::Function,
+        EntityDetail::Macro { .. } => EntityKind::Macro,
+        EntityDetail::Multimethod { .. } => EntityKind::Multimethod,
+        EntityDetail::Method { .. } => EntityKind::Method,
+        EntityDetail::Var { .. } => EntityKind::Var,
         EntityDetail::Struct { .. } => EntityKind::Struct,
         EntityDetail::Enum { .. } => EntityKind::Enum,
         EntityDetail::Union { .. } => EntityKind::Union,
         EntityDetail::Trait { .. } => EntityKind::Trait,
+        EntityDetail::Protocol { .. } => EntityKind::Protocol,
+        EntityDetail::Record { .. } => EntityKind::Record,
+        EntityDetail::ClojureType { .. } => EntityKind::ClojureType,
         EntityDetail::TypeAlias { .. } => EntityKind::TypeAlias,
         EntityDetail::Impl { .. } => EntityKind::Impl,
     }

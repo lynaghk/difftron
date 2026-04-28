@@ -16,10 +16,18 @@
     "enum"
     "union"
     "trait"
+    "protocol"
+    "record"
+    "type"
     "type_alias"
     "function"
+    "macro"
+    "multimethod"
+    "method"
+    "var"
     "impl"
-    "module"))
+    "module"
+    "namespace"))
 
 (defconst rust-dive-magit-tests--entity-kinds
   (list
@@ -27,10 +35,18 @@
     :enum (list :label "Enum" :group_label "Enums")
     :union (list :label "Union" :group_label "Unions")
     :trait (list :label "Trait" :group_label "Traits")
+    :protocol (list :label "Protocol" :group_label "Protocols")
+    :record (list :label "Record" :group_label "Records")
+    :type (list :label "Type" :group_label "Types")
     :type_alias (list :label "Type Alias" :group_label "Type Aliases")
     :function (list :label "Function" :group_label "Functions")
+    :macro (list :label "Macro" :group_label "Macros")
+    :multimethod (list :label "Multimethod" :group_label "Multimethods")
+    :method (list :label "Method" :group_label "Methods")
+    :var (list :label "Var" :group_label "Vars")
     :impl (list :label "Impl" :group_label "Impls")
-    :module (list :label "Module" :group_label "Modules")))
+    :module (list :label "Module" :group_label "Modules")
+    :namespace (list :label "Namespace" :group_label "Namespaces")))
 
 (defun rust-dive-magit-tests--git-revision (label rev)
   (list
@@ -399,6 +415,22 @@
       (should
         (string-match-p "^    \\+ demo::added$" (buffer-string)))
       (should-not (string-match-p "Grouping:" (buffer-string))))))
+
+(ert-deftest rust-dive-magit-renders-kind-labels-from-payload ()
+  (with-temp-buffer
+    (rust-dive-magit-mode)
+    (let ((inhibit-read-only t))
+      (rust-dive-magit--insert-payload
+        (rust-dive-magit-tests--diff-payload
+          :added
+          (list
+            (rust-dive-magit-tests--entity
+              "demo.core::message"
+              "var"
+              "/tmp/repo/src/demo/core.clj"
+              "src/demo/core.clj"
+              "(def message \"hello\")")))))
+    (should (string-match-p "^Vars (1)$" (buffer-string)))))
 
 (ert-deftest rust-dive-magit-display-buffer-uses-default-grouping ()
   (let ((rust-dive-magit-default-grouping 'file))

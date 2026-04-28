@@ -40,11 +40,19 @@ pub struct SourceLocation {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum EntityDetail {
     Module { is_inline: bool },
+    Namespace,
     Function { signature: String },
+    Macro { signature: String },
+    Multimethod { body: String },
+    Method { signature: String },
+    Var { value: String },
     Struct { fields: Vec<String> },
     Enum { variants: Vec<String> },
     Union { fields: Vec<String> },
     Trait { items: Vec<String> },
+    Protocol { body: String },
+    Record { fields: String },
+    ClojureType { fields: String },
     TypeAlias { target: String },
     Impl { header: String, items: Vec<String> },
 }
@@ -107,8 +115,23 @@ pub fn render_entity(entity: &Entity) -> String {
         EntityDetail::Module { is_inline } => {
             format!("module {} inline={} @ {}", entity.name, is_inline, location)
         }
+        EntityDetail::Namespace => {
+            format!("namespace {} @ {}", entity.name, location)
+        }
         EntityDetail::Function { signature } => {
             format!("function {}{} @ {}", entity.name, signature, location)
+        }
+        EntityDetail::Macro { signature } => {
+            format!("macro {}{} @ {}", entity.name, signature, location)
+        }
+        EntityDetail::Multimethod { body } => {
+            format!("multimethod {} {} @ {}", entity.name, body, location)
+        }
+        EntityDetail::Method { signature } => {
+            format!("method {}{} @ {}", entity.name, signature, location)
+        }
+        EntityDetail::Var { value } => {
+            format!("var {} = {} @ {}", entity.name, value, location)
         }
         EntityDetail::Struct { fields } => {
             format!(
@@ -142,6 +165,15 @@ pub fn render_entity(entity: &Entity) -> String {
                 location
             )
         }
+        EntityDetail::Protocol { body } => {
+            format!("protocol {} {} @ {}", entity.name, body, location)
+        }
+        EntityDetail::Record { fields } => {
+            format!("record {} {} @ {}", entity.name, fields, location)
+        }
+        EntityDetail::ClojureType { fields } => {
+            format!("type {} {} @ {}", entity.name, fields, location)
+        }
         EntityDetail::TypeAlias { target } => {
             format!("type {} = {} @ {}", entity.name, target, location)
         }
@@ -154,11 +186,19 @@ pub fn render_entity(entity: &Entity) -> String {
 pub fn entity_kind_name(detail: &EntityDetail) -> &'static str {
     match detail {
         EntityDetail::Module { .. } => "module",
+        EntityDetail::Namespace => "namespace",
         EntityDetail::Function { .. } => "function",
+        EntityDetail::Macro { .. } => "macro",
+        EntityDetail::Multimethod { .. } => "multimethod",
+        EntityDetail::Method { .. } => "method",
+        EntityDetail::Var { .. } => "var",
         EntityDetail::Struct { .. } => "struct",
         EntityDetail::Enum { .. } => "enum",
         EntityDetail::Union { .. } => "union",
         EntityDetail::Trait { .. } => "trait",
+        EntityDetail::Protocol { .. } => "protocol",
+        EntityDetail::Record { .. } => "record",
+        EntityDetail::ClojureType { .. } => "type",
         EntityDetail::TypeAlias { .. } => "type_alias",
         EntityDetail::Impl { .. } => "impl",
     }
@@ -238,7 +278,7 @@ fn collect_clojure_target_entities(
             language: Language::Clojure,
             location: source_location_bytes(&parsed, root.byte_range()),
             source_text: parsed.source_text.clone(),
-            detail: EntityDetail::Module { is_inline: false },
+            detail: EntityDetail::Namespace,
         },
     );
 
@@ -514,11 +554,29 @@ fn clojure_top_level_entity(
         .map(|node| clojure_node_text(source, *node))?;
 
     let detail = match head.as_str() {
-        "defn" | "defn-" | "defmacro" | "defmulti" | "defmethod" => EntityDetail::Function {
+        "defn" | "defn-" => EntityDetail::Function {
             signature: clojure_function_signature(source, &elements),
         },
-        "def" | "defonce" | "defrecord" | "deftype" | "defprotocol" => EntityDetail::TypeAlias {
-            target: clojure_form_tail(source, &elements, 2),
+        "defmacro" => EntityDetail::Macro {
+            signature: clojure_function_signature(source, &elements),
+        },
+        "defmulti" => EntityDetail::Multimethod {
+            body: clojure_form_tail(source, &elements, 2),
+        },
+        "defmethod" => EntityDetail::Method {
+            signature: clojure_function_signature(source, &elements),
+        },
+        "def" | "defonce" => EntityDetail::Var {
+            value: clojure_form_tail(source, &elements, 2),
+        },
+        "defprotocol" => EntityDetail::Protocol {
+            body: clojure_form_tail(source, &elements, 2),
+        },
+        "defrecord" => EntityDetail::Record {
+            fields: clojure_form_tail(source, &elements, 2),
+        },
+        "deftype" => EntityDetail::ClojureType {
+            fields: clojure_form_tail(source, &elements, 2),
         },
         _ => return None,
     };

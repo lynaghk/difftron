@@ -166,10 +166,18 @@ fn entity_kind_order() -> &'static [&'static str] {
         "enum",
         "union",
         "trait",
+        "protocol",
+        "record",
+        "type",
         "type_alias",
         "function",
+        "macro",
+        "multimethod",
+        "method",
+        "var",
         "impl",
         "module",
+        "namespace",
     ]
 }
 
@@ -204,6 +212,27 @@ fn entity_kinds() -> BTreeMap<&'static str, EntityKindMetadataOutput> {
             },
         ),
         (
+            "protocol",
+            EntityKindMetadataOutput {
+                label: "Protocol",
+                group_label: "Protocols",
+            },
+        ),
+        (
+            "record",
+            EntityKindMetadataOutput {
+                label: "Record",
+                group_label: "Records",
+            },
+        ),
+        (
+            "type",
+            EntityKindMetadataOutput {
+                label: "Type",
+                group_label: "Types",
+            },
+        ),
+        (
             "type_alias",
             EntityKindMetadataOutput {
                 label: "Type Alias",
@@ -218,6 +247,34 @@ fn entity_kinds() -> BTreeMap<&'static str, EntityKindMetadataOutput> {
             },
         ),
         (
+            "macro",
+            EntityKindMetadataOutput {
+                label: "Macro",
+                group_label: "Macros",
+            },
+        ),
+        (
+            "multimethod",
+            EntityKindMetadataOutput {
+                label: "Multimethod",
+                group_label: "Multimethods",
+            },
+        ),
+        (
+            "method",
+            EntityKindMetadataOutput {
+                label: "Method",
+                group_label: "Methods",
+            },
+        ),
+        (
+            "var",
+            EntityKindMetadataOutput {
+                label: "Var",
+                group_label: "Vars",
+            },
+        ),
+        (
             "impl",
             EntityKindMetadataOutput {
                 label: "Impl",
@@ -229,6 +286,13 @@ fn entity_kinds() -> BTreeMap<&'static str, EntityKindMetadataOutput> {
             EntityKindMetadataOutput {
                 label: "Module",
                 group_label: "Modules",
+            },
+        ),
+        (
+            "namespace",
+            EntityKindMetadataOutput {
+                label: "Namespace",
+                group_label: "Namespaces",
             },
         ),
     ])
@@ -494,10 +558,18 @@ mod tests {
                 "enum",
                 "union",
                 "trait",
+                "protocol",
+                "record",
+                "type",
                 "type_alias",
                 "function",
+                "macro",
+                "multimethod",
+                "method",
+                "var",
                 "impl",
-                "module"
+                "module",
+                "namespace"
             ]
         );
         assert_eq!(json["entity_kinds"]["function"]["group_label"], "Functions");

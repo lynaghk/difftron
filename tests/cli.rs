@@ -244,7 +244,21 @@ fn list_json_accepts_single_clojure_files() {
         names,
         vec!["demo.core", "demo.core::meaning", "demo.core::message"]
     );
+    assert_eq!(
+        json["entity_kinds"]["namespace"]["group_label"],
+        "Namespaces"
+    );
+    assert_eq!(json["entity_kinds"]["var"]["group_label"], "Vars");
+    assert!(
+        json["entity_kind_order"]
+            .as_array()
+            .expect("entity kind order should be an array")
+            .iter()
+            .any(|kind| kind == "namespace")
+    );
+    assert_eq!(json["entities"][0]["kind"], "namespace");
     assert_eq!(json["entities"][1]["kind"], "function");
+    assert_eq!(json["entities"][2]["kind"], "var");
 }
 
 #[test]
