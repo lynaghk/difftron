@@ -1,5 +1,5 @@
 use std::{
-    collections::hash_map::DefaultHasher,
+    collections::{BTreeMap, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
     ops::Range,
 };
@@ -16,6 +16,21 @@ use crate::{Language, diff::DisplayLine};
 pub struct SyntaxDocument {
     pub lines: Vec<DisplayLine>,
     pub matched_node_budget: usize,
+    clojure_form: Option<ClojureForm>,
+}
+
+impl SyntaxDocument {
+    pub fn structural_match_budget(&self, rhs: &Self) -> Option<usize> {
+        let lhs = self.clojure_form.as_ref()?;
+        let rhs = rhs.clojure_form.as_ref()?;
+        Some(
+            unique_clojure_hash_matches(lhs, rhs)
+                .into_iter()
+                .map(|matched| matched.subtree_size)
+                .sum::<usize>()
+                .max(1),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -59,6 +74,13 @@ struct ClojureForm {
     children: Vec<ClojureForm>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct ClojureFormMatch {
+    lhs_byte_range: Range<usize>,
+    rhs_byte_range: Range<usize>,
+    subtree_size: usize,
+}
+
 impl ClojureForm {
     fn matched_node_budget(&self) -> usize {
         debug_assert!(self.byte_range.start <= self.byte_range.end);
@@ -67,6 +89,50 @@ impl ClojureForm {
         let _kind = self.kind;
 
         self.subtree_size
+    }
+}
+
+fn unique_clojure_hash_matches(lhs: &ClojureForm, rhs: &ClojureForm) -> Vec<ClojureFormMatch> {
+    let mut lhs_forms = BTreeMap::new();
+    let mut rhs_forms = BTreeMap::new();
+    collect_forms_by_hash(lhs, &mut lhs_forms);
+    collect_forms_by_hash(rhs, &mut rhs_forms);
+
+    let mut matches = Vec::new();
+    for (hash, lhs_candidates) in lhs_forms {
+        let Some(rhs_candidates) = rhs_forms.get(&hash) else {
+            continue;
+        };
+        if lhs_candidates.len() == 1 && rhs_candidates.len() == 1 {
+            let lhs = lhs_candidates[0];
+            let rhs = rhs_candidates[0];
+            matches.push(ClojureFormMatch {
+                lhs_byte_range: lhs.byte_range.clone(),
+                rhs_byte_range: rhs.byte_range.clone(),
+                subtree_size: lhs.subtree_size.min(rhs.subtree_size),
+            });
+        }
+    }
+
+    matches.sort_by(|lhs, rhs| {
+        lhs.lhs_byte_range
+            .start
+            .cmp(&rhs.lhs_byte_range.start)
+            .then_with(|| lhs.rhs_byte_range.start.cmp(&rhs.rhs_byte_range.start))
+    });
+    matches
+}
+
+fn collect_forms_by_hash<'a>(
+    form: &'a ClojureForm,
+    forms: &mut BTreeMap<u64, Vec<&'a ClojureForm>>,
+) {
+    if form.kind != ClojureFormKind::Root {
+        forms.entry(form.normalized_hash).or_default().push(form);
+    }
+
+    for child in &form.children {
+        collect_forms_by_hash(child, forms);
     }
 }
 
@@ -103,6 +169,7 @@ fn parse_clojure(source: &str) -> Result<ParsedDocument> {
     Ok(ParsedDocument::SyntaxAware(SyntaxDocument {
         lines: enrich_with_clojure_tokens(source, root),
         matched_node_budget: form.matched_node_budget(),
+        clojure_form: Some(form),
     }))
 }
 
@@ -122,6 +189,7 @@ fn parse_rust(source: &str) -> Result<ParsedDocument> {
     Ok(ParsedDocument::SyntaxAware(SyntaxDocument {
         lines: enrich_with_tokens(source, &tree),
         matched_node_budget,
+        clojure_form: None,
     }))
 }
 
@@ -198,7 +266,10 @@ fn build_clojure_form(source: &str, node: Node<'_>) -> ClojureForm {
     let end_position = node.end_position();
     let kind = clojure_form_kind(source, node);
     let children = structural_clojure_children(source, node);
-    let subtree_size = 1 + children.iter().map(|child| child.subtree_size).sum::<usize>();
+    let subtree_size = 1 + children
+        .iter()
+        .map(|child| child.subtree_size)
+        .sum::<usize>();
     let normalized_hash = clojure_form_hash(source, kind, byte_range.clone(), &children);
 
     ClojureForm {
@@ -328,5 +399,22 @@ mod tests {
         let expanded = clojure_form("(defn meaning\n  []\n  {:answer 42})\n");
 
         assert_eq!(compact.normalized_hash, expanded.normalized_hash);
+    }
+
+    #[test]
+    fn clojure_hash_matching_finds_unique_identical_subtrees() {
+        let lhs = clojure_form("(defn render [user] {:id (:id user) :name (:name user)})\n");
+        let rhs =
+            clojure_form("(defn render [user] {:profile {:name (:name user)} :id (:id user)})\n");
+
+        let matches = unique_clojure_hash_matches(&lhs, &rhs);
+
+        assert!(matches.iter().any(|matched| matched.subtree_size > 1));
+        assert!(matches.iter().any(|matched| {
+            matched.lhs_byte_range == (25..35) && matched.rhs_byte_range == (55..65)
+        }));
+        assert!(matches.iter().any(|matched| {
+            matched.lhs_byte_range == (42..54) && matched.rhs_byte_range == (37..49)
+        }));
     }
 }

@@ -76,7 +76,9 @@ pub fn diff(language: Language, lhs: &str, rhs: &str, _options: DiffOptions) -> 
     let parse_outcome = match (&lhs_doc, &rhs_doc) {
         (ParsedDocument::SyntaxAware(lhs), ParsedDocument::SyntaxAware(rhs)) => {
             ParseOutcome::SyntaxAware(SyntaxDiff {
-                matched_nodes: lhs.matched_node_budget.min(rhs.matched_node_budget).max(1),
+                matched_nodes: lhs.structural_match_budget(rhs).unwrap_or_else(|| {
+                    lhs.matched_node_budget.min(rhs.matched_node_budget).max(1)
+                }),
             })
         }
         (ParsedDocument::FallbackText(lhs), ParsedDocument::FallbackText(rhs)) => {
