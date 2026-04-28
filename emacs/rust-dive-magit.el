@@ -68,11 +68,6 @@
     (define-key map (kbd "h") #'rust-dive-magit-dispatch)
     (define-key map (kbd "?") #'rust-dive-magit-dispatch)
     (define-key map (kbd "RET") #'rust-dive-magit-visit-thing)
-    ;; These are shifted number keys on standard US keyboard layouts.
-    (define-key map (kbd "!") #'magit-section-show-level-1-all)
-    (define-key map (kbd "@") #'magit-section-show-level-2-all)
-    (define-key map (kbd "#") #'magit-section-show-level-3-all)
-    (define-key map (kbd "$") #'magit-section-show-level-4-all)
     map)
   "Keymap for `rust-dive-magit-mode'.")
 
@@ -117,10 +112,10 @@
       ("2" "Level 2" magit-section-show-level-2)
       ("3" "Level 3" magit-section-show-level-3)
       ("4" "Level 4" magit-section-show-level-4)
-      ("!" "All level 1" magit-section-show-level-1-all)
-      ("@" "All level 2" magit-section-show-level-2-all)
-      ("#" "All level 3" magit-section-show-level-3-all)
-      ("$" "All level 4" magit-section-show-level-4-all)]
+      ("M-1" "All level 1" magit-section-show-level-1-all)
+      ("M-2" "All level 2" magit-section-show-level-2-all)
+      ("M-3" "All level 3" magit-section-show-level-3-all)
+      ("M-4" "All level 4" magit-section-show-level-4-all)]
     ["Movement"
       ("n" "Next section" magit-section-forward)
       ("p" "Previous section" magit-section-backward)

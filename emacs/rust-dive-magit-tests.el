@@ -397,22 +397,22 @@
         (should-not (oref kind-section hidden))
         (should (oref entity-section hidden))))))
 
-(ert-deftest rust-dive-magit-shifted-number-keys-show-all-levels ()
+(ert-deftest rust-dive-magit-inherits-magit-all-level-bindings ()
   (should
     (eq
-      (lookup-key rust-dive-magit-mode-map (kbd "!"))
+      (lookup-key rust-dive-magit-mode-map (kbd "M-1"))
       #'magit-section-show-level-1-all))
   (should
     (eq
-      (lookup-key rust-dive-magit-mode-map (kbd "@"))
+      (lookup-key rust-dive-magit-mode-map (kbd "M-2"))
       #'magit-section-show-level-2-all))
   (should
     (eq
-      (lookup-key rust-dive-magit-mode-map (kbd "#"))
+      (lookup-key rust-dive-magit-mode-map (kbd "M-3"))
       #'magit-section-show-level-3-all))
   (should
     (eq
-      (lookup-key rust-dive-magit-mode-map (kbd "$"))
+      (lookup-key rust-dive-magit-mode-map (kbd "M-4"))
       #'magit-section-show-level-4-all)))
 
 (ert-deftest rust-dive-magit-refresh-preserves-magit-display-state ()
