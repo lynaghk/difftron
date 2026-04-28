@@ -247,6 +247,46 @@ fn list_json_accepts_single_clojure_files() {
     assert_eq!(json["entities"][1]["kind"], "function");
 }
 
+#[test]
+fn diff_json_accepts_single_clojure_files() {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let lhs = dir.path().join("lhs.clj");
+    let rhs = dir.path().join("rhs.clj");
+    fs::write(&lhs, "(ns demo.core)\n\n(defn meaning [] 41)\n")
+        .expect("failed to write lhs");
+    fs::write(&rhs, "(ns demo.core)\n\n(defn meaning [] 42)\n")
+        .expect("failed to write rhs");
+
+    let output = Command::new(binary_path())
+        .args([
+            "diff",
+            lhs.to_str().expect("lhs path should be valid utf-8"),
+            rhs.to_str().expect("rhs path should be valid utf-8"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("failed to run rust_dive");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    let modified = json["modified"]
+        .as_array()
+        .expect("modified should be an array");
+    let meaning = modified
+        .iter()
+        .find(|entry| entry["rhs"]["name"] == "demo.core::meaning")
+        .expect("expected modified Clojure function");
+
+    assert_eq!(meaning["diff"]["rows"][0]["kind"], "replaced_code");
+    assert_eq!(meaning["diff"]["rows"][0]["right"]["segments"][1]["text"], "42");
+}
+
 fn binary_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_rust_dive"))
 }
