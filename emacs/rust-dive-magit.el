@@ -17,6 +17,7 @@
 
 (require 'button)
 (require 'cl-lib)
+(require 'diff-mode)
 (require 'json)
 (require 'magit-mode)
 (require 'magit-section)
@@ -433,11 +434,9 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
             (plist-get item :diff)))
         (_
           (when-let ((source (plist-get entity :source_text)))
-            (insert
-              (propertize source
-                'font-lock-face
-                (rust-dive-magit--status-face
-                  (plist-get item :status))))
+            (rust-dive-magit--insert-diff-text
+              source
+              (rust-dive-magit--status-face (plist-get item :status)))
             (unless (string-suffix-p "\n" source)
               (insert "\n")))))
       (unless (eq (char-before) ?\n)
@@ -472,22 +471,25 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
   (side side-name column-width)
   "Insert SIDE for SIDE-NAME truncated to COLUMN-WIDTH."
   (if side
-    (let ((start (point)))
+    (let
+      (
+        (start (point))
+        (face (rust-dive-magit--side-face side-name)))
       (rust-dive-magit--insert-structured-segments
         (plist-get side :segments)
         side-name
+        face
         column-width)
       (when (eq side-name 'left)
-        (insert
-          (make-string
-            (max 0 (- column-width (- (point) start)))
-            ?\s))))
+        (rust-dive-magit--insert-diff-text
+          (make-string (max 0 (- column-width (- (point) start))) ?\s)
+          face)))
     (when (eq side-name 'left)
       (insert (make-string column-width ?\s)))))
 
 (defun rust-dive-magit--insert-structured-segments
-  (segments side-name remaining-width)
-  "Insert SEGMENTS for SIDE-NAME within REMAINING-WIDTH columns."
+  (segments side-name face remaining-width)
+  "Insert SEGMENTS for SIDE-NAME with FACE within REMAINING-WIDTH columns."
   (let ((remaining remaining-width))
     (dolist (segment segments)
       (when (> remaining 0)
@@ -499,22 +501,47 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
                 remaining
                 0
                 nil))
-            (face
-              (rust-dive-magit--segment-face
+            (refine-face
+              (rust-dive-magit--segment-refine-face
                 side-name
-                (plist-get segment :kind))))
+                (plist-get segment :kind)))
+            (start (point)))
           (unless (string-empty-p text)
-            (insert (propertize text 'font-lock-face face))
+            (rust-dive-magit--insert-diff-text text face)
+            (when refine-face
+              (rust-dive-magit--add-refine-overlay
+                start
+                (point)
+                refine-face))
             (setq remaining (- remaining (string-width text)))))))))
 
-(defun rust-dive-magit--segment-face (side-name kind)
-  "Return the face for segment KIND on SIDE-NAME."
+(defun rust-dive-magit--insert-diff-text (text face)
+  "Insert TEXT with optional diff FACE."
+  (if face
+    (insert (propertize text 'font-lock-face face))
+    (insert text)))
+
+(defun rust-dive-magit--side-face (side-name)
+  "Return the base diff face for SIDE-NAME."
+  (ignore side-name)
+  'magit-diff-context)
+
+(defun rust-dive-magit--segment-refine-face (side-name kind)
+  "Return the refinement face for segment KIND on SIDE-NAME."
   (pcase kind
     ("novel"
       (pcase side-name
-        ('left 'magit-diff-removed)
-        (_ 'magit-diff-added)))
-    (_ 'default)))
+        ('left 'diff-refine-removed)
+        (_ 'diff-refine-added)))
+    (_ nil)))
+
+(defun rust-dive-magit--add-refine-overlay (start end face)
+  "Add a Magit-style fine diff overlay from START to END using FACE."
+  (let ((overlay (make-overlay start end nil t)))
+    (overlay-put overlay 'diff-mode 'fine)
+    (overlay-put overlay 'evaporate t)
+    (overlay-put overlay 'face face)
+    overlay))
 
 (defun rust-dive-magit--modified-column-width ()
   "Return the per-side width for structured modified diffs."
@@ -673,7 +700,7 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
   (pcase status
     ('added 'magit-diff-added)
     ('deleted 'magit-diff-removed)
-    (_ 'default)))
+    (_ nil)))
 
 (defun rust-dive-magit--insert-items (items)
   "Insert ITEMS using the current grouping mode."

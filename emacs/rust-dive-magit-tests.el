@@ -626,13 +626,31 @@
     (should
       (eq
         (get-text-property (match-beginning 0) 'font-lock-face)
-        'magit-diff-removed))
+        'magit-diff-context))
+    (should
+      (cl-some
+        (lambda (overlay)
+          (and (eq (overlay-get overlay 'diff-mode) 'fine)
+            (eq (overlay-get overlay 'face) 'diff-refine-removed)))
+        (overlays-at (match-beginning 0))))
     (goto-char (point-min))
     (search-forward "42")
     (should
       (eq
         (get-text-property (match-beginning 0) 'font-lock-face)
-        'magit-diff-added))))
+        'magit-diff-context))
+    (should
+      (cl-some
+        (lambda (overlay)
+          (and (eq (overlay-get overlay 'diff-mode) 'fine)
+            (eq (overlay-get overlay 'face) 'diff-refine-added)))
+        (overlays-at (match-beginning 0))))
+    (goto-char (point-min))
+    (search-forward "fn meaning")
+    (should
+      (eq
+        (get-text-property (match-beginning 0) 'font-lock-face)
+        'magit-diff-context))))
 
 (ert-deftest rust-dive-magit-splits-path-input ()
   (should
