@@ -6,7 +6,9 @@ use minidiff::Language;
 use tracing::{info, info_span};
 
 use crate::{
-    languages::{clojure::ClojureEntityDetail, rust::RustEntityDetail},
+    languages::{
+        clojure::ClojureEntityDetail, rust::RustEntityDetail, typescript::TypeScriptEntityDetail,
+    },
     project_discovery::TargetRoot,
     source_repo::SourceRepo,
 };
@@ -37,6 +39,7 @@ pub struct SourceLocation {
 pub enum EntityDetail {
     Rust(RustEntityDetail),
     Clojure(ClojureEntityDetail),
+    TypeScript(TypeScriptEntityDetail),
 }
 
 #[derive(Debug)]
@@ -72,6 +75,14 @@ pub fn collect_entities(repo: &dyn SourceRepo, targets: &[TargetRoot]) -> Result
                     &mut entities,
                 )?;
             }
+            Language::TypeScript => {
+                crate::languages::typescript::collect_target_entities(
+                    repo,
+                    target,
+                    &mut arena,
+                    &mut entities,
+                )?;
+            }
         }
         info!(entity_count = entities.len(), "finished crate");
     }
@@ -85,6 +96,9 @@ pub fn render_entity(entity: &Entity) -> String {
     match &entity.detail {
         EntityDetail::Rust(detail) => crate::languages::rust::render_entity(entity, detail),
         EntityDetail::Clojure(detail) => crate::languages::clojure::render_entity(entity, detail),
+        EntityDetail::TypeScript(detail) => {
+            crate::languages::typescript::render_entity(entity, detail)
+        }
     }
 }
 
@@ -92,6 +106,7 @@ pub fn entity_kind_name(detail: &EntityDetail) -> &'static str {
     match detail {
         EntityDetail::Rust(detail) => crate::languages::rust::entity_kind_name(detail),
         EntityDetail::Clojure(detail) => crate::languages::clojure::entity_kind_name(detail),
+        EntityDetail::TypeScript(detail) => crate::languages::typescript::entity_kind_name(detail),
     }
 }
 
@@ -171,5 +186,11 @@ mod tests {
         assert_eq!(entity_kind_name(&rust_detail), "function");
         assert_eq!(entity_kind_name(&clojure_detail), "function");
         assert_ne!(rust_detail, clojure_detail);
+        let typescript_detail = EntityDetail::TypeScript(TypeScriptEntityDetail::Function {
+            signature: "()".to_owned(),
+        });
+
+        assert_eq!(entity_kind_name(&typescript_detail), "function");
+        assert_ne!(rust_detail, typescript_detail);
     }
 }

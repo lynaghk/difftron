@@ -85,6 +85,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "arborium-javascript"
+version = "2.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2bc4cd42b968c2ba2dbac049ce7e9c94611cad1ff13c0b1dc8c84b0f314f1ce"
+dependencies = [
+ "arborium-sysroot",
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "arborium-sysroot"
 version = "2.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -92,6 +103,18 @@ checksum = "43374e79fbeaedc2bf27eed475c26686c8ed8eef2180854eef22340b9e25b64a"
 dependencies = [
  "cc",
  "dlmalloc",
+]
+
+[[package]]
+name = "arborium-typescript"
+version = "2.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f0bd47142ea2f37a5e72e3543c0ce1250ab76ac5bbe8288d7cf4638784ad432"
+dependencies = [
+ "arborium-javascript",
+ "arborium-sysroot",
+ "cc",
+ "tree-sitter-language",
 ]
 
 [[package]]
@@ -1685,6 +1708,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arborium-clojure",
+ "arborium-typescript",
  "ra_ap_syntax",
  "tracing",
  "tracing-tree",
@@ -1981,6 +2005,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arborium-clojure",
+ "arborium-typescript",
  "clap",
  "env_logger",
  "gix",

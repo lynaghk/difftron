@@ -352,6 +352,89 @@ fn diff_json_accepts_single_clojure_files() {
 }
 
 #[test]
+fn list_json_accepts_single_typescript_files() {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let source_path = dir.path().join("app.ts");
+    fs::write(
+        &source_path,
+        "export interface User { id: string; }\n\nexport function label(user: User): string {\n  return user.id;\n}\n",
+    )
+    .expect("failed to write TypeScript file");
+
+    let output = Command::new(binary_path())
+        .args([
+            "list",
+            source_path.to_str().expect("path should be valid utf-8"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("failed to run rust_dive");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    let names = json["entities"]
+        .as_array()
+        .expect("entities should be an array")
+        .iter()
+        .map(|entity| entity["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+
+    assert_eq!(names, vec!["file", "file::User", "file::label"]);
+    assert_eq!(
+        json["entity_kinds"]["interface"]["group_label"],
+        "Interfaces"
+    );
+    assert_eq!(json["entities"][1]["kind"], "interface");
+    assert_eq!(json["entities"][2]["kind"], "function");
+}
+
+#[test]
+fn diff_json_accepts_pure_typescript_repositories() {
+    let repo = TestRepo::new_typescript();
+    repo.commit_all("initial");
+    repo.write_file(
+        "src/app.ts",
+        "export function meaning(): number {\n  return 42;\n}\n",
+    );
+    repo.commit_all("change meaning");
+
+    let output = Command::new(binary_path())
+        .current_dir(repo.path())
+        .args(["diff", "HEAD~1", "HEAD", "--format", "json"])
+        .output()
+        .expect("failed to run rust_dive");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    let modified = json["modified"]
+        .as_array()
+        .expect("modified should be an array");
+    let meaning = modified
+        .iter()
+        .find(|entry| entry["rhs"]["name"] == "src.app::meaning")
+        .expect("expected modified TypeScript function");
+    let changed_row = meaning["diff"]["rows"]
+        .as_array()
+        .expect("rows should be an array")
+        .iter()
+        .find(|row| row["kind"] == "replaced_code")
+        .expect("expected changed TypeScript row");
+
+    assert_eq!(changed_row["right"]["segments"][1]["text"], "42");
+}
+
+#[test]
 fn diff_json_accepts_pure_clojure_repositories() {
     let repo = TestRepo::new_clojure();
     repo.commit_all("initial");
@@ -452,6 +535,20 @@ impl TestRepo {
         repo.write_file(
             "src/windowtron/core.clj",
             "(ns windowtron.core)\n\n(defn meaning [] 41)\n",
+        );
+        repo.git(["init"]);
+        repo.git(["config", "user.name", "Test User"]);
+        repo.git(["config", "user.email", "test@example.com"]);
+        repo
+    }
+
+    fn new_typescript() -> Self {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let repo = Self { dir };
+        repo.write_file("package.json", "{\"name\":\"demo\"}\n");
+        repo.write_file(
+            "src/app.ts",
+            "export function meaning(): number {\n  return 41;\n}\n",
         );
         repo.git(["init"]);
         repo.git(["config", "user.name", "Test User"]);

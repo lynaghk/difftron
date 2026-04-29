@@ -313,8 +313,15 @@ fn language_for_path(path: &Path) -> Option<Language> {
     match path.extension().and_then(|extension| extension.to_str()) {
         Some("rs") => Some(Language::Rust),
         Some("clj" | "cljs" | "cljc" | "edn") => Some(Language::Clojure),
+        Some("ts") if !is_typescript_declaration_file(path) => Some(Language::TypeScript),
         Some(_) | None => None,
     }
+}
+
+fn is_typescript_declaration_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".d.ts"))
 }
 
 fn path_starts_with(path: &Path, base: &Path) -> bool {

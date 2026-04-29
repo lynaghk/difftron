@@ -51,10 +51,10 @@ struct TargetManifest {
 pub fn discover_targets(repo: &dyn SourceRepo) -> Result<Vec<TargetRoot>> {
     let root_manifest = PathBuf::from("Cargo.toml");
     if !repo.is_file(&root_manifest)? {
-        let targets = discover_clojure_targets(repo)?;
+        let targets = discover_loose_source_targets(repo)?;
         if targets.is_empty() {
             bail!(
-                "expected {} to contain a Cargo.toml or Clojure source files",
+                "expected {} to contain a Cargo.toml or supported source files",
                 repo.root().display()
             );
         }
@@ -74,13 +74,13 @@ pub fn discover_targets(repo: &dyn SourceRepo) -> Result<Vec<TargetRoot>> {
     Ok(targets.into_iter().collect())
 }
 
-fn discover_clojure_targets(repo: &dyn SourceRepo) -> Result<Vec<TargetRoot>> {
+fn discover_loose_source_targets(repo: &dyn SourceRepo) -> Result<Vec<TargetRoot>> {
     let mut targets = BTreeSet::new();
-    collect_clojure_targets(repo, Path::new(""), &mut targets)?;
+    collect_loose_source_targets(repo, Path::new(""), &mut targets)?;
     Ok(targets.into_iter().collect())
 }
 
-fn collect_clojure_targets(
+fn collect_loose_source_targets(
     repo: &dyn SourceRepo,
     dir: &Path,
     targets: &mut BTreeSet<TargetRoot>,
@@ -91,15 +91,21 @@ fn collect_clojure_targets(
 
     for child in repo.read_dir(dir)? {
         if repo.is_dir(&child)? {
-            if should_skip_clojure_dir(&child) {
+            if should_skip_loose_source_dir(&child) {
                 continue;
             }
-            collect_clojure_targets(repo, &child, targets)?;
+            collect_loose_source_targets(repo, &child, targets)?;
         } else if repo.is_file(&child)? && is_clojure_code_file(&child) {
             targets.insert(TargetRoot {
-                crate_name: clojure_target_name(&child),
+                crate_name: loose_source_target_name(&child),
                 root_file: child,
                 language: Language::Clojure,
+            });
+        } else if repo.is_file(&child)? && is_typescript_code_file(&child) {
+            targets.insert(TargetRoot {
+                crate_name: loose_source_target_name(&child),
+                root_file: child,
+                language: Language::TypeScript,
             });
         }
     }
@@ -107,13 +113,22 @@ fn collect_clojure_targets(
     Ok(())
 }
 
-fn should_skip_clojure_dir(path: &Path) -> bool {
+fn should_skip_loose_source_dir(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| {
             matches!(
                 name,
-                ".git" | ".clj-kondo" | ".cpcache" | ".shadow-cljs" | "node_modules" | "target"
+                ".git"
+                    | ".clj-kondo"
+                    | ".cpcache"
+                    | ".next"
+                    | ".shadow-cljs"
+                    | "build"
+                    | "coverage"
+                    | "dist"
+                    | "node_modules"
+                    | "target"
             )
         })
 }
@@ -125,7 +140,20 @@ fn is_clojure_code_file(path: &Path) -> bool {
     )
 }
 
-fn clojure_target_name(path: &Path) -> String {
+fn is_typescript_code_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension == "ts")
+        && !is_typescript_declaration_file(path)
+}
+
+fn is_typescript_declaration_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".d.ts"))
+}
+
+fn loose_source_target_name(path: &Path) -> String {
     let parts = path
         .with_extension("")
         .components()
@@ -135,7 +163,7 @@ fn clojure_target_name(path: &Path) -> String {
         })
         .collect::<Vec<_>>();
     if parts.is_empty() {
-        "clojure".to_owned()
+        "source".to_owned()
     } else {
         parts.join(".")
     }
@@ -627,6 +655,33 @@ mod tests {
                     language: Language::Clojure,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn discover_targets_falls_back_to_typescript_sources_without_cargo_manifest() {
+        let repo = TestRepo::new(&[
+            ("package.json", "{\"name\":\"demo\"}\n"),
+            ("src/app.ts", "export function render() { return 42; }\n"),
+            (
+                "src/app.d.ts",
+                "export declare function render(): number;\n",
+            ),
+            (
+                "node_modules/pkg/index.ts",
+                "export const ignored = true;\n",
+            ),
+        ]);
+
+        let targets = discover_targets(&repo).unwrap();
+
+        assert_eq!(
+            targets,
+            vec![TargetRoot {
+                crate_name: "src.app".to_owned(),
+                root_file: PathBuf::from("src/app.ts"),
+                language: Language::TypeScript,
+            }]
         );
     }
 }

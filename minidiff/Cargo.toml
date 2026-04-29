@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 arborium-clojure = "2.16"
+arborium-typescript = "2.16"
 ra_ap_syntax = "0"
 tree-sitter-patched-arborium = "0.25"
 tracing = "0"

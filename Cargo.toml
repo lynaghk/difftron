@@ -10,6 +10,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 arborium-clojure = "2.16"
+arborium-typescript = "2.16"
 clap = { version = "4", features = ["derive"] }
 env_logger = "0"
 gix = "0"

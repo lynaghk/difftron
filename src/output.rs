@@ -170,9 +170,11 @@ struct EntityKindMetadataOutput {
 
 fn entity_kind_order() -> &'static [&'static str] {
     &[
+        "class",
         "struct",
         "enum",
         "union",
+        "interface",
         "trait",
         "protocol",
         "record",
@@ -192,6 +194,13 @@ fn entity_kind_order() -> &'static [&'static str] {
 fn entity_kinds() -> BTreeMap<&'static str, EntityKindMetadataOutput> {
     BTreeMap::from([
         (
+            "class",
+            EntityKindMetadataOutput {
+                label: "Class",
+                group_label: "Classes",
+            },
+        ),
+        (
             "struct",
             EntityKindMetadataOutput {
                 label: "Struct",
@@ -210,6 +219,13 @@ fn entity_kinds() -> BTreeMap<&'static str, EntityKindMetadataOutput> {
             EntityKindMetadataOutput {
                 label: "Union",
                 group_label: "Unions",
+            },
+        ),
+        (
+            "interface",
+            EntityKindMetadataOutput {
+                label: "Interface",
+                group_label: "Interfaces",
             },
         ),
         (
@@ -580,9 +596,11 @@ mod tests {
                 .map(|kind| kind.as_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
+                "class",
                 "struct",
                 "enum",
                 "union",
+                "interface",
                 "trait",
                 "protocol",
                 "record",

@@ -23,6 +23,7 @@ pub use render::{OutputStyle, RenderOptions, Wrapping, render_side_by_side};
 pub enum Language {
     Clojure,
     Rust,
+    TypeScript,
 }
 
 pub fn diff(language: Language, lhs: &str, rhs: &str, options: DiffOptions) -> Result<DiffResult> {
@@ -97,6 +98,38 @@ mod tests {
         let rhs = "(defn meaning [] 42)\n";
 
         let diff_result = diff(Language::Clojure, lhs, rhs, DiffOptions::default()).unwrap();
+
+        match diff_result.parse_outcome {
+            ParseOutcome::FallbackText(reason) => {
+                assert!(reason.reason.contains("parse"));
+            }
+            ParseOutcome::SyntaxAware(summary) => {
+                panic!("expected fallback diff, got syntax aware: {summary:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn syntax_aware_typescript_diff_reports_structure_for_valid_declarations() {
+        let lhs = "export function meaning(): number {\n  return 41;\n}\n";
+        let rhs = "export function meaning(): number {\n  return 42;\n}\n";
+
+        let diff_result = diff(Language::TypeScript, lhs, rhs, DiffOptions::default()).unwrap();
+
+        match diff_result.parse_outcome {
+            ParseOutcome::SyntaxAware(summary) => assert!(summary.matched_nodes > 0),
+            ParseOutcome::FallbackText(reason) => {
+                panic!("expected syntax aware diff, got fallback: {reason:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_typescript_snippets_surface_explicit_fallback() {
+        let lhs = "export function meaning( {\n  return 41;\n}\n";
+        let rhs = "export function meaning(): number {\n  return 42;\n}\n";
+
+        let diff_result = diff(Language::TypeScript, lhs, rhs, DiffOptions::default()).unwrap();
 
         match diff_result.parse_outcome {
             ParseOutcome::FallbackText(reason) => {
