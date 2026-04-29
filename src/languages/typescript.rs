@@ -49,9 +49,6 @@ pub fn collect_target_entities(
         anyhow::bail!("failed to parse {}", target.root_file.display());
     };
     let root = tree.root_node();
-    if root.has_error() {
-        anyhow::bail!("failed to parse {}", target.root_file.display());
-    }
 
     let root_id = insert_entity(
         arena,

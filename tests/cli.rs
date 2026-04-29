@@ -395,6 +395,52 @@ fn list_json_accepts_single_typescript_files() {
 }
 
 #[test]
+fn list_json_collects_typescript_files_with_recoverable_parse_errors() {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let source_path = dir.path().join("branchable-repo.ts");
+    fs::write(
+        &source_path,
+        r#"export class BranchedDocHandle<T> {
+  readonly #listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+
+  off(ev: string, fn: (...args: unknown[]) => void): this {
+    this.#listeners.get(ev)?.delete(fn);
+    return this;
+  }
+}
+"#,
+    )
+    .expect("failed to write TypeScript file");
+
+    let output = Command::new(binary_path())
+        .args([
+            "list",
+            source_path.to_str().expect("path should be valid utf-8"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("failed to run rust_dive");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    let names = json["entities"]
+        .as_array()
+        .expect("entities should be an array")
+        .iter()
+        .map(|entity| entity["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+
+    assert!(names.contains(&"file::BranchedDocHandle"));
+    assert!(names.contains(&"file::BranchedDocHandle::off"));
+}
+
+#[test]
 fn diff_json_accepts_pure_typescript_repositories() {
     let repo = TestRepo::new_typescript();
     repo.commit_all("initial");
