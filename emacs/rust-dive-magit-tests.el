@@ -117,11 +117,15 @@
             (plist-get rhs :source_text)
             rhs-novel))))))
 
+(defun rust-dive-magit-tests--moved-change (lhs rhs)
+  (list :lhs lhs :rhs rhs))
+
 (cl-defun
   rust-dive-magit-tests--diff-payload
   (&key
     added
     deleted
+    moved
     modified
     (lhs-label "repo@HEAD~1")
     (rhs-label "repo@HEAD")
@@ -135,6 +139,7 @@
     :rhs (rust-dive-magit-tests--git-revision rhs-label rhs-rev)
     :added added
     :deleted deleted
+    :moved moved
     :modified modified))
 
 (defconst rust-dive-magit-tests--sample-payload
@@ -322,6 +327,42 @@
           rust-dive-magit-tests--multi-file-payload))
       (grouped (rust-dive-magit--group-items-by-file items)))
     (should (equal (mapcar #'car grouped) '("src/a.rs" "src/b.rs")))))
+
+(ert-deftest rust-dive-magit-renders-moved-items ()
+  (let*
+    (
+      (lhs
+        (rust-dive-magit-tests--entity
+          "demo::old::moved"
+          "function"
+          "/tmp/repo/src/old.rs"
+          "src/old.rs"
+          "fn moved() {}"))
+      (rhs
+        (rust-dive-magit-tests--entity
+          "demo::new::moved"
+          "function"
+          "/tmp/repo/src/new.rs"
+          "src/new.rs"
+          "fn moved() {}"))
+      (payload
+        (rust-dive-magit-tests--diff-payload
+          :moved (list (rust-dive-magit-tests--moved-change lhs rhs)))))
+    (with-temp-buffer
+      (rust-dive-magit-mode)
+      (let ((inhibit-read-only t))
+        (rust-dive-magit--insert-payload payload))
+      (let*
+        (
+          (text (buffer-string))
+          (items (rust-dive-magit--diff-items payload))
+          (grouped (rust-dive-magit--group-items-by-file items)))
+        (should
+          (string-match-p
+            "^    R demo::old::moved -> demo::new::moved$"
+            text))
+        (should (equal (mapcar #'car grouped) '("src/new.rs")))
+        (should (equal (plist-get (car items) :entity) rhs))))))
 
 (ert-deftest rust-dive-magit-renders-diff-buffer ()
   (with-temp-buffer

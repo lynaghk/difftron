@@ -112,6 +112,7 @@ fn run_diff(
     info!(
         added = diff.added.len(),
         deleted = diff.deleted.len(),
+        moved = diff.moved.len(),
         modified = diff.modified.len(),
         "computed diff"
     );

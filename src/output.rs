@@ -6,7 +6,7 @@ use tracing::{info, info_span};
 
 use crate::{
     entity_collector::{Entity, entity_kind_name, render_entity},
-    snapshot::{DiffResult, ModifiedEntity, Snapshot, SnapshotSpec, snapshot_label},
+    snapshot::{DiffResult, ModifiedEntity, MovedEntity, Snapshot, SnapshotSpec, snapshot_label},
 };
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, clap::ValueEnum)]
@@ -50,6 +50,7 @@ pub fn render_diff(
         format = ?format,
         added = diff.added.len(),
         deleted = diff.deleted.len(),
+        moved = diff.moved.len(),
         modified = diff.modified.len(),
         width = width
     )
@@ -72,6 +73,7 @@ pub fn render_diff(
                 rhs: SnapshotOutput::from(rhs),
                 added: diff.added.iter().map(EntityOutput::from).collect(),
                 deleted: diff.deleted.iter().map(EntityOutput::from).collect(),
+                moved: diff.moved.iter().map(MovedEntityOutput::from).collect(),
                 modified,
             })
             .map_err(Into::into)
@@ -102,6 +104,7 @@ fn render_diff_text(diff: &DiffResult, width: Option<usize>) -> Result<String> {
         "render_diff_text",
         added = diff.added.len(),
         deleted = diff.deleted.len(),
+        moved = diff.moved.len(),
         modified = diff.modified.len(),
         width = width
     )
@@ -114,6 +117,10 @@ fn render_diff_text(diff: &DiffResult, width: Option<usize>) -> Result<String> {
 
     for entity in &diff.added {
         sections.push(format!("+ {}", render_entity(entity)));
+    }
+
+    for change in &diff.moved {
+        sections.push(format!("R {} -> {}", change.lhs.name, change.rhs.name));
     }
 
     for change in &diff.modified {
@@ -151,6 +158,7 @@ struct DiffOutput {
     rhs: SnapshotOutput,
     added: Vec<EntityOutput>,
     deleted: Vec<EntityOutput>,
+    moved: Vec<MovedEntityOutput>,
     modified: Vec<ModifiedEntityOutput>,
 }
 
@@ -353,6 +361,21 @@ fn commit_summary(repo_root: &Path, rev: &str) -> Option<String> {
         .map(str::trim)
         .filter(|summary| !summary.is_empty())
         .map(str::to_owned)
+}
+
+#[derive(Debug, Serialize)]
+struct MovedEntityOutput {
+    lhs: EntityOutput,
+    rhs: EntityOutput,
+}
+
+impl From<&MovedEntity> for MovedEntityOutput {
+    fn from(value: &MovedEntity) -> Self {
+        Self {
+            lhs: EntityOutput::from(&value.lhs),
+            rhs: EntityOutput::from(&value.rhs),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -594,6 +617,10 @@ mod tests {
         let diff = DiffResult {
             added: vec![sample_entity("crate::added", "src/lib.rs")],
             deleted: Vec::new(),
+            moved: vec![crate::snapshot::MovedEntity {
+                lhs: sample_entity("crate::old", "src/old.rs"),
+                rhs: sample_entity("crate::new", "src/new.rs"),
+            }],
             modified: vec![ModifiedEntity {
                 lhs: sample_entity("crate::changed", "src/lib.rs"),
                 rhs: Entity {
@@ -611,6 +638,9 @@ mod tests {
         assert_eq!(json["lhs"]["rev"], "HEAD~1");
         assert_eq!(json["rhs"]["rev"], "HEAD");
         assert_eq!(json["added"][0]["name"], "crate::added");
+        assert_eq!(json["moved"][0]["lhs"]["name"], "crate::old");
+        assert_eq!(json["moved"][0]["rhs"]["name"], "crate::new");
+        assert_eq!(json["moved"][0]["rhs"]["snapshot_path"], "src/new.rs");
         assert_eq!(json["modified"][0]["lhs"]["name"], "crate::changed");
         assert!(json["modified"][0].get("diff_display").is_none());
         assert_eq!(
@@ -632,6 +662,23 @@ mod tests {
             json["modified"][0]["rhs"]["source_text"],
             "fn changed() -> u32 { 2 }"
         );
+    }
+
+    #[test]
+    fn renders_diff_text_with_moved_entities() {
+        let diff = DiffResult {
+            added: Vec::new(),
+            deleted: Vec::new(),
+            moved: vec![crate::snapshot::MovedEntity {
+                lhs: sample_entity("crate::old", "src/old.rs"),
+                rhs: sample_entity("crate::new", "src/new.rs"),
+            }],
+            modified: Vec::new(),
+        };
+
+        let rendered = render_diff_text(&diff, None).unwrap();
+
+        assert_eq!(rendered, "R crate::old -> crate::new\n");
     }
 
     #[test]

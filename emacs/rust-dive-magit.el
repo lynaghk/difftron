@@ -432,6 +432,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         ('modified
           (rust-dive-magit--insert-structured-diff
             (plist-get item :diff)))
+        ('moved nil)
         (_
           (when-let ((source (plist-get entity :source_text)))
             (rust-dive-magit--insert-diff-text
@@ -571,6 +572,9 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         (rust-dive-magit--item-from-entity 'deleted entity))
       (plist-get payload :deleted))
     (mapcar
+      #'rust-dive-magit--item-from-move
+      (plist-get payload :moved))
+    (mapcar
       #'rust-dive-magit--item-from-change
       (plist-get payload :modified))))
 
@@ -583,6 +587,21 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
       :entity rhs
       :summary (format "M %s" (plist-get rhs :name))
       :diff (plist-get change :diff))))
+
+(defun rust-dive-magit--item-from-move (change)
+  "Build a display item from moved CHANGE."
+  (let
+    (
+      (lhs (plist-get change :lhs))
+      (rhs (plist-get change :rhs)))
+    (list
+      :kind (plist-get rhs :kind)
+      :status 'moved
+      :entity rhs
+      :summary
+      (format "R %s -> %s"
+        (plist-get lhs :name)
+        (plist-get rhs :name)))))
 
 (defun rust-dive-magit--item-from-entity (status entity)
   "Build a display item from ENTITY with STATUS."
@@ -691,9 +710,10 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
   "Return the display rank for STATUS."
   (pcase status
     ('modified 0)
-    ('added 1)
-    ('deleted 2)
-    (_ 3)))
+    ('moved 1)
+    ('added 2)
+    ('deleted 3)
+    (_ 4)))
 
 (defun rust-dive-magit--status-face (status)
   "Return the Magit face for STATUS."

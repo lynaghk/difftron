@@ -43,7 +43,14 @@ pub struct Snapshot {
 pub struct DiffResult {
     pub added: Vec<Entity>,
     pub deleted: Vec<Entity>,
+    pub moved: Vec<MovedEntity>,
     pub modified: Vec<ModifiedEntity>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MovedEntity {
+    pub lhs: Entity,
+    pub rhs: Entity,
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +67,14 @@ struct IndexedEntity {
 
 #[derive(Debug, Clone)]
 struct IndexedModifiedEntity {
+    lhs_id: EntityId,
+    lhs: Entity,
+    rhs_id: EntityId,
+    rhs: Entity,
+}
+
+#[derive(Debug, Clone)]
+struct IndexedMovedEntity {
     lhs_id: EntityId,
     lhs: Entity,
     rhs_id: EntityId,
@@ -136,14 +151,15 @@ pub fn diff_snapshots(lhs: &Snapshot, rhs: &Snapshot, path_filters: &[PathBuf]) 
     )
     .entered();
 
-    let lhs_entities = filtered_entities(lhs, path_filters);
-    let rhs_entities = filtered_entities(rhs, path_filters);
+    let lhs_entities = indexed_entities(lhs);
+    let rhs_entities = indexed_entities(rhs);
 
     let mut lhs_by_identity = group_by_identity(lhs_entities);
     let mut rhs_by_identity = group_by_identity(rhs_entities);
 
     let mut added = Vec::new();
     let mut deleted = Vec::new();
+    let mut moved = Vec::new();
     let mut modified = Vec::new();
 
     let identities = lhs_by_identity
@@ -158,8 +174,16 @@ pub fn diff_snapshots(lhs: &Snapshot, rhs: &Snapshot, path_filters: &[PathBuf]) 
 
         while !lhs_group.is_empty() && !rhs_group.is_empty() {
             if let Some((lhs_index, rhs_index)) = find_matching_pair(&lhs_group, &rhs_group) {
-                lhs_group.remove(lhs_index);
-                rhs_group.remove(rhs_index);
+                let lhs_entity = lhs_group.remove(lhs_index);
+                let rhs_entity = rhs_group.remove(rhs_index);
+                if entity_move_location_changed(&lhs_entity.entity, &rhs_entity.entity) {
+                    moved.push(IndexedMovedEntity {
+                        lhs_id: lhs_entity.id,
+                        lhs: lhs_entity.entity,
+                        rhs_id: rhs_entity.id,
+                        rhs: rhs_entity.entity,
+                    });
+                }
             } else {
                 let lhs_entity = lhs_group.remove(0);
                 let rhs_entity = rhs_group.remove(0);
@@ -176,15 +200,33 @@ pub fn diff_snapshots(lhs: &Snapshot, rhs: &Snapshot, path_filters: &[PathBuf]) 
         added.extend(rhs_group);
     }
 
-    suppress_redundant_parents(lhs, rhs, &mut added, &mut deleted, &mut modified);
+    detect_unique_moves(&mut deleted, &mut added, &mut moved);
+
+    suppress_redundant_parents(lhs, rhs, &mut added, &mut deleted, &moved, &mut modified);
+
+    filter_diff_by_paths(
+        path_filters,
+        &mut added,
+        &mut deleted,
+        &mut moved,
+        &mut modified,
+    );
 
     added.sort_by(|lhs, rhs| lhs.entity.cmp(&rhs.entity));
     deleted.sort_by(|lhs, rhs| lhs.entity.cmp(&rhs.entity));
+    moved.sort_by(|lhs, rhs| lhs.rhs.name.cmp(&rhs.rhs.name));
     modified.sort_by(|lhs, rhs| lhs.lhs.name.cmp(&rhs.lhs.name));
 
     DiffResult {
         added: added.into_iter().map(|entity| entity.entity).collect(),
         deleted: deleted.into_iter().map(|entity| entity.entity).collect(),
+        moved: moved
+            .into_iter()
+            .map(|change| MovedEntity {
+                lhs: change.lhs,
+                rhs: change.rhs,
+            })
+            .collect(),
         modified: modified
             .into_iter()
             .map(|change| ModifiedEntity {
@@ -203,6 +245,11 @@ pub fn render_diff_raw(diff: &DiffResult) -> Vec<String> {
     }
     for entity in &diff.added {
         lines.push(format!("+ {}", render_entity(entity)));
+    }
+    for change in &diff.moved {
+        lines.push(format!("R {} -> {}", change.lhs.name, change.rhs.name));
+        lines.push(format!("  lhs: {}", render_entity(&change.lhs)));
+        lines.push(format!("  rhs: {}", render_entity(&change.rhs)));
     }
     for change in &diff.modified {
         lines.push(format!("~ {}", change.lhs.name));
@@ -274,19 +321,13 @@ fn path_starts_with(path: &Path, base: &Path) -> bool {
     path.strip_prefix(base).is_ok()
 }
 
-fn filtered_entities(snapshot: &Snapshot, path_filters: &[PathBuf]) -> Vec<IndexedEntity> {
+fn indexed_entities(snapshot: &Snapshot) -> Vec<IndexedEntity> {
     snapshot
         .entities
         .iter()
         .map(|id| IndexedEntity {
             id: *id,
             entity: snapshot.arena[*id].clone(),
-        })
-        .filter(|entity| {
-            path_filters.is_empty()
-                || path_filters
-                    .iter()
-                    .any(|filter| entity.entity.location.snapshot_path.starts_with(filter))
         })
         .collect()
 }
@@ -313,16 +354,90 @@ fn find_matching_pair(lhs: &[IndexedEntity], rhs: &[IndexedEntity]) -> Option<(u
     None
 }
 
+fn detect_unique_moves(
+    deleted: &mut Vec<IndexedEntity>,
+    added: &mut Vec<IndexedEntity>,
+    moved: &mut Vec<IndexedMovedEntity>,
+) {
+    let mut lhs_by_signature: BTreeMap<MoveSignature, Vec<usize>> = BTreeMap::new();
+    let mut rhs_by_signature: BTreeMap<MoveSignature, Vec<usize>> = BTreeMap::new();
+
+    for (index, entity) in deleted.iter().enumerate() {
+        lhs_by_signature
+            .entry(move_signature(&entity.entity))
+            .or_default()
+            .push(index);
+    }
+    for (index, entity) in added.iter().enumerate() {
+        rhs_by_signature
+            .entry(move_signature(&entity.entity))
+            .or_default()
+            .push(index);
+    }
+
+    let signatures = lhs_by_signature
+        .keys()
+        .chain(rhs_by_signature.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut deleted_to_move = BTreeSet::new();
+    let mut added_to_move = BTreeSet::new();
+    let mut discovered = Vec::new();
+
+    for signature in signatures {
+        let lhs_indices = lhs_by_signature
+            .get(&signature)
+            .cloned()
+            .unwrap_or_default();
+        let rhs_indices = rhs_by_signature
+            .get(&signature)
+            .cloned()
+            .unwrap_or_default();
+        if lhs_indices.len() == 1 && rhs_indices.len() == 1 {
+            let lhs_index = lhs_indices[0];
+            let rhs_index = rhs_indices[0];
+            let lhs_entity = deleted[lhs_index].clone();
+            let rhs_entity = added[rhs_index].clone();
+            discovered.push(IndexedMovedEntity {
+                lhs_id: lhs_entity.id,
+                lhs: lhs_entity.entity,
+                rhs_id: rhs_entity.id,
+                rhs: rhs_entity.entity,
+            });
+            deleted_to_move.insert(lhs_index);
+            added_to_move.insert(rhs_index);
+        }
+    }
+
+    moved.extend(discovered);
+    remove_indices(deleted, &deleted_to_move);
+    remove_indices(added, &added_to_move);
+}
+
+fn remove_indices<T>(values: &mut Vec<T>, indices: &BTreeSet<usize>) {
+    let mut next_index = 0;
+    values.retain(|_| {
+        let keep = !indices.contains(&next_index);
+        next_index += 1;
+        keep
+    });
+}
+
 fn suppress_redundant_parents(
     lhs: &Snapshot,
     rhs: &Snapshot,
     added: &mut Vec<IndexedEntity>,
     deleted: &mut Vec<IndexedEntity>,
+    moved: &[IndexedMovedEntity],
     modified: &mut Vec<IndexedModifiedEntity>,
 ) {
     let rhs_changed = added
         .iter()
         .cloned()
+        .chain(moved.iter().map(|change| IndexedEntity {
+            id: change.rhs_id,
+            entity: change.rhs.clone(),
+        }))
         .chain(modified.iter().map(|change| IndexedEntity {
             id: change.rhs_id,
             entity: change.rhs.clone(),
@@ -331,6 +446,10 @@ fn suppress_redundant_parents(
     let lhs_changed = deleted
         .iter()
         .cloned()
+        .chain(moved.iter().map(|change| IndexedEntity {
+            id: change.lhs_id,
+            entity: change.lhs.clone(),
+        }))
         .chain(modified.iter().map(|change| IndexedEntity {
             id: change.lhs_id,
             entity: change.lhs.clone(),
@@ -489,6 +608,35 @@ fn merge_ranges(ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
     merged
 }
 
+fn filter_diff_by_paths(
+    path_filters: &[PathBuf],
+    added: &mut Vec<IndexedEntity>,
+    deleted: &mut Vec<IndexedEntity>,
+    moved: &mut Vec<IndexedMovedEntity>,
+    modified: &mut Vec<IndexedModifiedEntity>,
+) {
+    if path_filters.is_empty() {
+        return;
+    }
+
+    added.retain(|entity| entity_matches_filters(&entity.entity, path_filters));
+    deleted.retain(|entity| entity_matches_filters(&entity.entity, path_filters));
+    moved.retain(|change| {
+        entity_matches_filters(&change.lhs, path_filters)
+            || entity_matches_filters(&change.rhs, path_filters)
+    });
+    modified.retain(|change| {
+        entity_matches_filters(&change.lhs, path_filters)
+            || entity_matches_filters(&change.rhs, path_filters)
+    });
+}
+
+fn entity_matches_filters(entity: &Entity, path_filters: &[PathBuf]) -> bool {
+    path_filters
+        .iter()
+        .any(|filter| entity.location.snapshot_path.starts_with(filter))
+}
+
 fn repo_workdir(repo: &gix::Repository) -> Result<PathBuf> {
     repo.workdir()
         .map(Path::to_path_buf)
@@ -502,6 +650,14 @@ struct EntityIdentity {
     kind: &'static str,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct MoveSignature {
+    language: Language,
+    kind: &'static str,
+    detail: crate::entity_collector::EntityDetail,
+    source_text: String,
+}
+
 fn entity_identity(entity: &Entity) -> EntityIdentity {
     EntityIdentity {
         name: entity.name.clone(),
@@ -510,10 +666,23 @@ fn entity_identity(entity: &Entity) -> EntityIdentity {
     }
 }
 
+fn move_signature(entity: &Entity) -> MoveSignature {
+    MoveSignature {
+        language: entity.language,
+        kind: entity_kind_name(&entity.detail),
+        detail: entity.detail.clone(),
+        source_text: entity.source_text.clone(),
+    }
+}
+
 fn entity_content_eq(lhs: &Entity, rhs: &Entity) -> bool {
     entity_identity(lhs) == entity_identity(rhs)
         && lhs.detail == rhs.detail
         && lhs.source_text == rhs.source_text
+}
+
+fn entity_move_location_changed(lhs: &Entity, rhs: &Entity) -> bool {
+    lhs.name != rhs.name || lhs.location.snapshot_path != rhs.location.snapshot_path
 }
 
 #[cfg(test)]
@@ -553,6 +722,170 @@ mod tests {
 
         assert!(diff.added.is_empty());
         assert!(diff.deleted.is_empty());
+        assert!(diff.moved.is_empty());
+        assert!(diff.modified.is_empty());
+    }
+
+    #[test]
+    fn reports_exact_content_rename_as_move() {
+        let lhs = snapshot_from_entities(vec![sample_entity(
+            "crate::old",
+            SourceLocation {
+                file_path: PathBuf::from("/tmp/project/src/lib.rs"),
+                snapshot_path: PathBuf::from("src/lib.rs"),
+                start_line: 1,
+                start_col: 1,
+                end_line: 1,
+                end_col: 14,
+            },
+        )]);
+        let rhs = snapshot_from_entities(vec![sample_entity(
+            "crate::new",
+            SourceLocation {
+                file_path: PathBuf::from("/tmp/project/src/lib.rs"),
+                snapshot_path: PathBuf::from("src/lib.rs"),
+                start_line: 1,
+                start_col: 1,
+                end_line: 1,
+                end_col: 14,
+            },
+        )]);
+
+        let diff = diff_snapshots(&lhs, &rhs, &[]);
+
+        assert!(diff.added.is_empty());
+        assert!(diff.deleted.is_empty());
+        assert!(diff.modified.is_empty());
+        assert_eq!(diff.moved.len(), 1);
+        assert_eq!(diff.moved[0].lhs.name, "crate::old");
+        assert_eq!(diff.moved[0].rhs.name, "crate::new");
+    }
+
+    #[test]
+    fn reports_exact_content_path_change_as_move() {
+        let lhs = snapshot_from_entities(vec![sample_entity(
+            "crate::thing",
+            SourceLocation {
+                file_path: PathBuf::from("/tmp/project/src/old.rs"),
+                snapshot_path: PathBuf::from("src/old.rs"),
+                start_line: 1,
+                start_col: 1,
+                end_line: 1,
+                end_col: 14,
+            },
+        )]);
+        let rhs = snapshot_from_entities(vec![sample_entity(
+            "crate::thing",
+            SourceLocation {
+                file_path: PathBuf::from("/tmp/project/src/new.rs"),
+                snapshot_path: PathBuf::from("src/new.rs"),
+                start_line: 10,
+                start_col: 1,
+                end_line: 10,
+                end_col: 14,
+            },
+        )]);
+
+        let diff = diff_snapshots(&lhs, &rhs, &[]);
+
+        assert!(diff.added.is_empty());
+        assert!(diff.deleted.is_empty());
+        assert!(diff.modified.is_empty());
+        assert_eq!(diff.moved.len(), 1);
+        assert_eq!(
+            diff.moved[0].lhs.location.snapshot_path,
+            PathBuf::from("src/old.rs")
+        );
+        assert_eq!(
+            diff.moved[0].rhs.location.snapshot_path,
+            PathBuf::from("src/new.rs")
+        );
+    }
+
+    #[test]
+    fn path_filters_keep_moves_when_either_endpoint_matches() {
+        let lhs = snapshot_from_entities(vec![sample_entity(
+            "crate::thing",
+            SourceLocation {
+                file_path: PathBuf::from("/tmp/project/src/old.rs"),
+                snapshot_path: PathBuf::from("src/old.rs"),
+                start_line: 1,
+                start_col: 1,
+                end_line: 1,
+                end_col: 14,
+            },
+        )]);
+        let rhs = snapshot_from_entities(vec![sample_entity(
+            "crate::thing",
+            SourceLocation {
+                file_path: PathBuf::from("/tmp/project/src/new.rs"),
+                snapshot_path: PathBuf::from("src/new.rs"),
+                start_line: 10,
+                start_col: 1,
+                end_line: 10,
+                end_col: 14,
+            },
+        )]);
+
+        let diff = diff_snapshots(&lhs, &rhs, &[PathBuf::from("src/old.rs")]);
+
+        assert!(diff.added.is_empty());
+        assert!(diff.deleted.is_empty());
+        assert_eq!(diff.moved.len(), 1);
+        assert!(diff.modified.is_empty());
+    }
+
+    #[test]
+    fn leaves_duplicate_exact_content_candidates_as_add_delete() {
+        let location = SourceLocation {
+            file_path: PathBuf::from("/tmp/project/src/lib.rs"),
+            snapshot_path: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            start_col: 1,
+            end_line: 1,
+            end_col: 14,
+        };
+        let lhs = snapshot_from_entities(vec![
+            sample_entity("crate::old_a", location.clone()),
+            sample_entity("crate::old_b", location.clone()),
+        ]);
+        let rhs = snapshot_from_entities(vec![sample_entity("crate::new", location)]);
+
+        let diff = diff_snapshots(&lhs, &rhs, &[]);
+
+        assert_eq!(diff.deleted.len(), 2);
+        assert_eq!(diff.added.len(), 1);
+        assert!(diff.moved.is_empty());
+        assert!(diff.modified.is_empty());
+    }
+
+    #[test]
+    fn does_not_move_when_exact_content_detail_differs() {
+        let location = SourceLocation {
+            file_path: PathBuf::from("/tmp/project/src/lib.rs"),
+            snapshot_path: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            start_col: 1,
+            end_line: 1,
+            end_col: 14,
+        };
+        let lhs = snapshot_from_entities(vec![sample_entity("crate::old", location.clone())]);
+        let rhs = snapshot_from_entities(vec![Entity {
+            name: "crate::new".to_owned(),
+            parent: None,
+            language: Language::Rust,
+            location,
+            source_text: "fn thing() {}".to_owned(),
+            detail: EntityDetail::Rust(RustEntityDetail::Function {
+                signature: "(arg: u32)".to_owned(),
+            }),
+        }]);
+
+        let diff = diff_snapshots(&lhs, &rhs, &[]);
+
+        assert_eq!(diff.deleted.len(), 1);
+        assert_eq!(diff.added.len(), 1);
+        assert!(diff.moved.is_empty());
         assert!(diff.modified.is_empty());
     }
 

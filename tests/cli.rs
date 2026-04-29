@@ -79,6 +79,55 @@ fn diff_json_emits_modified_entities() {
 }
 
 #[test]
+fn diff_json_emits_moved_rust_entities() {
+    let repo = TestRepo::new();
+    repo.write_lib("pub mod old;\n");
+    repo.write_file("src/old.rs", "pub fn moved() -> u32 { 42 }\n");
+    repo.commit_all("initial");
+    repo.write_lib("pub mod new;\n");
+    repo.write_file("src/new.rs", "pub fn moved() -> u32 { 42 }\n");
+    repo.remove_file("src/old.rs");
+    repo.commit_all("move function");
+
+    let output = Command::new(binary_path())
+        .current_dir(repo.path())
+        .args(["diff", "HEAD~1", "HEAD", "--format", "json"])
+        .output()
+        .expect("failed to run rust_dive");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    let moved = json["moved"].as_array().expect("moved should be an array");
+    let moved_function = moved
+        .iter()
+        .find(|entry| entry["rhs"]["name"] == "demo::new::moved")
+        .expect("expected moved function entry");
+
+    assert_eq!(moved_function["lhs"]["name"], "demo::old::moved");
+    assert_eq!(moved_function["lhs"]["snapshot_path"], "src/old.rs");
+    assert_eq!(moved_function["rhs"]["snapshot_path"], "src/new.rs");
+    assert!(
+        json["added"]
+            .as_array()
+            .expect("added should be an array")
+            .iter()
+            .all(|entry| entry["name"] != "demo::new::moved")
+    );
+    assert!(
+        json["deleted"]
+            .as_array()
+            .expect("deleted should be an array")
+            .iter()
+            .all(|entry| entry["name"] != "demo::old::moved")
+    );
+}
+
+#[test]
 fn diff_width_changes_rendered_layout() {
     let repo = TestRepo::new();
     repo.commit_all("initial");
@@ -336,6 +385,43 @@ fn diff_json_accepts_pure_clojure_repositories() {
     );
 }
 
+#[test]
+fn diff_json_emits_moved_clojure_entities() {
+    let repo = TestRepo::new_clojure();
+    repo.commit_all("initial");
+    repo.write_file(
+        "src/windowtron/renamed.clj",
+        "(ns windowtron.renamed)\n\n(defn meaning [] 41)\n",
+    );
+    repo.remove_file("src/windowtron/core.clj");
+    repo.commit_all("move namespace");
+
+    let output = Command::new(binary_path())
+        .current_dir(repo.path())
+        .args(["diff", "HEAD~1", "HEAD", "--format", "json"])
+        .output()
+        .expect("failed to run rust_dive");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    let moved = json["moved"].as_array().expect("moved should be an array");
+    let meaning = moved
+        .iter()
+        .find(|entry| entry["rhs"]["name"] == "windowtron.renamed::meaning")
+        .expect("expected moved Clojure function");
+
+    assert_eq!(meaning["lhs"]["name"], "windowtron.core::meaning");
+    assert_eq!(
+        meaning["rhs"]["snapshot_path"],
+        "src/windowtron/renamed.clj"
+    );
+}
+
 fn binary_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_rust_dive"))
 }
@@ -387,6 +473,10 @@ impl TestRepo {
             fs::create_dir_all(parent).expect("failed to create parent directories");
         }
         fs::write(absolute_path, contents).expect("failed to write file");
+    }
+
+    fn remove_file(&self, relative_path: &str) {
+        fs::remove_file(self.path().join(relative_path)).expect("failed to remove file");
     }
 
     fn commit_all(&self, message: &str) {
