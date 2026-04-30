@@ -337,19 +337,20 @@
           "function"
           "/tmp/repo/src/old.rs"
           "src/old.rs"
-          "fn moved() {}"))
+          "fn moved() { old_location(); }"))
       (rhs
         (rust-dive-magit-tests--entity
           "demo::new::moved"
           "function"
           "/tmp/repo/src/new.rs"
           "src/new.rs"
-          "fn moved() {}"))
+          "fn moved() { new_location(); }"))
       (payload
         (rust-dive-magit-tests--diff-payload
           :moved (list (rust-dive-magit-tests--moved-change lhs rhs)))))
     (with-temp-buffer
       (rust-dive-magit-mode)
+      (setq rust-dive-magit--grouping 'file)
       (let ((inhibit-read-only t))
         (rust-dive-magit--insert-payload payload))
       (let*
@@ -357,12 +358,24 @@
           (text (buffer-string))
           (items (rust-dive-magit--diff-items payload))
           (grouped (rust-dive-magit--group-items-by-file items)))
+        (should (string-match-p "^src/old\\.rs (1)$" text))
+        (should (string-match-p "^src/new\\.rs (1)$" text))
         (should
           (string-match-p
-            "^    R demo::old::moved -> demo::new::moved$"
+            "^    Moved from here to demo::new::moved$"
             text))
-        (should (equal (mapcar #'car grouped) '("src/new.rs")))
-        (should (equal (plist-get (car items) :entity) rhs))))))
+        (should
+          (string-match-p
+            "^    Moved here from demo::old::moved$"
+            text))
+        (should
+          (string-match-p "fn moved() { old_location(); }" text))
+        (should
+          (string-match-p "fn moved() { new_location(); }" text))
+        (should
+          (equal (mapcar #'car grouped) '("src/new.rs" "src/old.rs")))
+        (should (equal (plist-get (car items) :entity) lhs))
+        (should (equal (plist-get (cadr items) :entity) rhs))))))
 
 (ert-deftest rust-dive-magit-renders-diff-buffer ()
   (with-temp-buffer

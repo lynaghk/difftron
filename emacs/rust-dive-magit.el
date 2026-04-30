@@ -432,7 +432,6 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         ('modified
           (rust-dive-magit--insert-structured-diff
             (plist-get item :diff)))
-        ('moved nil)
         (_
           (when-let ((source (plist-get entity :source_text)))
             (rust-dive-magit--insert-diff-text
@@ -571,8 +570,8 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
       (lambda (entity)
         (rust-dive-magit--item-from-entity 'deleted entity))
       (plist-get payload :deleted))
-    (mapcar
-      #'rust-dive-magit--item-from-move
+    (mapcan
+      #'rust-dive-magit--items-from-move
       (plist-get payload :moved))
     (mapcar
       #'rust-dive-magit--item-from-change
@@ -588,20 +587,23 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
       :summary (format "M %s" (plist-get rhs :name))
       :diff (plist-get change :diff))))
 
-(defun rust-dive-magit--item-from-move (change)
-  "Build a display item from moved CHANGE."
+(defun rust-dive-magit--items-from-move (change)
+  "Build source-side and destination-side display items from moved CHANGE."
   (let
     (
       (lhs (plist-get change :lhs))
       (rhs (plist-get change :rhs)))
     (list
-      :kind (plist-get rhs :kind)
-      :status 'moved
-      :entity rhs
-      :summary
-      (format "R %s -> %s"
-        (plist-get lhs :name)
-        (plist-get rhs :name)))))
+      (list
+        :kind (plist-get lhs :kind)
+        :status 'moved-from
+        :entity lhs
+        :summary (format "Moved from here to %s" (plist-get rhs :name)))
+      (list
+        :kind (plist-get rhs :kind)
+        :status 'moved-to
+        :entity rhs
+        :summary (format "Moved here from %s" (plist-get lhs :name))))))
 
 (defun rust-dive-magit--item-from-entity (status entity)
   "Build a display item from ENTITY with STATUS."
@@ -710,7 +712,7 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
   "Return the display rank for STATUS."
   (pcase status
     ('modified 0)
-    ('moved 1)
+    ((or 'moved-from 'moved-to) 1)
     ('added 2)
     ('deleted 3)
     (_ 4)))
