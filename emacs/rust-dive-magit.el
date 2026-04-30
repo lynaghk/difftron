@@ -49,7 +49,7 @@
   :type 'string
   :group 'rust-dive-magit)
 
-(defcustom rust-dive-magit-default-grouping 'kind
+(defcustom rust-dive-magit-default-grouping 'file
   "Default top-level grouping for Rust Dive buffers."
   :type
   '

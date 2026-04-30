@@ -473,6 +473,14 @@
               "(def message \"hello\")")))))
     (should (string-match-p "^Vars (1)$" (buffer-string)))))
 
+(ert-deftest rust-dive-magit-default-grouping-is-file ()
+  (should
+    (eq
+      (eval
+        (car (get 'rust-dive-magit-default-grouping 'standard-value))
+        t)
+      'file)))
+
 (ert-deftest rust-dive-magit-display-buffer-uses-default-grouping ()
   (let ((rust-dive-magit-default-grouping 'file))
     (cl-letf
