@@ -1246,6 +1246,61 @@
       (should (transient-get-suffix 'magit-diff "D")))
     (rust-dive-magit-bindings-mode -1)))
 
+(ert-deftest rust-dive-magit-bindings-mode-registers-magit-diff-key ()
+  (require 'magit-diff)
+  (unwind-protect
+    (progn
+      (rust-dive-magit-bindings-mode 1)
+      (should
+        (eq
+          (lookup-key magit-diff-mode-map (kbd "D"))
+          #'rust-dive-magit-diff-at-point))
+      (should
+        (eq
+          (lookup-key magit-diff-section-map (kbd "D"))
+          #'rust-dive-magit-diff-at-point)))
+    (rust-dive-magit-bindings-mode -1)))
+
+(ert-deftest rust-dive-magit-diff-at-point-jumps-to-current-entity ()
+  (let (ran-args)
+    (cl-letf
+      (
+        ((symbol-function 'rust-dive-magit--repo-root)
+          (lambda () "/tmp/repo/"))
+        ((symbol-function 'magit-diff-arguments)
+          (lambda (&rest _) (list '("--stat") nil)))
+        ((symbol-function 'magit-diff--dwim)
+          (lambda () "HEAD~1..HEAD"))
+        ((symbol-function 'rust-dive-magit--magit-diff-path-at-point)
+          (lambda () "src/lib.rs"))
+        ((symbol-function 'rust-dive-magit--magit-diff-line-at-point)
+          (lambda () 10))
+        ((symbol-function 'rust-dive-magit--run-command)
+          (lambda (_default-directory args)
+            (setq ran-args args)
+            rust-dive-magit-tests--sample-payload))
+        ((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
+      (rust-dive-magit-diff-at-point))
+    (should
+      (equal
+        ran-args
+        '
+        ("diff"
+          "HEAD~1"
+          "HEAD"
+          "--format"
+          "json"
+          "--path"
+          "src/lib.rs")))
+    (with-current-buffer rust-dive-magit-buffer-name
+      (let ((section (magit-current-section)))
+        (should (equal (oref section type) 'rust-dive-entity))
+        (should
+          (equal
+            (plist-get (oref section value) :summary)
+            "+ demo::added"))
+        (should-not (oref section hidden))))))
+
 (ert-deftest rust-dive-magit-bindings-mode-registers-after-magit-load
   ()
   (when (featurep 'magit-diff)
@@ -1265,6 +1320,20 @@
   (should-not
     (ignore-errors
       (transient-get-suffix 'magit-diff "D"))))
+
+(ert-deftest rust-dive-magit-bindings-mode-unregisters-magit-diff-key
+  ()
+  (require 'magit-diff)
+  (rust-dive-magit-bindings-mode 1)
+  (rust-dive-magit-bindings-mode -1)
+  (should-not
+    (eq
+      (lookup-key magit-diff-mode-map (kbd "D"))
+      #'rust-dive-magit-diff-at-point))
+  (should-not
+    (eq
+      (lookup-key magit-diff-section-map (kbd "D"))
+      #'rust-dive-magit-diff-at-point)))
 
 (provide 'rust-dive-magit-tests)
 

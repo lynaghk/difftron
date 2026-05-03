@@ -151,6 +151,34 @@
           default-directory)))
     (rust-dive-magit-diff lhs rhs paths)))
 
+(defun rust-dive-magit-diff-at-point ()
+  "Run Rust Dive for the current Magit diff and entity at point."
+  (interactive)
+  (require 'magit-diff)
+  (pcase-let*
+    (
+      (default-directory (rust-dive-magit--repo-root))
+      (path (rust-dive-magit--magit-diff-path-at-point))
+      (line (rust-dive-magit--magit-diff-line-at-point))
+      (`(,_args ,paths) (magit-diff-arguments))
+      (`(,lhs ,rhs)
+        (rust-dive-magit--dwim-endpoints
+          (ignore-errors
+            (magit-diff--dwim))
+          default-directory))
+      (selected-paths (or (and path (list path)) paths))
+      (args
+        (append
+          (list "diff" lhs rhs "--format" "json")
+          (cl-mapcan
+            (lambda (selected-path) (list "--path" selected-path))
+            selected-paths)))
+      (payload (rust-dive-magit--run-command default-directory args)))
+    (rust-dive-magit--display-buffer default-directory args payload)
+    (when path
+      (with-current-buffer rust-dive-magit-buffer-name
+        (rust-dive-magit--goto-entity-for-source path line)))))
+
 (defun rust-dive-magit-diff (lhs rhs &optional paths)
   "Run `rust_dive diff' for LHS, RHS, and optional PATHS.
 When called interactively, default to comparing `HEAD' against the current
@@ -1183,6 +1211,74 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
     ((string-match "\\`\\(.+\\)\\.\\.\\(.+\\)\\'" range)
       (list (match-string 1 range) (match-string 2 range)))))
 
+(defun rust-dive-magit--magit-diff-path-at-point ()
+  "Return the relative Magit diff file path at point, if any."
+  (when-let ((section (magit-diff--file-section)))
+    (or
+      (and (rust-dive-magit--magit-diff-removed-line-p)
+        (oref section source))
+      (oref section value)
+      (oref section source))))
+
+(defun rust-dive-magit--magit-diff-line-at-point ()
+  "Return the Magit diff hunk line at point, if any."
+  (when-let ((section (magit-diff--hunk-section)))
+    (magit-diff-hunk-line
+      section
+      (rust-dive-magit--magit-diff-removed-line-p))))
+
+(defun rust-dive-magit--magit-diff-removed-line-p ()
+  "Return non-nil if point is on a removed Magit diff line."
+  (and (fboundp 'magit-diff-on-removed-line-p)
+    (magit-diff-on-removed-line-p)))
+
+(defun rust-dive-magit--goto-entity-for-source (path line)
+  "Move point to the Rust Dive entity for PATH and optional LINE."
+  (when-let
+    (
+      (section
+        (or (rust-dive-magit--find-entity-section path line)
+          (rust-dive-magit--find-entity-section path nil))))
+    (rust-dive-magit--show-section-and-ancestors section)
+    (goto-char (oref section start))))
+
+(defun rust-dive-magit--find-entity-section (path line)
+  "Return the entity section matching PATH and LINE."
+  (seq-find
+    (lambda (section)
+      (rust-dive-magit--entity-section-matches-p section path line))
+    (rust-dive-magit--entity-sections magit-root-section)))
+
+(defun rust-dive-magit--entity-sections (section)
+  "Return entity sections below SECTION."
+  (append
+    (and (eq (oref section type) 'rust-dive-entity) (list section))
+    (mapcan
+      #'rust-dive-magit--entity-sections
+      (oref section children))))
+
+(defun rust-dive-magit--entity-section-matches-p (section path line)
+  "Return non-nil when SECTION has PATH and optional LINE."
+  (let*
+    (
+      (entity (plist-get (oref section value) :entity))
+      (entity-path (plist-get entity :snapshot_path))
+      (start-line (plist-get entity :start_line))
+      (end-line (plist-get entity :end_line)))
+    (and (equal entity-path path)
+      (or (null line)
+        (and start-line
+          end-line
+          (<= start-line line)
+          (<= line end-line))))))
+
+(defun rust-dive-magit--show-section-and-ancestors (section)
+  "Show SECTION and its ancestors."
+  (let ((current section))
+    (while current
+      (magit-section-show current)
+      (setq current (oref current parent)))))
+
 (defun rust-dive-magit--entity-section-at-point ()
   "Return the nearest entity section at point, if any."
   (let ((section (magit-current-section)))
@@ -1203,6 +1299,19 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
       "d"
       rust-dive-magit--magit-diff-suffix)))
 
+(defun rust-dive-magit-register-magit-diff-bindings ()
+  "Register Rust Dive bindings in Magit diff buffers."
+  (when (featurep 'magit-diff)
+    (rust-dive-magit-register-magit-diff-suffix)
+    (define-key
+      magit-diff-mode-map
+      (kbd "D")
+      #'rust-dive-magit-diff-at-point)
+    (define-key
+      magit-diff-section-map
+      (kbd "D")
+      #'rust-dive-magit-diff-at-point)))
+
 (defun rust-dive-magit-unregister-magit-diff-suffix ()
   "Remove Rust Dive from the `magit-diff' transient."
   (when
@@ -1210,6 +1319,13 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
       (ignore-errors
         (transient-get-suffix 'magit-diff "D")))
     (transient-remove-suffix 'magit-diff "D")))
+
+(defun rust-dive-magit-unregister-magit-diff-bindings ()
+  "Remove Rust Dive bindings from Magit diff buffers."
+  (when (featurep 'magit-diff)
+    (rust-dive-magit-unregister-magit-diff-suffix)
+    (define-key magit-diff-mode-map (kbd "D") nil)
+    (define-key magit-diff-section-map (kbd "D") nil)))
 
 (defun rust-dive-magit--maybe-register-magit-diff-suffix
   (&optional file)
@@ -1221,7 +1337,7 @@ When FILE is non-nil, it is the path passed by `after-load-functions'."
     (remove-hook
       'after-load-functions
       #'rust-dive-magit--maybe-register-magit-diff-suffix)
-    (rust-dive-magit-register-magit-diff-suffix)))
+    (rust-dive-magit-register-magit-diff-bindings)))
 
 ;;;###autoload
 (define-minor-mode rust-dive-magit-bindings-mode
@@ -1239,7 +1355,7 @@ When FILE is non-nil, it is the path passed by `after-load-functions'."
     (remove-hook
       'after-load-functions
       #'rust-dive-magit--maybe-register-magit-diff-suffix)
-    (rust-dive-magit-unregister-magit-diff-suffix)))
+    (rust-dive-magit-unregister-magit-diff-bindings)))
 
 (provide 'rust-dive-magit)
 
