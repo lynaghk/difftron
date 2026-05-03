@@ -567,6 +567,16 @@
       (lookup-key rust-dive-magit-mode-map (kbd "r"))
       #'rust-dive-magit-select-right)))
 
+(ert-deftest rust-dive-magit-binds-commit-message-toggle ()
+  (should
+    (eq
+      (lookup-key rust-dive-magit-mode-map (kbd "m"))
+      #'rust-dive-magit-toggle-commit-messages))
+  (should
+    (eq
+      (lookup-key rust-dive-magit-mode-map (kbd "TAB"))
+      #'rust-dive-magit-toggle-section-or-message)))
+
 (ert-deftest rust-dive-magit-selects-left-git-revision ()
   (let
     (
@@ -941,6 +951,54 @@
             (should (equal (current-column) expected-point-column))
             (should
               (eq (magit-current-section) new-entity-section-c))))))))
+
+(ert-deftest rust-dive-magit-tab-toggles-commit-message-at-point ()
+  (cl-letf
+    (
+      ((symbol-function 'magit-git-string)
+        (lambda (&rest args)
+          (pcase args
+            (`("log" "-1" "--format=%B" "HEAD~1")
+              "Subject line\n\nBody line")
+            (_ (error "Unexpected git args: %S" args))))))
+    (with-temp-buffer
+      (rust-dive-magit-mode)
+      (setq rust-dive-magit--default-directory "/tmp/repo/")
+      (let ((inhibit-read-only t))
+        (rust-dive-magit--insert-payload
+          rust-dive-magit-tests--sample-payload))
+      (should-not (string-match-p "Body line" (buffer-string)))
+      (goto-char (point-min))
+      (search-forward "lhs: ")
+      (rust-dive-magit-toggle-section-or-message)
+      (should
+        (string-match-p
+          "  Subject line\n\n  Body line\n"
+          (buffer-string)))
+      (rust-dive-magit-toggle-section-or-message)
+      (should-not (string-match-p "Body line" (buffer-string))))))
+
+(ert-deftest rust-dive-magit-m-toggles-both-commit-messages ()
+  (cl-letf
+    (
+      ((symbol-function 'magit-git-string)
+        (lambda (&rest args)
+          (pcase args
+            (`("log" "-1" "--format=%B" "HEAD~1") "Left subject")
+            (`("log" "-1" "--format=%B" "HEAD") "Right subject")
+            (_ (error "Unexpected git args: %S" args))))))
+    (with-temp-buffer
+      (rust-dive-magit-mode)
+      (setq rust-dive-magit--default-directory "/tmp/repo/")
+      (let ((inhibit-read-only t))
+        (rust-dive-magit--insert-payload
+          rust-dive-magit-tests--sample-payload))
+      (rust-dive-magit-toggle-commit-messages)
+      (should (string-match-p "  Left subject\n" (buffer-string)))
+      (should (string-match-p "  Right subject\n" (buffer-string)))
+      (rust-dive-magit-toggle-commit-messages)
+      (should-not (string-match-p "Left subject" (buffer-string)))
+      (should-not (string-match-p "Right subject" (buffer-string))))))
 
 (ert-deftest rust-dive-magit-faces-added-and-deleted-entities ()
   (let*

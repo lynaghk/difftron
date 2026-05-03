@@ -70,9 +70,17 @@
     (define-key map (kbd "h") #'rust-dive-magit-dispatch)
     (define-key map (kbd "?") #'rust-dive-magit-dispatch)
     (define-key map (kbd "l") #'rust-dive-magit-select-left)
+    (define-key
+      map
+      (kbd "m")
+      #'rust-dive-magit-toggle-commit-messages)
     (define-key map (kbd "r") #'rust-dive-magit-select-right)
     (define-key map (kbd "N") #'rust-dive-magit-next-commit)
     (define-key map (kbd "P") #'rust-dive-magit-previous-commit)
+    (define-key
+      map
+      (kbd "TAB")
+      #'rust-dive-magit-toggle-section-or-message)
     (define-key map (kbd "RET") #'rust-dive-magit-visit-thing)
     map)
   "Keymap for `rust-dive-magit-mode'.")
@@ -84,6 +92,8 @@
 (defvar-local rust-dive-magit--entity-kinds nil)
 (defvar-local rust-dive-magit--grouping nil
   "Current grouping mode for the Rust Dive buffer.")
+(defvar-local rust-dive-magit--commit-message-regions nil
+  "Alist of expanded commit message regions by side.")
 
 (define-derived-mode
   rust-dive-magit-mode
@@ -101,9 +111,12 @@
       ("g" "Refresh" rust-dive-magit-refresh)
       ("f" "Cycle grouping" rust-dive-magit-cycle-grouping)
       ("l" "Select left" rust-dive-magit-select-left)
+      ("m" "Toggle messages" rust-dive-magit-toggle-commit-messages)
       ("r" "Select right" rust-dive-magit-select-right)
       ("q" "Quit buffer" quit-window)
-      ("TAB" "Toggle section" magit-section-toggle)
+      ("TAB"
+        "Toggle section/message"
+        rust-dive-magit-toggle-section-or-message)
       ("RET" "Visit thing" rust-dive-magit-visit-thing)]
     ["Visibility"
       ("<backtab>" "Cycle all" magit-section-cycle-global)
@@ -281,6 +294,160 @@ working tree rooted at the current repository."
     ('lhs "Left")
     (_ "Right")))
 
+(defun rust-dive-magit-toggle-section-or-message ()
+  "Toggle the commit message at point or the current Magit section."
+  (interactive)
+  (if-let ((side (rust-dive-magit--snapshot-side-at-point)))
+    (rust-dive-magit--toggle-commit-message side)
+    (magit-section-toggle (magit-current-section))))
+
+(defun rust-dive-magit-toggle-commit-messages ()
+  "Toggle commit messages for both Git revision snapshots."
+  (interactive)
+  (let ((sides (rust-dive-magit--commit-message-sides)))
+    (unless sides
+      (user-error "No Git revision snapshots in this buffer"))
+    (if
+      (seq-some
+        (lambda (side)
+          (not (rust-dive-magit--commit-message-expanded-p side)))
+        sides)
+      (dolist (side sides)
+        (unless (rust-dive-magit--commit-message-expanded-p side)
+          (rust-dive-magit--show-commit-message side)))
+      (dolist (side sides)
+        (rust-dive-magit--hide-commit-message side)))))
+
+(defun rust-dive-magit--snapshot-side-at-point ()
+  "Return the snapshot side at point, if point is on one."
+  (or (get-text-property (point) 'rust-dive-magit-snapshot-side)
+    (and (> (point) (point-min))
+      (get-text-property (1- (point)) 'rust-dive-magit-snapshot-side))
+    (get-text-property
+      (line-beginning-position)
+      'rust-dive-magit-snapshot-side)))
+
+(defun rust-dive-magit--commit-message-sides ()
+  "Return sides that currently show Git revisions."
+  (seq-filter
+    (lambda (side)
+      (equal
+        (plist-get (rust-dive-magit--snapshot-for-side side) :kind)
+        "git_revision"))
+    '(lhs rhs)))
+
+(defun rust-dive-magit--snapshot-for-side (side)
+  "Return the payload snapshot for SIDE."
+  (or
+    (and rust-dive-magit--payload
+      (plist-get
+        rust-dive-magit--payload
+        (pcase side
+          ('lhs :lhs)
+          (_ :rhs))))
+    (when-let
+      (
+        (pos
+          (text-property-any
+            (point-min)
+            (point-max)
+            'rust-dive-magit-snapshot-side
+            side)))
+      (get-text-property pos 'rust-dive-magit-snapshot))))
+
+(defun rust-dive-magit--toggle-commit-message (side)
+  "Toggle the commit message for SIDE."
+  (if (rust-dive-magit--commit-message-expanded-p side)
+    (rust-dive-magit--hide-commit-message side)
+    (rust-dive-magit--show-commit-message side)))
+
+(defun rust-dive-magit--commit-message-expanded-p (side)
+  "Return non-nil if SIDE's commit message is expanded."
+  (assq side rust-dive-magit--commit-message-regions))
+
+(defun rust-dive-magit--show-commit-message (side)
+  "Insert SIDE's commit message below its snapshot line."
+  (let*
+    (
+      (snapshot (rust-dive-magit--snapshot-for-side side))
+      (message (rust-dive-magit--commit-message snapshot))
+      (insert-at (rust-dive-magit--snapshot-line-end side)))
+    (let ((inhibit-read-only t))
+      (save-excursion
+        (goto-char insert-at)
+        (forward-line 1)
+        (let ((start (point)))
+          (insert (rust-dive-magit--format-commit-message message))
+          (add-text-properties
+            start (point)
+            (list
+              'rust-dive-magit-snapshot-side
+              side
+              'font-lock-face
+              'magit-section-secondary-heading))
+          (push
+            (cons
+              side
+              (cons (copy-marker start) (copy-marker (point))))
+            rust-dive-magit--commit-message-regions))))))
+
+(defun rust-dive-magit--hide-commit-message (side)
+  "Remove SIDE's expanded commit message."
+  (when-let
+    ((region (assq side rust-dive-magit--commit-message-regions)))
+    (let
+      (
+        (start (cadr region))
+        (end (cddr region))
+        (inhibit-read-only t))
+      (delete-region start end)
+      (set-marker start nil)
+      (set-marker end nil)
+      (setq rust-dive-magit--commit-message-regions
+        (assq-delete-all
+          side
+          rust-dive-magit--commit-message-regions)))))
+
+(defun rust-dive-magit--snapshot-line-end (side)
+  "Return the line end position for SIDE's snapshot line."
+  (or
+    (when-let
+      (
+        (pos
+          (text-property-any
+            (point-min)
+            (point-max)
+            'rust-dive-magit-snapshot-side
+            side)))
+      (save-excursion
+        (goto-char pos)
+        (line-end-position)))
+    (user-error "No snapshot line for %s" side)))
+
+(defun rust-dive-magit--commit-message (snapshot)
+  "Return the full commit message for SNAPSHOT."
+  (let
+    (
+      (rev
+        (or (plist-get snapshot :rev)
+          (user-error "Git revision snapshot has no revision")))
+      (default-directory
+        (or (plist-get snapshot :root) default-directory)))
+    (or (magit-git-string "log" "-1" "--format=%B" rev) "")))
+
+(defun rust-dive-magit--format-commit-message (message)
+  "Format commit MESSAGE for display under a snapshot line."
+  (let ((message (string-trim-right message)))
+    (if (string-empty-p message)
+      "  No commit message.\n"
+      (mapconcat
+        (lambda (line)
+          (if (string-empty-p line)
+            "\n"
+            (format "  %s\n" line)))
+        (split-string message "\n")
+        ""))))
+
 (defun rust-dive-magit-next-commit ()
   "Show the next commit on HEAD's first-parent history."
   (interactive)
@@ -418,6 +585,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
 
 (defun rust-dive-magit--insert-payload (payload)
   "Insert PAYLOAD into the current buffer."
+  (setq rust-dive-magit--commit-message-regions nil)
   (setq rust-dive-magit--entity-kind-order
     (plist-get payload :entity_kind_order))
   (setq rust-dive-magit--entity-kinds
@@ -455,27 +623,40 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
 
 (defun rust-dive-magit--insert-snapshot-line (name snapshot)
   "Insert one clickable diff endpoint NAME for SNAPSHOT."
-  (insert
-    (propertize (format "%s: " name)
+  (let ((start (point)))
+    (insert
+      (propertize (format "%s: " name)
+        'font-lock-face
+        'magit-section-heading))
+    (insert-text-button
+      (rust-dive-magit--display-label (plist-get snapshot :label))
+      'action
+      (lambda (_button) (rust-dive-magit--visit-snapshot snapshot))
+      'follow-link
+      t
+      'help-echo
+      "RET visits snapshot"
       'font-lock-face
-      'magit-section-heading))
-  (insert-text-button
-    (rust-dive-magit--display-label (plist-get snapshot :label))
-    'action
-    (lambda (_button) (rust-dive-magit--visit-snapshot snapshot))
-    'follow-link
-    t
-    'help-echo
-    "RET visits snapshot"
-    'font-lock-face
-    'magit-section-heading)
-  (when-let ((summary (plist-get snapshot :summary)))
-    (unless (string-empty-p summary)
-      (insert
-        (propertize (format "  %s" summary)
-          'font-lock-face
-          'magit-section-secondary-heading))))
-  (insert "\n"))
+      'magit-section-heading)
+    (when-let ((summary (plist-get snapshot :summary)))
+      (unless (string-empty-p summary)
+        (insert
+          (propertize (format "  %s" summary)
+            'font-lock-face
+            'magit-section-secondary-heading))))
+    (insert "\n")
+    (when (equal (plist-get snapshot :kind) "git_revision")
+      (add-text-properties
+        start (point)
+        (list
+          'rust-dive-magit-snapshot-side
+          (intern name)
+          'rust-dive-magit-snapshot
+          snapshot
+          'mouse-face
+          'highlight
+          'help-echo
+          "TAB toggles commit message, RET visits snapshot")))))
 
 (defun rust-dive-magit--visit-snapshot (snapshot)
   "Visit SNAPSHOT using the best available Magit action."
