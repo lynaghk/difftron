@@ -69,6 +69,8 @@
     (define-key map (kbd "f") #'rust-dive-magit-cycle-grouping)
     (define-key map (kbd "h") #'rust-dive-magit-dispatch)
     (define-key map (kbd "?") #'rust-dive-magit-dispatch)
+    (define-key map (kbd "l") #'rust-dive-magit-select-left)
+    (define-key map (kbd "r") #'rust-dive-magit-select-right)
     (define-key map (kbd "N") #'rust-dive-magit-next-commit)
     (define-key map (kbd "P") #'rust-dive-magit-previous-commit)
     (define-key map (kbd "RET") #'rust-dive-magit-visit-thing)
@@ -98,6 +100,8 @@
     ["Rust Dive"
       ("g" "Refresh" rust-dive-magit-refresh)
       ("f" "Cycle grouping" rust-dive-magit-cycle-grouping)
+      ("l" "Select left" rust-dive-magit-select-left)
+      ("r" "Select right" rust-dive-magit-select-right)
       ("q" "Quit buffer" quit-window)
       ("TAB" "Toggle section" magit-section-toggle)
       ("RET" "Visit thing" rust-dive-magit-visit-thing)]
@@ -186,6 +190,96 @@ working tree rooted at the current repository."
     rust-dive-magit--payload)
   (with-current-buffer rust-dive-magit-buffer-name
     (magit-section-show-level-3)))
+
+(defun rust-dive-magit-select-left ()
+  "Select a new left-hand snapshot and refresh the diff."
+  (interactive)
+  (rust-dive-magit--select-side 'lhs))
+
+(defun rust-dive-magit-select-right ()
+  "Select a new right-hand snapshot and refresh the diff."
+  (interactive)
+  (rust-dive-magit--select-side 'rhs))
+
+(defun rust-dive-magit--select-side (side)
+  "Select a new snapshot for SIDE and refresh the current diff."
+  (unless rust-dive-magit--payload
+    (user-error
+      "No rust_dive payload is associated with this buffer"))
+  (unless rust-dive-magit--default-directory
+    (user-error
+      "No rust_dive command is associated with this buffer"))
+  (let*
+    (
+      (lhs-snapshot (plist-get rust-dive-magit--payload :lhs))
+      (rhs-snapshot (plist-get rust-dive-magit--payload :rhs))
+      (new-arg
+        (rust-dive-magit--read-snapshot-like
+          side
+          (pcase side
+            ('lhs lhs-snapshot)
+            (_ rhs-snapshot))))
+      (lhs
+        (if (eq side 'lhs)
+          new-arg
+          (rust-dive-magit--snapshot-arg lhs-snapshot)))
+      (rhs
+        (if (eq side 'rhs)
+          new-arg
+          (rust-dive-magit--snapshot-arg rhs-snapshot))))
+    (rust-dive-magit--run-and-display-diff lhs rhs)))
+
+(defun rust-dive-magit--read-snapshot-like (side snapshot)
+  "Read a replacement for SNAPSHOT on SIDE."
+  (let
+    (
+      (label (rust-dive-magit--side-label side))
+      (root (plist-get snapshot :root)))
+    (pcase (plist-get snapshot :kind)
+      ("git_revision"
+        (let
+          (
+            (default-directory (or root default-directory))
+            (rev
+              (or (plist-get snapshot :rev)
+                (user-error
+                  "Git revision snapshot has no revision"))))
+          (magit-read-branch-or-commit (format "%s ref" label) rev)))
+      ("directory"
+        (file-name-as-directory
+          (expand-file-name
+            (read-directory-name (format "%s folder: " label)
+              root
+              root
+              t))))
+      ("file"
+        (expand-file-name
+          (read-file-name (format "%s file: " label)
+            (and root (file-name-directory root))
+            root
+            t)))
+      (_
+        (user-error "Don't know how to select %s snapshots"
+          (plist-get snapshot :kind))))))
+
+(defun rust-dive-magit--snapshot-arg (snapshot)
+  "Return the command argument for SNAPSHOT."
+  (pcase (plist-get snapshot :kind)
+    ("git_revision"
+      (or (plist-get snapshot :rev)
+        (user-error "Git revision snapshot has no revision")))
+    ((or "directory" "file")
+      (or (plist-get snapshot :root)
+        (user-error "Filesystem snapshot has no path")))
+    (_
+      (user-error "Don't know how to use %s snapshots"
+        (plist-get snapshot :kind)))))
+
+(defun rust-dive-magit--side-label (side)
+  "Return a prompt label for SIDE."
+  (pcase side
+    ('lhs "Left")
+    (_ "Right")))
 
 (defun rust-dive-magit-next-commit ()
   "Show the next commit on HEAD's first-parent history."

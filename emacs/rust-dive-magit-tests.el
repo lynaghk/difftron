@@ -56,6 +56,12 @@
     :rev rev
     :summary (format "Commit %s" rev)))
 
+(defun rust-dive-magit-tests--directory-snapshot (path)
+  (list :label path :kind "directory" :root path))
+
+(defun rust-dive-magit-tests--file-snapshot (path)
+  (list :label path :kind "file" :root path))
+
 (cl-defun
   rust-dive-magit-tests--entity
   (name
@@ -550,6 +556,144 @@
     (eq
       (lookup-key rust-dive-magit-mode-map (kbd "p"))
       #'magit-section-backward)))
+
+(ert-deftest rust-dive-magit-binds-side-selection ()
+  (should
+    (eq
+      (lookup-key rust-dive-magit-mode-map (kbd "l"))
+      #'rust-dive-magit-select-left))
+  (should
+    (eq
+      (lookup-key rust-dive-magit-mode-map (kbd "r"))
+      #'rust-dive-magit-select-right)))
+
+(ert-deftest rust-dive-magit-selects-left-git-revision ()
+  (let
+    (
+      displayed-args
+      read-prompt
+      read-default)
+    (cl-letf
+      (
+        ((symbol-function 'magit-read-branch-or-commit)
+          (lambda (prompt &optional secondary-default _exclude)
+            (setq read-prompt prompt)
+            (setq read-default secondary-default)
+            "feature"))
+        ((symbol-function 'rust-dive-magit--run-command)
+          (lambda (_default-directory _args)
+            rust-dive-magit-tests--sample-payload))
+        ((symbol-function 'rust-dive-magit--display-buffer)
+          (lambda (_default-directory args _payload)
+            (setq displayed-args args))))
+      (with-temp-buffer
+        (rust-dive-magit-mode)
+        (setq rust-dive-magit--default-directory "/tmp/repo/")
+        (setq rust-dive-magit--command-args
+          '
+          ("diff"
+            "HEAD~1"
+            "HEAD"
+            "--format"
+            "json"
+            "--path"
+            "src/lib.rs"))
+        (setq rust-dive-magit--payload
+          (copy-tree rust-dive-magit-tests--sample-payload))
+        (rust-dive-magit-select-left)))
+    (should (equal read-prompt "Left ref"))
+    (should (equal read-default "HEAD~1"))
+    (should
+      (equal
+        displayed-args
+        '
+        ("diff"
+          "feature"
+          "HEAD"
+          "--format"
+          "json"
+          "--path"
+          "src/lib.rs")))))
+
+(ert-deftest rust-dive-magit-selects-right-directory ()
+  (let
+    (
+      displayed-args
+      read-prompt
+      read-default)
+    (cl-letf
+      (
+        ((symbol-function 'read-directory-name)
+          (lambda (prompt _dir default-directory &rest _)
+            (setq read-prompt prompt)
+            (setq read-default default-directory)
+            "/tmp/new-root"))
+        ((symbol-function 'rust-dive-magit--run-command)
+          (lambda (_default-directory _args)
+            rust-dive-magit-tests--sample-payload))
+        ((symbol-function 'rust-dive-magit--display-buffer)
+          (lambda (_default-directory args _payload)
+            (setq displayed-args args))))
+      (with-temp-buffer
+        (rust-dive-magit-mode)
+        (setq rust-dive-magit--default-directory "/tmp/repo/")
+        (setq rust-dive-magit--command-args
+          '("diff" "HEAD~1" "/tmp/old-root" "--format" "json"))
+        (setq rust-dive-magit--payload
+          (rust-dive-magit-tests--diff-payload :lhs-rev "HEAD~1"))
+        (plist-put
+          rust-dive-magit--payload
+          :rhs (rust-dive-magit-tests--directory-snapshot "/tmp/old-root"))
+        (rust-dive-magit-select-right)))
+    (should (equal read-prompt "Right folder: "))
+    (should (equal read-default "/tmp/old-root"))
+    (should
+      (equal
+        displayed-args
+        '("diff" "HEAD~1" "/tmp/new-root/" "--format" "json")))))
+
+(ert-deftest rust-dive-magit-selects-left-file ()
+  (let
+    (
+      displayed-args
+      read-prompt
+      read-default)
+    (cl-letf
+      (
+        ((symbol-function 'read-file-name)
+          (lambda (prompt _dir default-filename &rest _)
+            (setq read-prompt prompt)
+            (setq read-default default-filename)
+            "/tmp/next.rs"))
+        ((symbol-function 'rust-dive-magit--run-command)
+          (lambda (_default-directory _args)
+            rust-dive-magit-tests--sample-payload))
+        ((symbol-function 'rust-dive-magit--display-buffer)
+          (lambda (_default-directory args _payload)
+            (setq displayed-args args))))
+      (with-temp-buffer
+        (rust-dive-magit-mode)
+        (setq rust-dive-magit--default-directory "/tmp/repo/")
+        (setq rust-dive-magit--command-args
+          '("diff" "/tmp/old.rs" "HEAD" "--format" "json"))
+        (setq rust-dive-magit--payload
+          (copy-tree rust-dive-magit-tests--sample-payload))
+        (plist-put
+          rust-dive-magit--payload
+          :lhs (rust-dive-magit-tests--file-snapshot "/tmp/old.rs"))
+        (rust-dive-magit-select-left)))
+    (should (equal read-prompt "Left file: "))
+    (should (equal read-default "/tmp/old.rs"))
+    (should
+      (equal
+        displayed-args
+        '("diff" "/tmp/next.rs" "HEAD" "--format" "json")))))
+
+(ert-deftest rust-dive-magit-side-selection-requires-payload ()
+  (with-temp-buffer
+    (rust-dive-magit-mode)
+    (should-error (rust-dive-magit-select-left) :type 'user-error)
+    (should-error (rust-dive-magit-select-right) :type 'user-error)))
 
 (ert-deftest rust-dive-magit-previous-commit-preserves-path-filters ()
   (let
