@@ -8,14 +8,14 @@
 ;;; Code:
 
 (load
-  (expand-file-name "bootstrap.el"
-    (file-name-directory (or load-file-name buffer-file-name)))
-  nil 'nomessage)
+ (expand-file-name "bootstrap.el"
+		   (file-name-directory (or load-file-name buffer-file-name)))
+ nil 'nomessage)
 (rust-dive-test-config-bootstrap)
 
 (defconst rust-dive-dev-wrapper
   (expand-file-name "../../scripts/rust_dive_dev"
-    rust-dive-test-config-root))
+		    rust-dive-test-config-root))
 
 (use-package
   magit

@@ -8,14 +8,14 @@
 ;;; Code:
 
 (load
-  (expand-file-name "bootstrap.el"
-    (file-name-directory (or load-file-name buffer-file-name)))
-  nil 'nomessage)
+ (expand-file-name "bootstrap.el"
+		   (file-name-directory (or load-file-name buffer-file-name)))
+ nil 'nomessage)
 (require 'package)
 
 (setq package-user-dir
-  (expand-file-name "rust-dive-emacs-package-cache"
-    temporary-file-directory))
+      (expand-file-name "rust-dive-emacs-package-cache"
+			temporary-file-directory))
 (setq package-archives '(("melpa" . "https://melpa.org/packages/")))
 (package-initialize)
 (unless package-archive-contents
@@ -24,7 +24,6 @@
 
 (straight-use-package 'package-lint)
 (straight-use-package 'relint)
-(straight-use-package 'elisp-autofmt)
 
 (use-package
   magit

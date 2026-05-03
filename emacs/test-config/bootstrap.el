@@ -19,16 +19,16 @@
 (defun rust-dive-test-config--path-segment (value)
   "Return VALUE as a filesystem-friendly path segment."
   (replace-regexp-in-string
-    "[^[:alnum:]._-]+"
-    "-"
-    (format "%s" value)))
+   "[^[:alnum:]._-]+"
+   "-"
+   (format "%s" value)))
 
 (defun rust-dive-test-config-straight-build-dir ()
   "Return the host-specific straight.el build directory name."
   (format "build-%s-%s-%s"
-    (rust-dive-test-config--path-segment emacs-version)
-    (rust-dive-test-config--path-segment system-type)
-    (rust-dive-test-config--path-segment system-configuration)))
+	  (rust-dive-test-config--path-segment emacs-version)
+	  (rust-dive-test-config--path-segment system-type)
+	  (rust-dive-test-config--path-segment system-configuration)))
 
 (defun rust-dive-test-config-bootstrap ()
   "Bootstrap straight.el and `use-package' for local test config."
@@ -37,17 +37,17 @@
   (setq straight-use-package-by-default t)
   (defvar bootstrap-version)
   (let
-    (
-      (bootstrap-file
+      (
+       (bootstrap-file
         (expand-file-name "straight/repos/straight.el/bootstrap.el"
-          straight-base-dir))
-      (bootstrap-version 7))
+			  straight-base-dir))
+       (bootstrap-version 7))
     (unless (file-exists-p bootstrap-file)
       (with-current-buffer
-        (url-retrieve-synchronously
-          "https://raw.githubusercontent.com/radian-software/straight.el/develop/install.el"
-          'silent
-          'inhibit-cookies)
+          (url-retrieve-synchronously
+           "https://raw.githubusercontent.com/radian-software/straight.el/develop/install.el"
+           'silent
+           'inhibit-cookies)
         (goto-char (point-max))
         (eval-print-last-sexp)))
     (load bootstrap-file nil 'nomessage))

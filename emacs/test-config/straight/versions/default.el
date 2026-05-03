@@ -2,7 +2,6 @@
  ("compat" . "f79d38233d30e790462e24b65e690db43a500762")
  ("cond-let" . "2cd0cd53e5a0deef15d204872f6feb391469f593")
  ("el-get" . "b966060fd99c2bdf1aae76be190f2e26473cb298")
- ("emacs-elisp-autofmt" . "b1cdd8661930a35b1633ccc28b27b793145cd108")
  ("emacsmirror-mirror" . "13c43f7b0e59c1de80ee7e60e20dfa47b6345fa6")
  ("gnu-elpa-mirror" . "c8d38eb3023cbca6e88d56d52c75af2dfdfcbbb6")
  ("let-alist" . "bed0f0e74f52e75b26ffa2f4c064c41cfbc23ec8")
