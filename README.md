@@ -1,9 +1,41 @@
-# difftron
+# Difftron
 
-`difftron` is a Rust code-structure diff tool with:
+Difftron is a code diff tool that matches semantic entities (structs, functions, etc.) before doing a line-based diff.
+See [this newsletter](https://kevinlynagh.com/newsletter/2026_04_overthinking/#structural-diffing) for motivation and a survey of prior art.
 
-- a CLI for listing entities and diffing snapshots
-- an Emacs integration in [emacs/difftron-magit.el](/root/2026-04-21-diff/emacs/difftron-magit.el) that renders JSON output in a dedicated buffer
+Difftron has CLI for listing entities and diffing snapshots, but the primary UI is an Emacs [Magit](https://magit.vc/)-style interface:
+
+![](TODO screenshot)
+
+Difftron diffs "snapshots", which can be refs in a git repository, folders, or individual files.
+
+So far everything has been vibe-coded --- currently I'm more interested in exploring the UI and overall design space than I am in writing idiomatic/concise Rust or Emacs lisp.
+
+
+## Language support
+
+Currently supports the languages I use: Rust, Clojure, and TypeScript.
+
+
+## Usage
+
+While this project is in experimental phase, a rust toolchain is required to build binaries locally and a "formal" Emacs package won't be published.
+This is the function I use to (re)load the package:
+
+```
+(defun difftron-reload ()
+  (interactive)
+  (let ((base-path "/where-you-put-difftron-project-folder"))
+    (when (featurep 'difftron)
+      (unload-feature 'difftron-magit t))
+    (load (concat base-path "/emacs/difftron-magit.el"))
+    (difftron-magit-bindings-mode)
+    (setq difftron-magit-executable (concat base-path "/script/difftron_dev"))))
+```
+
+You can run `M-x difftron-magit-diff` to diff two snapshots, but I tend to use it from within Magit's diff popup (press `d` for Magit's popup, then `D` for Difftron).
+Doing this from a Magit diff will jump to the corresponding entity in Difftron.
+
 
 ## Development
 
@@ -24,51 +56,3 @@ set -euo pipefail
 EOF
 chmod +x .git/hooks/pre-commit
 ```
-
-## Emacs Usage
-
-The Emacs package assumes a normal `difftron` binary by default.
-
-For local development from this workspace, override that from outside the
-package by pointing `difftron-magit-executable` at the wrapper script in this
-repo. If you also want difftron to appear in Magit's diff transient as `D`,
-enable `difftron-magit-bindings-mode`.
-
-Example Emacs config:
-
-```elisp
-(add-to-list 'load-path "/path/to/difftron/emacs")
-(require 'difftron-magit)
-
-(setq difftron-magit-executable
-      "/path/to/difftron/script/difftron_dev")
-
-(difftron-magit-bindings-mode 1)
-```
-
-Example with `use-package`:
-
-```elisp
-(use-package difftron-magit
-  :load-path "/path/to/difftron/emacs"
-  :commands (difftron-magit-diff)
-  :init
-  (setq difftron-magit-executable
-        "/path/to/difftron/script/difftron_dev")
-  :config
-  (difftron-magit-bindings-mode 1))
-```
-
-That wrapper runs:
-
-```bash
-cargo run --release --manifest-path /path/to/difftron/Cargo.toml -- ...
-```
-
-After that:
-
-- `M-x difftron-magit-diff` opens a difftron diff buffer
-- in Magit's diff popup, `D` runs difftron using Magit's current diff context
-
-`difftron-magit-diff` compares `HEAD` to the current working tree by default
-and renders results in the `*difftron*` buffer.
