@@ -1,4 +1,4 @@
-;;; rust-dive-magit.el --- View rust_dive output in Magit -*- lexical-binding: t; -*-
+;;; difftron-magit.el --- View difftron output in Magit -*- lexical-binding: t; -*-
 
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "29.1") (magit "4.0.0"))
@@ -9,8 +9,8 @@
 
 ;;; Commentary:
 
-;; Dedicated Emacs integration for the rust_dive CLI.  The main entrypoint is
-;; `rust-dive-magit-diff', which shells out to `rust_dive diff --format json'
+;; Dedicated Emacs integration for the difftron CLI.  The main entrypoint is
+;; `difftron-magit-diff', which shells out to `difftron diff --format json'
 ;; and renders the result in a foldable buffer.
 
 ;;; Code:
@@ -26,98 +26,98 @@
 (require 'subr-x)
 (require 'transient)
 
-(defgroup rust-dive-magit nil
-  "Emacs integration for the rust_dive CLI."
+(defgroup difftron-magit nil
+  "Emacs integration for the difftron CLI."
   :group 'tools)
 
-(defface rust-dive-magit-level-1-heading
+(defface difftron-magit-level-1-heading
   '((t :inherit magit-diff-file-heading))
-  "Face for first nested heading level in Rust Dive buffers."
-  :group 'rust-dive-magit)
+  "Face for first nested heading level in difftron buffers."
+  :group 'difftron-magit)
 
-(defface rust-dive-magit-level-2-heading
+(defface difftron-magit-level-2-heading
   '((t :inherit magit-diff-file-heading-selection))
-  "Face for second nested heading level in Rust Dive buffers."
-  :group 'rust-dive-magit)
+  "Face for second nested heading level in difftron buffers."
+  :group 'difftron-magit)
 
-(defcustom rust-dive-magit-executable "rust_dive"
-  "Path to the rust_dive executable."
+(defcustom difftron-magit-executable "difftron"
+  "Path to the difftron executable."
   :type 'file
-  :group 'rust-dive-magit)
+  :group 'difftron-magit)
 
-(defcustom rust-dive-magit-buffer-name "*rust-dive*"
-  "Name of the rust_dive results buffer."
+(defcustom difftron-magit-buffer-name "*difftron*"
+  "Name of the difftron results buffer."
   :type 'string
-  :group 'rust-dive-magit)
+  :group 'difftron-magit)
 
-(defcustom rust-dive-magit-default-grouping 'file
-  "Default top-level grouping for Rust Dive buffers."
+(defcustom difftron-magit-default-grouping 'file
+  "Default top-level grouping for difftron buffers."
   :type
   '
   (choice
    (const :tag "Entity then file" kind)
    (const :tag "File then entity" file))
-  :group 'rust-dive-magit)
+  :group 'difftron-magit)
 
-(defconst rust-dive-magit--magit-diff-suffix
-  '("D" "Rust Dive" rust-dive-magit-diff-dwim))
+(defconst difftron-magit--magit-diff-suffix
+  '("D" "Difftron" difftron-magit-diff-dwim))
 
-(defvar rust-dive-magit-mode-map
+(defvar difftron-magit-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map magit-section-mode-map)
-    (define-key map (kbd "g") #'rust-dive-magit-refresh)
-    (define-key map (kbd "f") #'rust-dive-magit-cycle-grouping)
-    (define-key map (kbd "h") #'rust-dive-magit-dispatch)
-    (define-key map (kbd "?") #'rust-dive-magit-dispatch)
-    (define-key map (kbd "l") #'rust-dive-magit-select-left)
+    (define-key map (kbd "g") #'difftron-magit-refresh)
+    (define-key map (kbd "f") #'difftron-magit-cycle-grouping)
+    (define-key map (kbd "h") #'difftron-magit-dispatch)
+    (define-key map (kbd "?") #'difftron-magit-dispatch)
+    (define-key map (kbd "l") #'difftron-magit-select-left)
     (define-key
      map
      (kbd "m")
-     #'rust-dive-magit-toggle-commit-messages)
-    (define-key map (kbd "r") #'rust-dive-magit-select-right)
-    (define-key map (kbd "N") #'rust-dive-magit-next-commit)
-    (define-key map (kbd "P") #'rust-dive-magit-previous-commit)
+     #'difftron-magit-toggle-commit-messages)
+    (define-key map (kbd "r") #'difftron-magit-select-right)
+    (define-key map (kbd "N") #'difftron-magit-next-commit)
+    (define-key map (kbd "P") #'difftron-magit-previous-commit)
     (define-key
      map
      (kbd "TAB")
-     #'rust-dive-magit-toggle-section-or-message)
-    (define-key map (kbd "RET") #'rust-dive-magit-visit-thing)
+     #'difftron-magit-toggle-section-or-message)
+    (define-key map (kbd "RET") #'difftron-magit-visit-thing)
     map)
-  "Keymap for `rust-dive-magit-mode'.")
+  "Keymap for `difftron-magit-mode'.")
 
-(defvar-local rust-dive-magit--command-args nil)
-(defvar-local rust-dive-magit--default-directory nil)
-(defvar-local rust-dive-magit--payload nil)
-(defvar-local rust-dive-magit--entity-kind-order nil)
-(defvar-local rust-dive-magit--entity-kinds nil)
-(defvar-local rust-dive-magit--grouping nil
-  "Current grouping mode for the Rust Dive buffer.")
-(defvar-local rust-dive-magit--commit-message-regions nil
+(defvar-local difftron-magit--command-args nil)
+(defvar-local difftron-magit--default-directory nil)
+(defvar-local difftron-magit--payload nil)
+(defvar-local difftron-magit--entity-kind-order nil)
+(defvar-local difftron-magit--entity-kinds nil)
+(defvar-local difftron-magit--grouping nil
+  "Current grouping mode for the difftron buffer.")
+(defvar-local difftron-magit--commit-message-regions nil
   "Alist of expanded commit message regions by side.")
 
 (define-derived-mode
-  rust-dive-magit-mode
+  difftron-magit-mode
   magit-section-mode
-  "Rust-Dive"
-  "Major mode for rust_dive results."
+  "difftron"
+  "Major mode for difftron results."
   (setq-local truncate-lines t))
 
 (transient-define-prefix
-  rust-dive-magit-dispatch
+  difftron-magit-dispatch
   ()
-  "Show commands for `rust-dive-magit-mode'."
+  "Show commands for `difftron-magit-mode'."
   [
-   ["Rust Dive"
-    ("g" "Refresh" rust-dive-magit-refresh)
-    ("f" "Cycle grouping" rust-dive-magit-cycle-grouping)
-    ("l" "Select left" rust-dive-magit-select-left)
-    ("m" "Toggle messages" rust-dive-magit-toggle-commit-messages)
-    ("r" "Select right" rust-dive-magit-select-right)
+   ["difftron"
+    ("g" "Refresh" difftron-magit-refresh)
+    ("f" "Cycle grouping" difftron-magit-cycle-grouping)
+    ("l" "Select left" difftron-magit-select-left)
+    ("m" "Toggle messages" difftron-magit-toggle-commit-messages)
+    ("r" "Select right" difftron-magit-select-right)
     ("q" "Quit buffer" quit-window)
     ("TAB"
      "Toggle section/message"
-     rust-dive-magit-toggle-section-or-message)
-    ("RET" "Visit thing" rust-dive-magit-visit-thing)]
+     difftron-magit-toggle-section-or-message)
+    ("RET" "Visit thing" difftron-magit-visit-thing)]
    ["Visibility"
     ("<backtab>" "Cycle all" magit-section-cycle-global)
     ("1" "Level 1" magit-section-show-level-1)
@@ -129,40 +129,40 @@
     ("M-3" "All level 3" magit-section-show-level-3-all)
     ("M-4" "All level 4" magit-section-show-level-4-all)]
    ["Movement"
-    ("N" "Next commit" rust-dive-magit-next-commit)
-    ("P" "Previous commit" rust-dive-magit-previous-commit)
+    ("N" "Next commit" difftron-magit-next-commit)
+    ("P" "Previous commit" difftron-magit-previous-commit)
     ("n" "Next section" magit-section-forward)
     ("p" "Previous section" magit-section-backward)
     ("M-n" "Next sibling" magit-section-forward-sibling)
     ("M-p" "Previous sibling" magit-section-backward-sibling)]])
 
-(defun rust-dive-magit-diff-dwim ()
-  "Run `rust_dive diff' using the current Magit diff context."
+(defun difftron-magit-diff-dwim ()
+  "Run `difftron diff' using the current Magit diff context."
   (interactive)
   (require 'magit-diff)
   (pcase-let*
       (
-       (default-directory (rust-dive-magit--repo-root))
+       (default-directory (difftron-magit--repo-root))
        (`(,_args ,paths) (magit-diff-arguments))
        (`(,lhs ,rhs)
-        (rust-dive-magit--dwim-endpoints
+        (difftron-magit--dwim-endpoints
          (ignore-errors
            (magit-diff--dwim))
          default-directory)))
-    (rust-dive-magit-diff lhs rhs paths)))
+    (difftron-magit-diff lhs rhs paths)))
 
-(defun rust-dive-magit-diff-at-point ()
-  "Run Rust Dive for the current Magit diff and entity at point."
+(defun difftron-magit-diff-at-point ()
+  "Run difftron for the current Magit diff and entity at point."
   (interactive)
   (require 'magit-diff)
   (pcase-let*
       (
-       (default-directory (rust-dive-magit--repo-root))
-       (path (rust-dive-magit--magit-diff-path-at-point))
-       (line (rust-dive-magit--magit-diff-line-at-point))
+       (default-directory (difftron-magit--repo-root))
+       (path (difftron-magit--magit-diff-path-at-point))
+       (line (difftron-magit--magit-diff-line-at-point))
        (`(,_args ,paths) (magit-diff-arguments))
        (`(,lhs ,rhs)
-        (rust-dive-magit--dwim-endpoints
+        (difftron-magit--dwim-endpoints
          (ignore-errors
            (magit-diff--dwim))
          default-directory))
@@ -173,89 +173,89 @@
          (cl-mapcan
           (lambda (selected-path) (list "--path" selected-path))
           selected-paths)))
-       (payload (rust-dive-magit--run-command default-directory args)))
-    (rust-dive-magit--display-buffer default-directory args payload)
+       (payload (difftron-magit--run-command default-directory args)))
+    (difftron-magit--display-buffer default-directory args payload)
     (when path
-      (with-current-buffer rust-dive-magit-buffer-name
-        (rust-dive-magit--goto-entity-for-source path line)))))
+      (with-current-buffer difftron-magit-buffer-name
+        (difftron-magit--goto-entity-for-source path line)))))
 
-(defun rust-dive-magit-diff (lhs rhs &optional paths)
-  "Run `rust_dive diff' for LHS, RHS, and optional PATHS.
+(defun difftron-magit-diff (lhs rhs &optional paths)
+  "Run `difftron diff' for LHS, RHS, and optional PATHS.
 When called interactively, default to comparing `HEAD' against the current
 working tree rooted at the current repository."
   (interactive
    (let*
        (
-        (repo-root (rust-dive-magit--repo-root))
+        (repo-root (difftron-magit--repo-root))
         (default-lhs "HEAD")
         (default-rhs repo-root)
         (lhs (read-string "Left snapshot/rev: " default-lhs))
         (rhs (read-string "Right snapshot/rev: " default-rhs))
         (path-input
          (read-string "Filter paths (comma-separated, optional): ")))
-     (list lhs rhs (rust-dive-magit--split-paths path-input))))
+     (list lhs rhs (difftron-magit--split-paths path-input))))
   (let*
       (
-       (default-directory (rust-dive-magit--repo-root))
+       (default-directory (difftron-magit--repo-root))
        (args
         (append
          (list "diff" lhs rhs "--format" "json")
          (cl-mapcan (lambda (path) (list "--path" path)) paths)))
-       (payload (rust-dive-magit--run-command default-directory args)))
-    (rust-dive-magit--display-buffer default-directory args payload)))
+       (payload (difftron-magit--run-command default-directory args)))
+    (difftron-magit--display-buffer default-directory args payload)))
 
-(defun rust-dive-magit-refresh ()
-  "Re-run the last rust_dive command in the current buffer."
+(defun difftron-magit-refresh ()
+  "Re-run the last difftron command in the current buffer."
   (interactive)
   (unless
-      (and rust-dive-magit--command-args
-           rust-dive-magit--default-directory)
+      (and difftron-magit--command-args
+           difftron-magit--default-directory)
     (user-error
-     "No rust_dive command is associated with this buffer"))
+     "No difftron command is associated with this buffer"))
   (magit-refresh-buffer))
 
-(defun rust-dive-magit-cycle-grouping ()
-  "Cycle the Rust Dive grouping mode for the current buffer."
+(defun difftron-magit-cycle-grouping ()
+  "Cycle the difftron grouping mode for the current buffer."
   (interactive)
-  (unless rust-dive-magit--payload
+  (unless difftron-magit--payload
     (user-error
-     "No rust_dive payload is associated with this buffer"))
-  (setq rust-dive-magit-default-grouping
-        (pcase rust-dive-magit--grouping
+     "No difftron payload is associated with this buffer"))
+  (setq difftron-magit-default-grouping
+        (pcase difftron-magit--grouping
           ('kind 'file)
           (_ 'kind)))
-  (setq rust-dive-magit--grouping rust-dive-magit-default-grouping)
-  (rust-dive-magit--display-buffer
-   rust-dive-magit--default-directory
-   rust-dive-magit--command-args
-   rust-dive-magit--payload)
-  (with-current-buffer rust-dive-magit-buffer-name
+  (setq difftron-magit--grouping difftron-magit-default-grouping)
+  (difftron-magit--display-buffer
+   difftron-magit--default-directory
+   difftron-magit--command-args
+   difftron-magit--payload)
+  (with-current-buffer difftron-magit-buffer-name
     (magit-section-show-level-3)))
 
-(defun rust-dive-magit-select-left ()
+(defun difftron-magit-select-left ()
   "Select a new left-hand snapshot and refresh the diff."
   (interactive)
-  (rust-dive-magit--select-side 'lhs))
+  (difftron-magit--select-side 'lhs))
 
-(defun rust-dive-magit-select-right ()
+(defun difftron-magit-select-right ()
   "Select a new right-hand snapshot and refresh the diff."
   (interactive)
-  (rust-dive-magit--select-side 'rhs))
+  (difftron-magit--select-side 'rhs))
 
-(defun rust-dive-magit--select-side (side)
+(defun difftron-magit--select-side (side)
   "Select a new snapshot for SIDE and refresh the current diff."
-  (unless rust-dive-magit--payload
+  (unless difftron-magit--payload
     (user-error
-     "No rust_dive payload is associated with this buffer"))
-  (unless rust-dive-magit--default-directory
+     "No difftron payload is associated with this buffer"))
+  (unless difftron-magit--default-directory
     (user-error
-     "No rust_dive command is associated with this buffer"))
+     "No difftron command is associated with this buffer"))
   (let*
       (
-       (lhs-snapshot (plist-get rust-dive-magit--payload :lhs))
-       (rhs-snapshot (plist-get rust-dive-magit--payload :rhs))
+       (lhs-snapshot (plist-get difftron-magit--payload :lhs))
+       (rhs-snapshot (plist-get difftron-magit--payload :rhs))
        (new-arg
-        (rust-dive-magit--read-snapshot-like
+        (difftron-magit--read-snapshot-like
          side
          (pcase side
            ('lhs lhs-snapshot)
@@ -263,18 +263,18 @@ working tree rooted at the current repository."
        (lhs
         (if (eq side 'lhs)
             new-arg
-          (rust-dive-magit--snapshot-arg lhs-snapshot)))
+          (difftron-magit--snapshot-arg lhs-snapshot)))
        (rhs
         (if (eq side 'rhs)
             new-arg
-          (rust-dive-magit--snapshot-arg rhs-snapshot))))
-    (rust-dive-magit--run-and-display-diff lhs rhs)))
+          (difftron-magit--snapshot-arg rhs-snapshot))))
+    (difftron-magit--run-and-display-diff lhs rhs)))
 
-(defun rust-dive-magit--read-snapshot-like (side snapshot)
+(defun difftron-magit--read-snapshot-like (side snapshot)
   "Read a replacement for SNAPSHOT on SIDE."
   (let
       (
-       (label (rust-dive-magit--side-label side))
+       (label (difftron-magit--side-label side))
        (root (plist-get snapshot :root)))
     (pcase (plist-get snapshot :kind)
       ("git_revision"
@@ -303,7 +303,7 @@ working tree rooted at the current repository."
        (user-error "Don't know how to select %s snapshots"
                    (plist-get snapshot :kind))))))
 
-(defun rust-dive-magit--snapshot-arg (snapshot)
+(defun difftron-magit--snapshot-arg (snapshot)
   "Return the command argument for SNAPSHOT."
   (pcase (plist-get snapshot :kind)
     ("git_revision"
@@ -316,60 +316,60 @@ working tree rooted at the current repository."
      (user-error "Don't know how to use %s snapshots"
                  (plist-get snapshot :kind)))))
 
-(defun rust-dive-magit--side-label (side)
+(defun difftron-magit--side-label (side)
   "Return a prompt label for SIDE."
   (pcase side
     ('lhs "Left")
     (_ "Right")))
 
-(defun rust-dive-magit-toggle-section-or-message ()
+(defun difftron-magit-toggle-section-or-message ()
   "Toggle the commit message at point or the current Magit section."
   (interactive)
-  (if-let ((side (rust-dive-magit--snapshot-side-at-point)))
-      (rust-dive-magit--toggle-commit-message side)
+  (if-let ((side (difftron-magit--snapshot-side-at-point)))
+      (difftron-magit--toggle-commit-message side)
     (magit-section-toggle (magit-current-section))))
 
-(defun rust-dive-magit-toggle-commit-messages ()
+(defun difftron-magit-toggle-commit-messages ()
   "Toggle commit messages for both Git revision snapshots."
   (interactive)
-  (let ((sides (rust-dive-magit--commit-message-sides)))
+  (let ((sides (difftron-magit--commit-message-sides)))
     (unless sides
       (user-error "No Git revision snapshots in this buffer"))
     (if
         (seq-some
          (lambda (side)
-           (not (rust-dive-magit--commit-message-expanded-p side)))
+           (not (difftron-magit--commit-message-expanded-p side)))
          sides)
         (dolist (side sides)
-          (unless (rust-dive-magit--commit-message-expanded-p side)
-            (rust-dive-magit--show-commit-message side)))
+          (unless (difftron-magit--commit-message-expanded-p side)
+            (difftron-magit--show-commit-message side)))
       (dolist (side sides)
-        (rust-dive-magit--hide-commit-message side)))))
+        (difftron-magit--hide-commit-message side)))))
 
-(defun rust-dive-magit--snapshot-side-at-point ()
+(defun difftron-magit--snapshot-side-at-point ()
   "Return the snapshot side at point, if point is on one."
-  (or (get-text-property (point) 'rust-dive-magit-snapshot-side)
+  (or (get-text-property (point) 'difftron-magit-snapshot-side)
       (and (> (point) (point-min))
-           (get-text-property (1- (point)) 'rust-dive-magit-snapshot-side))
+           (get-text-property (1- (point)) 'difftron-magit-snapshot-side))
       (get-text-property
        (line-beginning-position)
-       'rust-dive-magit-snapshot-side)))
+       'difftron-magit-snapshot-side)))
 
-(defun rust-dive-magit--commit-message-sides ()
+(defun difftron-magit--commit-message-sides ()
   "Return sides that currently show Git revisions."
   (seq-filter
    (lambda (side)
      (equal
-      (plist-get (rust-dive-magit--snapshot-for-side side) :kind)
+      (plist-get (difftron-magit--snapshot-for-side side) :kind)
       "git_revision"))
    '(lhs rhs)))
 
-(defun rust-dive-magit--snapshot-for-side (side)
+(defun difftron-magit--snapshot-for-side (side)
   "Return the payload snapshot for SIDE."
   (or
-   (and rust-dive-magit--payload
+   (and difftron-magit--payload
         (plist-get
-         rust-dive-magit--payload
+         difftron-magit--payload
          (pcase side
            ('lhs :lhs)
            (_ :rhs))))
@@ -379,37 +379,37 @@ working tree rooted at the current repository."
          (text-property-any
           (point-min)
           (point-max)
-          'rust-dive-magit-snapshot-side
+          'difftron-magit-snapshot-side
           side)))
-     (get-text-property pos 'rust-dive-magit-snapshot))))
+     (get-text-property pos 'difftron-magit-snapshot))))
 
-(defun rust-dive-magit--toggle-commit-message (side)
+(defun difftron-magit--toggle-commit-message (side)
   "Toggle the commit message for SIDE."
-  (if (rust-dive-magit--commit-message-expanded-p side)
-      (rust-dive-magit--hide-commit-message side)
-    (rust-dive-magit--show-commit-message side)))
+  (if (difftron-magit--commit-message-expanded-p side)
+      (difftron-magit--hide-commit-message side)
+    (difftron-magit--show-commit-message side)))
 
-(defun rust-dive-magit--commit-message-expanded-p (side)
+(defun difftron-magit--commit-message-expanded-p (side)
   "Return non-nil if SIDE's commit message is expanded."
-  (assq side rust-dive-magit--commit-message-regions))
+  (assq side difftron-magit--commit-message-regions))
 
-(defun rust-dive-magit--show-commit-message (side)
+(defun difftron-magit--show-commit-message (side)
   "Insert SIDE's commit message below its snapshot line."
   (let*
       (
-       (snapshot (rust-dive-magit--snapshot-for-side side))
-       (message (rust-dive-magit--commit-message snapshot))
-       (insert-at (rust-dive-magit--snapshot-line-end side)))
+       (snapshot (difftron-magit--snapshot-for-side side))
+       (message (difftron-magit--commit-message snapshot))
+       (insert-at (difftron-magit--snapshot-line-end side)))
     (let ((inhibit-read-only t))
       (save-excursion
         (goto-char insert-at)
         (forward-line 1)
         (let ((start (point)))
-          (insert (rust-dive-magit--format-commit-message message))
+          (insert (difftron-magit--format-commit-message message))
           (add-text-properties
            start (point)
            (list
-            'rust-dive-magit-snapshot-side
+            'difftron-magit-snapshot-side
             side
             'font-lock-face
             'magit-section-secondary-heading))
@@ -417,12 +417,12 @@ working tree rooted at the current repository."
            (cons
             side
             (cons (copy-marker start) (copy-marker (point))))
-           rust-dive-magit--commit-message-regions))))))
+           difftron-magit--commit-message-regions))))))
 
-(defun rust-dive-magit--hide-commit-message (side)
+(defun difftron-magit--hide-commit-message (side)
   "Remove SIDE's expanded commit message."
   (when-let
-      ((region (assq side rust-dive-magit--commit-message-regions)))
+      ((region (assq side difftron-magit--commit-message-regions)))
     (let
         (
          (start (cadr region))
@@ -431,12 +431,12 @@ working tree rooted at the current repository."
       (delete-region start end)
       (set-marker start nil)
       (set-marker end nil)
-      (setq rust-dive-magit--commit-message-regions
+      (setq difftron-magit--commit-message-regions
             (assq-delete-all
              side
-             rust-dive-magit--commit-message-regions)))))
+             difftron-magit--commit-message-regions)))))
 
-(defun rust-dive-magit--snapshot-line-end (side)
+(defun difftron-magit--snapshot-line-end (side)
   "Return the line end position for SIDE's snapshot line."
   (or
    (when-let
@@ -445,14 +445,14 @@ working tree rooted at the current repository."
          (text-property-any
           (point-min)
           (point-max)
-          'rust-dive-magit-snapshot-side
+          'difftron-magit-snapshot-side
           side)))
      (save-excursion
        (goto-char pos)
        (line-end-position)))
    (user-error "No snapshot line for %s" side)))
 
-(defun rust-dive-magit--commit-message (snapshot)
+(defun difftron-magit--commit-message (snapshot)
   "Return the full commit message for SNAPSHOT."
   (let
       (
@@ -463,7 +463,7 @@ working tree rooted at the current repository."
         (or (plist-get snapshot :root) default-directory)))
     (or (magit-git-string "log" "-1" "--format=%B" rev) "")))
 
-(defun rust-dive-magit--format-commit-message (message)
+(defun difftron-magit--format-commit-message (message)
   "Format commit MESSAGE for display under a snapshot line."
   (let ((message (string-trim-right message)))
     (if (string-empty-p message)
@@ -476,37 +476,37 @@ working tree rooted at the current repository."
        (split-string message "\n")
        ""))))
 
-(defun rust-dive-magit-next-commit ()
+(defun difftron-magit-next-commit ()
   "Show the next commit on HEAD's first-parent history."
   (interactive)
-  (rust-dive-magit--show-commit-diff
-   (rust-dive-magit--next-commit
-    (rust-dive-magit--current-rhs-revision))))
+  (difftron-magit--show-commit-diff
+   (difftron-magit--next-commit
+    (difftron-magit--current-rhs-revision))))
 
-(defun rust-dive-magit-previous-commit ()
+(defun difftron-magit-previous-commit ()
   "Show the first-parent commit before the current RHS commit."
   (interactive)
-  (rust-dive-magit--show-commit-diff
+  (difftron-magit--show-commit-diff
    (or
-    (rust-dive-magit--commit-parent
-     (rust-dive-magit--current-rhs-revision))
+    (difftron-magit--commit-parent
+     (difftron-magit--current-rhs-revision))
     (user-error "No previous commit"))))
 
-(defun rust-dive-magit--current-rhs-revision ()
+(defun difftron-magit--current-rhs-revision ()
   "Return the Git revision for the current diff RHS."
-  (let ((rhs (plist-get rust-dive-magit--payload :rhs)))
+  (let ((rhs (plist-get difftron-magit--payload :rhs)))
     (unless (equal (plist-get rhs :kind) "git_revision")
       (user-error
-       "Rust Dive buffer is not showing a Git revision diff"))
+       "Difftron buffer is not showing a Git revision diff"))
     (or (plist-get rhs :rev)
-        (user-error "Rust Dive diff RHS has no Git revision"))))
+        (user-error "Difftron diff RHS has no Git revision"))))
 
-(defun rust-dive-magit--next-commit (rev)
+(defun difftron-magit--next-commit (rev)
   "Return the next commit after REV on HEAD's first-parent history."
   (let
       (
        (default-directory
-        (or rust-dive-magit--default-directory default-directory)))
+        (or difftron-magit--default-directory default-directory)))
     (or
      (car
       (magit-git-lines
@@ -516,48 +516,48 @@ working tree rooted at the current repository."
        (format "%s..HEAD" rev)))
      (user-error "No next commit on HEAD's first-parent history"))))
 
-(defun rust-dive-magit--commit-parent (rev)
+(defun difftron-magit--commit-parent (rev)
   "Return the first parent of REV, or nil for a root commit."
   (let*
       (
        (default-directory
-        (or rust-dive-magit--default-directory default-directory))
+        (or difftron-magit--default-directory default-directory))
        (line (car (magit-git-lines "rev-list" "-1" "--parents" rev)))
        (parts (and line (split-string line))))
     (cadr parts)))
 
-(defun rust-dive-magit--show-commit-diff (rev)
-  "Render the Rust Dive diff for commit REV."
+(defun difftron-magit--show-commit-diff (rev)
+  "Render the difftron diff for commit REV."
   (let
       (
        (parent
-        (or (rust-dive-magit--commit-parent rev)
+        (or (difftron-magit--commit-parent rev)
             (user-error "Commit %s has no parent" rev))))
-    (rust-dive-magit--run-and-display-diff parent rev)))
+    (difftron-magit--run-and-display-diff parent rev)))
 
-(defun rust-dive-magit--run-and-display-diff (lhs rhs)
-  "Run and display a Rust Dive diff from LHS to RHS."
-  (unless rust-dive-magit--default-directory
+(defun difftron-magit--run-and-display-diff (lhs rhs)
+  "Run and display a difftron diff from LHS to RHS."
+  (unless difftron-magit--default-directory
     (user-error
-     "No rust_dive command is associated with this buffer"))
+     "No difftron command is associated with this buffer"))
   (let*
       (
        (args
         (append
          (list "diff" lhs rhs "--format" "json")
-         (rust-dive-magit--command-path-args
-          rust-dive-magit--command-args)))
+         (difftron-magit--command-path-args
+          difftron-magit--command-args)))
        (payload
-        (rust-dive-magit--run-command
-         rust-dive-magit--default-directory
+        (difftron-magit--run-command
+         difftron-magit--default-directory
          args)))
-    (rust-dive-magit--display-buffer
-     rust-dive-magit--default-directory
+    (difftron-magit--display-buffer
+     difftron-magit--default-directory
      args
      payload)))
 
-(defun rust-dive-magit--command-path-args (args)
-  "Return the --path arguments from rust_dive command ARGS."
+(defun difftron-magit--command-path-args (args)
+  "Return the --path arguments from difftron command ARGS."
   (let (paths)
     (while args
       (let ((arg (pop args)))
@@ -566,90 +566,90 @@ working tree rooted at the current repository."
           (push (pop args) paths))))
     (nreverse paths)))
 
-(defun rust-dive-magit-visit-thing ()
+(defun difftron-magit-visit-thing ()
   "Visit the entity at point or activate a button."
   (interactive)
   (if-let*
       (
-       (section (rust-dive-magit--entity-section-at-point))
+       (section (difftron-magit--entity-section-at-point))
        (entity (plist-get (oref section value) :entity)))
-      (rust-dive-magit--visit-entity entity)
-    (if-let ((button (rust-dive-magit--button-at-point)))
+      (difftron-magit--visit-entity entity)
+    (if-let ((button (difftron-magit--button-at-point)))
         (push-button (button-start button))
       (magit-section-toggle (magit-current-section)))))
 
-(defun rust-dive-magit--button-at-point ()
+(defun difftron-magit--button-at-point ()
   "Return the button at point, accepting point just after button text."
   (or (button-at (point))
       (and (> (point) (point-min)) (button-at (1- (point))))))
 
-(defun rust-dive-magit--display-buffer
+(defun difftron-magit--display-buffer
     (repo-default-directory args payload)
   "Render PAYLOAD in the dedicated buffer.
 REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
-  (let ((buffer (get-buffer-create rust-dive-magit-buffer-name)))
+  (let ((buffer (get-buffer-create difftron-magit-buffer-name)))
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
-        (rust-dive-magit-mode)
-        (setq rust-dive-magit--grouping
-              rust-dive-magit-default-grouping)
-        (setq rust-dive-magit--default-directory
+        (difftron-magit-mode)
+        (setq difftron-magit--grouping
+              difftron-magit-default-grouping)
+        (setq difftron-magit--default-directory
               repo-default-directory)
-        (setq rust-dive-magit--command-args args)
-        (setq rust-dive-magit--payload payload)
+        (setq difftron-magit--command-args args)
+        (setq difftron-magit--payload payload)
         (erase-buffer)
-        (rust-dive-magit--insert-payload payload)
+        (difftron-magit--insert-payload payload)
         (magit-section-show-level-3)
         (goto-char (point-min))))
     (pop-to-buffer buffer)))
 
-(defun rust-dive-magit-refresh-buffer ()
-  "Refresh the current Rust Dive buffer using Magit's refresh machinery."
-  (setq rust-dive-magit--payload
-        (rust-dive-magit--run-command
-         rust-dive-magit--default-directory
-         rust-dive-magit--command-args))
-  (rust-dive-magit--insert-payload rust-dive-magit--payload))
+(defun difftron-magit-refresh-buffer ()
+  "Refresh the current difftron buffer using Magit's refresh machinery."
+  (setq difftron-magit--payload
+        (difftron-magit--run-command
+         difftron-magit--default-directory
+         difftron-magit--command-args))
+  (difftron-magit--insert-payload difftron-magit--payload))
 
-(defun rust-dive-magit--insert-payload (payload)
+(defun difftron-magit--insert-payload (payload)
   "Insert PAYLOAD into the current buffer."
-  (setq rust-dive-magit--commit-message-regions nil)
-  (setq rust-dive-magit--entity-kind-order
+  (setq difftron-magit--commit-message-regions nil)
+  (setq difftron-magit--entity-kind-order
         (plist-get payload :entity_kind_order))
-  (setq rust-dive-magit--entity-kinds
+  (setq difftron-magit--entity-kinds
         (plist-get payload :entity_kinds))
   (magit-insert-section
-      (rust-dive-root)
+      (difftron-root)
     (pcase (plist-get payload :command)
-      ("diff" (rust-dive-magit--insert-diff payload))
-      ("list" (rust-dive-magit--insert-list payload))
+      ("diff" (difftron-magit--insert-diff payload))
+      ("list" (difftron-magit--insert-list payload))
       (_
        (insert
-        (format "Unsupported rust_dive command: %S" payload))))))
+        (format "Unsupported difftron command: %S" payload))))))
 
-(defun rust-dive-magit--insert-list (payload)
+(defun difftron-magit--insert-list (payload)
   "Insert a list-mode PAYLOAD into the current buffer."
-  (rust-dive-magit--insert-title
-   (format "rust_dive list %s"
+  (difftron-magit--insert-title
+   (format "difftron list %s"
            (plist-get (plist-get payload :snapshot) :label)))
-  (rust-dive-magit--insert-items
+  (difftron-magit--insert-items
    (mapcar
-    #'rust-dive-magit--list-entity->item
+    #'difftron-magit--list-entity->item
     (plist-get payload :entities))))
 
-(defun rust-dive-magit--insert-diff (payload)
+(defun difftron-magit--insert-diff (payload)
   "Insert a diff PAYLOAD into the current buffer."
   (let
       (
        (lhs (plist-get payload :lhs))
        (rhs (plist-get payload :rhs)))
-    (rust-dive-magit--insert-snapshot-line "lhs" lhs)
-    (rust-dive-magit--insert-snapshot-line "rhs" rhs)
+    (difftron-magit--insert-snapshot-line "lhs" lhs)
+    (difftron-magit--insert-snapshot-line "rhs" rhs)
     (insert "\n")
-    (rust-dive-magit--insert-items
-     (rust-dive-magit--diff-items payload))))
+    (difftron-magit--insert-items
+     (difftron-magit--diff-items payload))))
 
-(defun rust-dive-magit--insert-snapshot-line (name snapshot)
+(defun difftron-magit--insert-snapshot-line (name snapshot)
   "Insert one clickable diff endpoint NAME for SNAPSHOT."
   (let ((start (point)))
     (insert
@@ -657,9 +657,9 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
                  'font-lock-face
                  'magit-section-heading))
     (insert-text-button
-     (rust-dive-magit--display-label (plist-get snapshot :label))
+     (difftron-magit--display-label (plist-get snapshot :label))
      'action
-     (lambda (_button) (rust-dive-magit--visit-snapshot snapshot))
+     (lambda (_button) (difftron-magit--visit-snapshot snapshot))
      'follow-link
      t
      'help-echo
@@ -677,16 +677,16 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
       (add-text-properties
        start (point)
        (list
-        'rust-dive-magit-snapshot-side
+        'difftron-magit-snapshot-side
         (intern name)
-        'rust-dive-magit-snapshot
+        'difftron-magit-snapshot
         snapshot
         'mouse-face
         'highlight
         'help-echo
         "TAB toggles commit message, RET visits snapshot")))))
 
-(defun rust-dive-magit--visit-snapshot (snapshot)
+(defun difftron-magit--visit-snapshot (snapshot)
   "Visit SNAPSHOT using the best available Magit action."
   (pcase (plist-get snapshot :kind)
     ("git_revision"
@@ -702,7 +702,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
      (user-error "Don't know how to visit %s snapshots"
                  (plist-get snapshot :kind)))))
 
-(defun rust-dive-magit--display-label (label)
+(defun difftron-magit--display-label (label)
   "Return a compact display form for snapshot LABEL."
   (if (string-match "\\`\\(.+\\)@\\(.+\\)\\'" label)
       (let
@@ -716,108 +716,108 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
                 rev))
     label))
 
-(defun rust-dive-magit--insert-title (title)
+(defun difftron-magit--insert-title (title)
   "Insert TITLE at the top of the current buffer."
   (insert (propertize title 'font-lock-face 'magit-section-heading))
   (insert "\n\n"))
 
-(defun rust-dive-magit--insert-kind-groups (items)
+(defun difftron-magit--insert-kind-groups (items)
   "Insert ITEMS grouped by entity kind."
-  (let ((groups (rust-dive-magit--group-items-by-kind items)))
+  (let ((groups (difftron-magit--group-items-by-kind items)))
     (if groups
         (dolist (group groups)
-          (rust-dive-magit--insert-kind-file-group
+          (difftron-magit--insert-kind-file-group
            (car group)
            (cdr group)
            0))
       (insert "No entities\n"))))
 
-(defun rust-dive-magit--insert-file-groups (items)
+(defun difftron-magit--insert-file-groups (items)
   "Insert ITEMS grouped by file."
-  (let ((groups (rust-dive-magit--group-items-by-file items)))
+  (let ((groups (difftron-magit--group-items-by-file items)))
     (if groups
         (dolist (group groups)
-          (rust-dive-magit--insert-file-kind-group
+          (difftron-magit--insert-file-kind-group
            (car group)
            (cdr group)
            0))
       (insert "No entities\n"))))
 
-(defun rust-dive-magit--insert-kind-file-group (kind items depth)
+(defun difftron-magit--insert-kind-file-group (kind items depth)
   "Insert a kind heading for KIND and file groups for ITEMS at DEPTH."
   (magit-insert-section
-      (rust-dive-kind kind t)
+      (difftron-kind kind t)
     (magit-insert-heading
-      (rust-dive-magit--kind-heading kind items depth))
-    (dolist (group (rust-dive-magit--group-items-by-file items))
-      (rust-dive-magit--insert-file-entity-group
+      (difftron-magit--kind-heading kind items depth))
+    (dolist (group (difftron-magit--group-items-by-file items))
+      (difftron-magit--insert-file-entity-group
        (car group)
        (cdr group)
        (1+ depth)))
     (insert "\n")))
 
-(defun rust-dive-magit--insert-file-kind-group (file items depth)
+(defun difftron-magit--insert-file-kind-group (file items depth)
   "Insert a file heading for FILE and kind groups for ITEMS at DEPTH."
   (magit-insert-section
-      (rust-dive-file file t)
+      (difftron-file file t)
     (magit-insert-heading
-      (rust-dive-magit--file-heading file items depth))
-    (dolist (group (rust-dive-magit--group-items-by-kind items))
-      (rust-dive-magit--insert-kind-entity-group
+      (difftron-magit--file-heading file items depth))
+    (dolist (group (difftron-magit--group-items-by-kind items))
+      (difftron-magit--insert-kind-entity-group
        (car group)
        (cdr group)
        (1+ depth)))
     (insert "\n")))
 
-(defun rust-dive-magit--insert-kind-entity-group (kind items depth)
+(defun difftron-magit--insert-kind-entity-group (kind items depth)
   "Insert a kind heading for KIND and entity ITEMS at DEPTH."
   (magit-insert-section
-      (rust-dive-kind kind t)
+      (difftron-kind kind t)
     (magit-insert-heading
-      (rust-dive-magit--kind-heading kind items depth))
+      (difftron-magit--kind-heading kind items depth))
     (dolist (item items)
-      (rust-dive-magit--insert-item item (1+ depth)))
+      (difftron-magit--insert-item item (1+ depth)))
     (insert "\n")))
 
-(defun rust-dive-magit--insert-file-entity-group (file items depth)
+(defun difftron-magit--insert-file-entity-group (file items depth)
   "Insert a file heading for FILE and entity ITEMS at DEPTH."
   (magit-insert-section
-      (rust-dive-file file t)
+      (difftron-file file t)
     (magit-insert-heading
-      (rust-dive-magit--file-heading file items depth))
+      (difftron-magit--file-heading file items depth))
     (dolist (item items)
-      (rust-dive-magit--insert-item item (1+ depth)))
+      (difftron-magit--insert-item item (1+ depth)))
     (insert "\n")))
 
-(defun rust-dive-magit--kind-heading (kind items depth)
+(defun difftron-magit--kind-heading (kind items depth)
   "Return the heading text for KIND containing ITEMS at DEPTH."
   (propertize
    (format "%s%s (%d)"
-           (rust-dive-magit--indent depth)
-           (rust-dive-magit--kind-label kind)
+           (difftron-magit--indent depth)
+           (difftron-magit--kind-label kind)
            (length items))
-   'font-lock-face (rust-dive-magit--heading-face depth)))
+   'font-lock-face (difftron-magit--heading-face depth)))
 
-(defun rust-dive-magit--file-heading (file items depth)
+(defun difftron-magit--file-heading (file items depth)
   "Return the heading text for FILE containing ITEMS at DEPTH."
   (propertize
    (format "%s%s (%d)"
-           (rust-dive-magit--indent depth)
+           (difftron-magit--indent depth)
            file
            (length items))
-   'font-lock-face (rust-dive-magit--heading-face depth)))
+   'font-lock-face (difftron-magit--heading-face depth)))
 
-(defun rust-dive-magit--insert-item (item depth)
+(defun difftron-magit--insert-item (item depth)
   "Insert ITEM as a foldable heading at DEPTH."
   (let ((entity (plist-get item :entity)))
     (magit-insert-section
-        (rust-dive-entity item t)
+        (difftron-entity item t)
       (magit-insert-heading
         (propertize
          (format "%s%s"
-                 (rust-dive-magit--indent depth)
+                 (difftron-magit--indent depth)
                  (plist-get item :summary))
-         'font-lock-face (rust-dive-magit--heading-face depth)))
+         'font-lock-face (difftron-magit--heading-face depth)))
       (add-text-properties
        (oref magit-insert-section--current start)
        (oref magit-insert-section--current content)
@@ -828,64 +828,64 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         "RET visits source, TAB toggles section"))
       (pcase (plist-get item :status)
         ('modified
-         (rust-dive-magit--insert-structured-diff
+         (difftron-magit--insert-structured-diff
           (plist-get item :diff)))
         (_
          (when-let ((source (plist-get entity :source_text)))
-           (rust-dive-magit--insert-diff-text
+           (difftron-magit--insert-diff-text
             source
-            (rust-dive-magit--status-face (plist-get item :status)))
+            (difftron-magit--status-face (plist-get item :status)))
            (unless (string-suffix-p "\n" source)
              (insert "\n")))))
       (unless (eq (char-before) ?\n)
         (insert "\n"))
       (insert "\n"))))
 
-(defun rust-dive-magit--insert-structured-diff (diff)
+(defun difftron-magit--insert-structured-diff (diff)
   "Insert structured DIFF rows using Emacs layout and faces."
   (let ((rows (plist-get diff :rows)))
     (if rows
-        (let ((column-width (rust-dive-magit--modified-column-width)))
+        (let ((column-width (difftron-magit--modified-column-width)))
           (dolist (row rows)
-            (rust-dive-magit--insert-structured-diff-row
+            (difftron-magit--insert-structured-diff-row
              row
              column-width)))
       (insert "No diff output.\n"))))
 
-(defun rust-dive-magit--insert-structured-diff-row (row column-width)
+(defun difftron-magit--insert-structured-diff-row (row column-width)
   "Insert one structured diff ROW using COLUMN-WIDTH per side."
-  (rust-dive-magit--insert-structured-side
+  (difftron-magit--insert-structured-side
    (plist-get row :left)
    'left
    column-width)
   (insert " | ")
-  (rust-dive-magit--insert-structured-side
+  (difftron-magit--insert-structured-side
    (plist-get row :right)
    'right
    column-width)
   (insert "\n"))
 
-(defun rust-dive-magit--insert-structured-side
+(defun difftron-magit--insert-structured-side
     (side side-name column-width)
   "Insert SIDE for SIDE-NAME truncated to COLUMN-WIDTH."
   (if side
       (let
           (
            (start (point))
-           (face (rust-dive-magit--side-face side-name)))
-        (rust-dive-magit--insert-structured-segments
+           (face (difftron-magit--side-face side-name)))
+        (difftron-magit--insert-structured-segments
          (plist-get side :segments)
          side-name
          face
          column-width)
         (when (eq side-name 'left)
-          (rust-dive-magit--insert-diff-text
+          (difftron-magit--insert-diff-text
            (make-string (max 0 (- column-width (- (point) start))) ?\s)
            face)))
     (when (eq side-name 'left)
       (insert (make-string column-width ?\s)))))
 
-(defun rust-dive-magit--insert-structured-segments
+(defun difftron-magit--insert-structured-segments
     (segments side-name face remaining-width)
   "Insert SEGMENTS for SIDE-NAME with FACE within REMAINING-WIDTH columns."
   (let ((remaining remaining-width))
@@ -900,31 +900,31 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
                0
                nil))
              (refine-face
-              (rust-dive-magit--segment-refine-face
+              (difftron-magit--segment-refine-face
                side-name
                (plist-get segment :kind)))
              (start (point)))
           (unless (string-empty-p text)
-            (rust-dive-magit--insert-diff-text text face)
+            (difftron-magit--insert-diff-text text face)
             (when refine-face
-              (rust-dive-magit--add-refine-overlay
+              (difftron-magit--add-refine-overlay
                start
                (point)
                refine-face))
             (setq remaining (- remaining (string-width text)))))))))
 
-(defun rust-dive-magit--insert-diff-text (text face)
+(defun difftron-magit--insert-diff-text (text face)
   "Insert TEXT with optional diff FACE."
   (if face
       (insert (propertize text 'font-lock-face face))
     (insert text)))
 
-(defun rust-dive-magit--side-face (side-name)
+(defun difftron-magit--side-face (side-name)
   "Return the base diff face for SIDE-NAME."
   (ignore side-name)
   'magit-diff-context)
 
-(defun rust-dive-magit--segment-refine-face (side-name kind)
+(defun difftron-magit--segment-refine-face (side-name kind)
   "Return the refinement face for segment KIND on SIDE-NAME."
   (pcase kind
     ("novel"
@@ -933,7 +933,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
        (_ 'diff-refine-added)))
     (_ nil)))
 
-(defun rust-dive-magit--add-refine-overlay (start end face)
+(defun difftron-magit--add-refine-overlay (start end face)
   "Add a Magit-style fine diff overlay from START to END using FACE."
   (let ((overlay (make-overlay start end nil t)))
     (overlay-put overlay 'diff-mode 'fine)
@@ -941,11 +941,11 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     (overlay-put overlay 'face face)
     overlay))
 
-(defun rust-dive-magit--modified-column-width ()
+(defun difftron-magit--modified-column-width ()
   "Return the per-side width for structured modified diffs."
-  (max 24 (/ (- (rust-dive-magit--current-display-width) 3) 2)))
+  (max 24 (/ (- (difftron-magit--current-display-width) 3) 2)))
 
-(defun rust-dive-magit--visit-entity (entity)
+(defun difftron-magit--visit-entity (entity)
   "Visit ENTITY in another buffer."
   (let
       (
@@ -957,28 +957,28 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     (forward-line (1- line))
     (move-to-column (max 0 (1- column)))))
 
-(defun rust-dive-magit--diff-items (payload)
+(defun difftron-magit--diff-items (payload)
   "Flatten diff PAYLOAD into display items."
   (append
    (mapcar
     (lambda (entity)
-      (rust-dive-magit--item-from-entity 'added entity))
+      (difftron-magit--item-from-entity 'added entity))
     (plist-get payload :added))
    (mapcar
     (lambda (entity)
-      (rust-dive-magit--item-from-entity 'deleted entity))
+      (difftron-magit--item-from-entity 'deleted entity))
     (plist-get payload :deleted))
    (mapcan
-    #'rust-dive-magit--items-from-move
+    #'difftron-magit--items-from-move
     (plist-get payload :moved))
    (mapcan
-    #'rust-dive-magit--items-from-moved-modified
+    #'difftron-magit--items-from-moved-modified
     (plist-get payload :moved_modified))
    (mapcar
-    #'rust-dive-magit--item-from-change
+    #'difftron-magit--item-from-change
     (plist-get payload :modified))))
 
-(defun rust-dive-magit--item-from-change (change)
+(defun difftron-magit--item-from-change (change)
   "Build a display item from modified CHANGE."
   (let ((rhs (plist-get change :rhs)))
     (list
@@ -988,7 +988,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
      :summary (format "M %s" (plist-get rhs :name))
      :diff (plist-get change :diff))))
 
-(defun rust-dive-magit--items-from-move (change)
+(defun difftron-magit--items-from-move (change)
   "Build source-side and destination-side display items from moved CHANGE."
   (let
       (
@@ -1006,7 +1006,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
       :entity rhs
       :summary (format "Moved here from %s" (plist-get lhs :name))))))
 
-(defun rust-dive-magit--items-from-moved-modified (change)
+(defun difftron-magit--items-from-moved-modified (change)
   "Build source-side and destination-side items from moved-modified CHANGE."
   (let
       (
@@ -1028,7 +1028,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
       (format "Moved here from %s, with changes"
               (plist-get lhs :name))))))
 
-(defun rust-dive-magit--item-from-entity (status entity)
+(defun difftron-magit--item-from-entity (status entity)
   "Build a display item from ENTITY with STATUS."
   (list
    :kind (plist-get entity :kind)
@@ -1042,7 +1042,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
              (_ " "))
            (plist-get entity :name))))
 
-(defun rust-dive-magit--list-entity->item (entity)
+(defun difftron-magit--list-entity->item (entity)
   "Build a display item from a list-mode ENTITY."
   (list
    :kind (plist-get entity :kind)
@@ -1050,7 +1050,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
    :entity entity
    :summary (plist-get entity :name)))
 
-(defun rust-dive-magit--group-items
+(defun difftron-magit--group-items
     (items key-fn group-lessp &optional item-lessp)
   "Group ITEMS by KEY-FN, sorting groups with GROUP-LESSP.
 When ITEM-LESSP is non-nil, sort items within each group using it."
@@ -1074,64 +1074,64 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
             group-items))))
      (sort keys group-lessp))))
 
-(defun rust-dive-magit--group-items-by-kind (items)
+(defun difftron-magit--group-items-by-kind (items)
   "Group ITEMS by entity kind in display order."
-  (rust-dive-magit--group-items
+  (difftron-magit--group-items
    items
    (lambda (item) (plist-get item :kind))
-   #'rust-dive-magit--kind-lessp))
+   #'difftron-magit--kind-lessp))
 
-(defun rust-dive-magit--group-items-by-file (items)
+(defun difftron-magit--group-items-by-file (items)
   "Group ITEMS by relative path."
-  (rust-dive-magit--group-items items
-                                (lambda (item)
-                                  (plist-get (plist-get item :entity) :snapshot_path))
-                                #'string<
-                                #'rust-dive-magit--item-lessp))
+  (difftron-magit--group-items items
+                               (lambda (item)
+                                 (plist-get (plist-get item :entity) :snapshot_path))
+                               #'string<
+                               #'difftron-magit--item-lessp))
 
-(defun rust-dive-magit--item-lessp (lhs rhs)
+(defun difftron-magit--item-lessp (lhs rhs)
   "Return non-nil when LHS should sort before RHS."
   (let
       (
        (lhs-rank
-        (rust-dive-magit--status-rank (plist-get lhs :status)))
+        (difftron-magit--status-rank (plist-get lhs :status)))
        (rhs-rank
-        (rust-dive-magit--status-rank (plist-get rhs :status))))
+        (difftron-magit--status-rank (plist-get rhs :status))))
     (if (/= lhs-rank rhs-rank)
         (< lhs-rank rhs-rank)
       (string< (plist-get lhs :summary) (plist-get rhs :summary)))))
 
-(defun rust-dive-magit--kind-lessp (lhs rhs)
+(defun difftron-magit--kind-lessp (lhs rhs)
   "Return non-nil when kind LHS should sort before RHS."
   (let
       (
-       (lhs-rank (rust-dive-magit--kind-rank lhs))
-       (rhs-rank (rust-dive-magit--kind-rank rhs)))
+       (lhs-rank (difftron-magit--kind-rank lhs))
+       (rhs-rank (difftron-magit--kind-rank rhs)))
     (if (= lhs-rank rhs-rank)
         (string< lhs rhs)
       (< lhs-rank rhs-rank))))
 
-(defun rust-dive-magit--kind-rank (kind)
+(defun difftron-magit--kind-rank (kind)
   "Return the display rank for KIND."
   (or
    (cl-position
     kind
-    rust-dive-magit--entity-kind-order
+    difftron-magit--entity-kind-order
     :test #'equal)
-   (length rust-dive-magit--entity-kind-order)))
+   (length difftron-magit--entity-kind-order)))
 
-(defun rust-dive-magit--kind-label (kind)
+(defun difftron-magit--kind-label (kind)
   "Return the user-facing heading label for KIND."
-  (or (plist-get (rust-dive-magit--kind-metadata kind) :group_label)
+  (or (plist-get (difftron-magit--kind-metadata kind) :group_label)
       kind))
 
-(defun rust-dive-magit--kind-metadata (kind)
+(defun difftron-magit--kind-metadata (kind)
   "Return the metadata plist for KIND."
   (plist-get
-   rust-dive-magit--entity-kinds
+   difftron-magit--entity-kinds
    (intern (concat ":" kind))))
 
-(defun rust-dive-magit--status-rank (status)
+(defun difftron-magit--status-rank (status)
   "Return the display rank for STATUS."
   (pcase status
     ('modified 0)
@@ -1145,31 +1145,31 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
     ('deleted 3)
     (_ 4)))
 
-(defun rust-dive-magit--status-face (status)
+(defun difftron-magit--status-face (status)
   "Return the Magit face for STATUS."
   (pcase status
     ('added 'magit-diff-added)
     ('deleted 'magit-diff-removed)
     (_ nil)))
 
-(defun rust-dive-magit--insert-items (items)
+(defun difftron-magit--insert-items (items)
   "Insert ITEMS using the current grouping mode."
-  (pcase rust-dive-magit--grouping
-    ('file (rust-dive-magit--insert-file-groups items))
-    (_ (rust-dive-magit--insert-kind-groups items))))
+  (pcase difftron-magit--grouping
+    ('file (difftron-magit--insert-file-groups items))
+    (_ (difftron-magit--insert-kind-groups items))))
 
-(defun rust-dive-magit--indent (depth)
+(defun difftron-magit--indent (depth)
   "Return indentation for section DEPTH."
   (make-string (* depth 2) ?\s))
 
-(defun rust-dive-magit--heading-face (depth)
+(defun difftron-magit--heading-face (depth)
   "Return the heading face for section DEPTH."
   (pcase depth
     (0 'magit-section-heading)
-    (1 'rust-dive-magit-level-1-heading)
-    (_ 'rust-dive-magit-level-2-heading)))
+    (1 'difftron-magit-level-1-heading)
+    (_ 'difftron-magit-level-2-heading)))
 
-(defun rust-dive-magit--split-paths (input)
+(defun difftron-magit--split-paths (input)
   "Split comma-separated INPUT into normalized path filters."
   (if (string-empty-p input)
       nil
@@ -1177,33 +1177,33 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
      (lambda (item) (not (string-empty-p item)))
      (mapcar #'string-trim (split-string input "," t)))))
 
-(defun rust-dive-magit--current-display-width ()
+(defun difftron-magit--current-display-width ()
   "Return the current window body width in character columns."
   (max 20
        (if-let ((window (selected-window)))
            (window-body-width window)
          (frame-width))))
 
-(defun rust-dive-magit--run-command (repo-default-directory args)
-  "Run rust_dive with ARGS from REPO-DEFAULT-DIRECTORY and parse JSON output."
+(defun difftron-magit--run-command (repo-default-directory args)
+  "Run difftron with ARGS from REPO-DEFAULT-DIRECTORY and parse JSON output."
   (with-temp-buffer
     (let
         (
          (default-directory repo-default-directory)
-         (stderr-file (make-temp-file "rust-dive-stderr-")))
+         (stderr-file (make-temp-file "difftron-stderr-")))
       (unwind-protect
           (let
               (
                (status
                 (apply #'process-file
-                       rust-dive-magit-executable
+                       difftron-magit-executable
                        nil
                        (list (current-buffer) stderr-file)
                        nil
                        args)))
             (unless (eq status 0)
               (error
-               "Rust Dive failed: %s"
+               "Difftron failed: %s"
                (string-trim
                 (with-temp-buffer
                   (insert-file-contents stderr-file)
@@ -1212,7 +1212,7 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
             (json-parse-buffer :object-type 'plist :array-type 'list))
         (delete-file stderr-file)))))
 
-(defun rust-dive-magit--repo-root ()
+(defun difftron-magit--repo-root ()
   "Return the repository root for the current buffer."
   (or
    (and (fboundp 'magit-toplevel)
@@ -1221,19 +1221,19 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
    (locate-dominating-file default-directory ".git")
    (user-error "Not inside a Git repository")))
 
-(defun rust-dive-magit--dwim-endpoints (spec repo-root)
-  "Return Rust Dive LHS and RHS endpoints from Magit SPEC in REPO-ROOT."
+(defun difftron-magit--dwim-endpoints (spec repo-root)
+  "Return difftron LHS and RHS endpoints from Magit SPEC in REPO-ROOT."
   (pcase spec
     ((or 'unstaged 'staged 'unmerged 'undefined)
      (list "HEAD" repo-root))
     (`(commit . ,rev) (list (format "%s^" rev) rev))
     (`(stash . ,rev) (list (format "%s^" rev) rev))
     ((pred stringp)
-     (or (rust-dive-magit--range-endpoints spec)
+     (or (difftron-magit--range-endpoints spec)
          (list spec repo-root)))
     (_ (list "HEAD" repo-root))))
 
-(defun rust-dive-magit--range-endpoints (range)
+(defun difftron-magit--range-endpoints (range)
   "Return LHS and RHS endpoints for Git diff RANGE, or nil."
   (cond
    ((string-match "\\`\\(.+\\)\\.\\.\\.\\(.+\\)\\'" range)
@@ -1241,53 +1241,53 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
    ((string-match "\\`\\(.+\\)\\.\\.\\(.+\\)\\'" range)
     (list (match-string 1 range) (match-string 2 range)))))
 
-(defun rust-dive-magit--magit-diff-path-at-point ()
+(defun difftron-magit--magit-diff-path-at-point ()
   "Return the relative Magit diff file path at point, if any."
   (when-let ((section (magit-diff--file-section)))
     (or
-     (and (rust-dive-magit--magit-diff-removed-line-p)
+     (and (difftron-magit--magit-diff-removed-line-p)
           (oref section source))
      (oref section value)
      (oref section source))))
 
-(defun rust-dive-magit--magit-diff-line-at-point ()
+(defun difftron-magit--magit-diff-line-at-point ()
   "Return the Magit diff hunk line at point, if any."
   (when-let ((section (magit-diff--hunk-section)))
     (magit-diff-hunk-line
      section
-     (rust-dive-magit--magit-diff-removed-line-p))))
+     (difftron-magit--magit-diff-removed-line-p))))
 
-(defun rust-dive-magit--magit-diff-removed-line-p ()
+(defun difftron-magit--magit-diff-removed-line-p ()
   "Return non-nil if point is on a removed Magit diff line."
   (and (fboundp 'magit-diff-on-removed-line-p)
        (magit-diff-on-removed-line-p)))
 
-(defun rust-dive-magit--goto-entity-for-source (path line)
-  "Move point to the Rust Dive entity for PATH and optional LINE."
+(defun difftron-magit--goto-entity-for-source (path line)
+  "Move point to the difftron entity for PATH and optional LINE."
   (when-let
       (
        (section
-        (or (rust-dive-magit--find-entity-section path line)
-            (rust-dive-magit--find-entity-section path nil))))
-    (rust-dive-magit--show-section-and-ancestors section)
+        (or (difftron-magit--find-entity-section path line)
+            (difftron-magit--find-entity-section path nil))))
+    (difftron-magit--show-section-and-ancestors section)
     (goto-char (oref section start))))
 
-(defun rust-dive-magit--find-entity-section (path line)
+(defun difftron-magit--find-entity-section (path line)
   "Return the entity section matching PATH and LINE."
   (seq-find
    (lambda (section)
-     (rust-dive-magit--entity-section-matches-p section path line))
-   (rust-dive-magit--entity-sections magit-root-section)))
+     (difftron-magit--entity-section-matches-p section path line))
+   (difftron-magit--entity-sections magit-root-section)))
 
-(defun rust-dive-magit--entity-sections (section)
+(defun difftron-magit--entity-sections (section)
   "Return entity sections below SECTION."
   (append
-   (and (eq (oref section type) 'rust-dive-entity) (list section))
+   (and (eq (oref section type) 'difftron-entity) (list section))
    (mapcan
-    #'rust-dive-magit--entity-sections
+    #'difftron-magit--entity-sections
     (oref section children))))
 
-(defun rust-dive-magit--entity-section-matches-p (section path line)
+(defun difftron-magit--entity-section-matches-p (section path line)
   "Return non-nil when SECTION has PATH and optional LINE."
   (let*
       (
@@ -1302,23 +1302,23 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
                   (<= start-line line)
                   (<= line end-line))))))
 
-(defun rust-dive-magit--show-section-and-ancestors (section)
+(defun difftron-magit--show-section-and-ancestors (section)
   "Show SECTION and its ancestors."
   (let ((current section))
     (while current
       (magit-section-show current)
       (setq current (oref current parent)))))
 
-(defun rust-dive-magit--entity-section-at-point ()
+(defun difftron-magit--entity-section-at-point ()
   "Return the nearest entity section at point, if any."
   (let ((section (magit-current-section)))
     (while
-        (and section (not (eq (oref section type) 'rust-dive-entity)))
+        (and section (not (eq (oref section type) 'difftron-entity)))
       (setq section (oref section parent)))
     section))
 
-(defun rust-dive-magit-register-magit-diff-suffix ()
-  "Register Rust Dive in the `magit-diff' transient."
+(defun difftron-magit-register-magit-diff-suffix ()
+  "Register difftron in the `magit-diff' transient."
   (when
       (and (featurep 'magit-diff)
            (not
@@ -1327,66 +1327,66 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
     (transient-append-suffix
       'magit-diff
       "d"
-      rust-dive-magit--magit-diff-suffix)))
+      difftron-magit--magit-diff-suffix)))
 
-(defun rust-dive-magit-register-magit-diff-bindings ()
-  "Register Rust Dive bindings in Magit diff buffers."
+(defun difftron-magit-register-magit-diff-bindings ()
+  "Register difftron bindings in Magit diff buffers."
   (when (featurep 'magit-diff)
-    (rust-dive-magit-register-magit-diff-suffix)
+    (difftron-magit-register-magit-diff-suffix)
     (define-key
      magit-diff-mode-map
      (kbd "D")
-     #'rust-dive-magit-diff-at-point)
+     #'difftron-magit-diff-at-point)
     (define-key
      magit-diff-section-map
      (kbd "D")
-     #'rust-dive-magit-diff-at-point)))
+     #'difftron-magit-diff-at-point)))
 
-(defun rust-dive-magit-unregister-magit-diff-suffix ()
-  "Remove Rust Dive from the `magit-diff' transient."
+(defun difftron-magit-unregister-magit-diff-suffix ()
+  "Remove difftron from the `magit-diff' transient."
   (when
       (and (featurep 'magit-diff)
            (ignore-errors
              (transient-get-suffix 'magit-diff "D")))
     (transient-remove-suffix 'magit-diff "D")))
 
-(defun rust-dive-magit-unregister-magit-diff-bindings ()
-  "Remove Rust Dive bindings from Magit diff buffers."
+(defun difftron-magit-unregister-magit-diff-bindings ()
+  "Remove difftron bindings from Magit diff buffers."
   (when (featurep 'magit-diff)
-    (rust-dive-magit-unregister-magit-diff-suffix)
+    (difftron-magit-unregister-magit-diff-suffix)
     (define-key magit-diff-mode-map (kbd "D") nil)
     (define-key magit-diff-section-map (kbd "D") nil)))
 
-(defun rust-dive-magit--maybe-register-magit-diff-suffix
+(defun difftron-magit--maybe-register-magit-diff-suffix
     (&optional file)
-  "Register Rust Dive bindings when `magit-diff' becomes available.
+  "Register difftron bindings when `magit-diff' becomes available.
 When FILE is non-nil, it is the path passed by `after-load-functions'."
   (when
-      (and rust-dive-magit-bindings-mode
+      (and difftron-magit-bindings-mode
            (or (null file) (string= (file-name-base file) "magit-diff")))
     (remove-hook
      'after-load-functions
-     #'rust-dive-magit--maybe-register-magit-diff-suffix)
-    (rust-dive-magit-register-magit-diff-bindings)))
+     #'difftron-magit--maybe-register-magit-diff-suffix)
+    (difftron-magit-register-magit-diff-bindings)))
 
 ;;;###autoload
-(define-minor-mode rust-dive-magit-bindings-mode
-  "Toggle Rust Dive bindings in Magit transients."
+(define-minor-mode difftron-magit-bindings-mode
+  "Toggle difftron bindings in Magit transients."
   :global t
-  :group 'rust-dive-magit
+  :group 'difftron-magit
   :require
-  'rust-dive-magit
-  (if rust-dive-magit-bindings-mode
+  'difftron-magit
+  (if difftron-magit-bindings-mode
       (if (featurep 'magit-diff)
-          (rust-dive-magit--maybe-register-magit-diff-suffix)
+          (difftron-magit--maybe-register-magit-diff-suffix)
         (add-hook
          'after-load-functions
-         #'rust-dive-magit--maybe-register-magit-diff-suffix))
+         #'difftron-magit--maybe-register-magit-diff-suffix))
     (remove-hook
      'after-load-functions
-     #'rust-dive-magit--maybe-register-magit-diff-suffix)
-    (rust-dive-magit-unregister-magit-diff-bindings)))
+     #'difftron-magit--maybe-register-magit-diff-suffix)
+    (difftron-magit-unregister-magit-diff-bindings)))
 
-(provide 'rust-dive-magit)
+(provide 'difftron-magit)
 
-;;; rust-dive-magit.el ends here
+;;; difftron-magit.el ends here

@@ -15,7 +15,7 @@ fn list_json_emits_structured_stdout() {
         .current_dir(repo.path())
         .args(["list", ".", "--format", "json"])
         .output()
-        .expect("failed to run rust_dive");
+        .expect("failed to run CLI");
 
     assert!(
         output.status.success(),
@@ -41,7 +41,7 @@ fn diff_json_emits_modified_entities() {
         .current_dir(repo.path())
         .args(["diff", "HEAD~1", "HEAD", "--format", "json"])
         .output()
-        .expect("failed to run rust_dive");
+        .expect("failed to run CLI");
 
     assert!(
         output.status.success(),
@@ -93,7 +93,7 @@ fn diff_json_emits_moved_rust_entities() {
         .current_dir(repo.path())
         .args(["diff", "HEAD~1", "HEAD", "--format", "json"])
         .output()
-        .expect("failed to run rust_dive");
+        .expect("failed to run CLI");
 
     assert!(
         output.status.success(),
@@ -142,7 +142,7 @@ fn diff_json_emits_moved_modified_rust_entities() {
         .current_dir(repo.path())
         .args(["diff", "HEAD~1", "HEAD", "--format", "json"])
         .output()
-        .expect("failed to run rust_dive");
+        .expect("failed to run CLI");
 
     assert!(
         output.status.success(),
@@ -195,7 +195,7 @@ fn diff_width_changes_rendered_layout() {
             "diff", "HEAD~1", "HEAD", "--format", "json", "--width", "60",
         ])
         .output()
-        .expect("failed to run rust_dive");
+        .expect("failed to run CLI");
 
     assert!(
         output.status.success(),
@@ -236,7 +236,7 @@ fn diff_json_accepts_single_files() {
             "json",
         ])
         .output()
-        .expect("failed to run rust_dive");
+        .expect("failed to run CLI");
 
     assert!(
         output.status.success(),
@@ -272,7 +272,7 @@ fn diff_json_suppresses_redundant_parent_entries_for_single_files() {
             "json",
         ])
         .output()
-        .expect("failed to run rust_dive");
+        .expect("failed to run CLI");
 
     assert!(
         output.status.success(),
@@ -328,7 +328,7 @@ fn list_json_accepts_single_clojure_files() {
             "json",
         ])
         .output()
-        .expect("failed to run rust_dive");
+        .expect("failed to run CLI");
 
     assert!(
         output.status.success(),
@@ -382,7 +382,7 @@ fn diff_json_accepts_single_clojure_files() {
             "json",
         ])
         .output()
-        .expect("failed to run rust_dive");
+        .expect("failed to run CLI");
 
     assert!(
         output.status.success(),
@@ -424,7 +424,7 @@ fn list_json_accepts_single_typescript_files() {
             "json",
         ])
         .output()
-        .expect("failed to run rust_dive");
+        .expect("failed to run CLI");
 
     assert!(
         output.status.success(),
@@ -475,7 +475,7 @@ fn list_json_collects_typescript_files_with_recoverable_parse_errors() {
             "json",
         ])
         .output()
-        .expect("failed to run rust_dive");
+        .expect("failed to run CLI");
 
     assert!(
         output.status.success(),
@@ -509,7 +509,7 @@ fn diff_json_accepts_pure_typescript_repositories() {
         .current_dir(repo.path())
         .args(["diff", "HEAD~1", "HEAD", "--format", "json"])
         .output()
-        .expect("failed to run rust_dive");
+        .expect("failed to run CLI");
 
     assert!(
         output.status.success(),
@@ -549,7 +549,7 @@ fn diff_json_accepts_pure_clojure_repositories() {
         .current_dir(repo.path())
         .args(["diff", "HEAD~1", "HEAD", "--format", "json"])
         .output()
-        .expect("failed to run rust_dive");
+        .expect("failed to run CLI");
 
     assert!(
         output.status.success(),
@@ -584,7 +584,7 @@ fn diff_json_emits_moved_clojure_entities() {
         .current_dir(repo.path())
         .args(["diff", "HEAD~1", "HEAD", "--format", "json"])
         .output()
-        .expect("failed to run rust_dive");
+        .expect("failed to run CLI");
 
     assert!(
         output.status.success(),
@@ -607,7 +607,7 @@ fn diff_json_emits_moved_clojure_entities() {
 }
 
 fn binary_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_rust_dive"))
+    PathBuf::from(env!("CARGO_BIN_EXE_difftron"))
 }
 
 struct TestRepo {

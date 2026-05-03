@@ -1,4 +1,4 @@
-;;; bootstrap.el --- Shared bootstrap for rust_dive Emacs test config -*- lexical-binding: t; -*-
+;;; bootstrap.el --- Shared bootstrap for difftron Emacs test config -*- lexical-binding: t; -*-
 
 ;;; Code:
 
@@ -10,30 +10,30 @@
 (setq comp-async-report-warnings-errors nil)
 (setq native-comp-async-report-warnings-errors nil)
 
-(defconst rust-dive-test-config-root
+(defconst difftron-test-config-root
   (file-name-directory (or load-file-name buffer-file-name)))
 
-(defconst rust-dive-elisp-root
-  (expand-file-name ".." rust-dive-test-config-root))
+(defconst difftron-elisp-root
+  (expand-file-name ".." difftron-test-config-root))
 
-(defun rust-dive-test-config--path-segment (value)
+(defun difftron-test-config--path-segment (value)
   "Return VALUE as a filesystem-friendly path segment."
   (replace-regexp-in-string
    "[^[:alnum:]._-]+"
    "-"
    (format "%s" value)))
 
-(defun rust-dive-test-config-straight-build-dir ()
+(defun difftron-test-config-straight-build-dir ()
   "Return the host-specific straight.el build directory name."
   (format "build-%s-%s-%s"
-	  (rust-dive-test-config--path-segment emacs-version)
-	  (rust-dive-test-config--path-segment system-type)
-	  (rust-dive-test-config--path-segment system-configuration)))
+	  (difftron-test-config--path-segment emacs-version)
+	  (difftron-test-config--path-segment system-type)
+	  (difftron-test-config--path-segment system-configuration)))
 
-(defun rust-dive-test-config-bootstrap ()
+(defun difftron-test-config-bootstrap ()
   "Bootstrap straight.el and `use-package' for local test config."
-  (setq straight-base-dir rust-dive-test-config-root)
-  (setq straight-build-dir (rust-dive-test-config-straight-build-dir))
+  (setq straight-base-dir difftron-test-config-root)
+  (setq straight-build-dir (difftron-test-config-straight-build-dir))
   (setq straight-use-package-by-default t)
   (defvar bootstrap-version)
   (let
@@ -54,6 +54,6 @@
   (straight-use-package 'use-package)
   (require 'use-package))
 
-(provide 'rust-dive-test-config-bootstrap)
+(provide 'difftron-test-config-bootstrap)
 
 ;;; bootstrap.el ends here

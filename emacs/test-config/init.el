@@ -1,9 +1,9 @@
-;;; init.el --- Minimal rust_dive + Magit setup  -*- lexical-binding: t; -*-
+;;; init.el --- Minimal difftron + Magit setup  -*- lexical-binding: t; -*-
 
 ;;; Commentary:
 ;;
 ;; Usage:
-;;   emacs -Q -l /path/to/rust_dive/emacs/test-config/init.el
+;;   emacs -Q -l /path/to/difftron/emacs/test-config/init.el
 
 ;;; Code:
 
@@ -11,11 +11,11 @@
  (expand-file-name "bootstrap.el"
 		   (file-name-directory (or load-file-name buffer-file-name)))
  nil 'nomessage)
-(rust-dive-test-config-bootstrap)
+(difftron-test-config-bootstrap)
 
-(defconst rust-dive-dev-wrapper
-  (expand-file-name "../../scripts/rust_dive_dev"
-		    rust-dive-test-config-root))
+(defconst difftron-dev-wrapper
+  (expand-file-name "../../script/difftron_dev"
+		    difftron-test-config-root))
 
 (use-package
   magit
@@ -23,13 +23,13 @@
   :defer t)
 
 (use-package
-  rust-dive-magit
+  difftron-magit
   :straight nil
-  :load-path rust-dive-elisp-root
+  :load-path difftron-elisp-root
   :demand t
-  :bind ("C-c r d" . rust-dive-magit-diff)
-  :init (setq rust-dive-magit-executable rust-dive-dev-wrapper)
-  :config (rust-dive-magit-bindings-mode 1))
+  :bind ("C-c r d" . difftron-magit-diff)
+  :init (setq difftron-magit-executable difftron-dev-wrapper)
+  :config (difftron-magit-bindings-mode 1))
 
 (provide 'init)
 

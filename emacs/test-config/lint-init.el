@@ -1,9 +1,9 @@
-;;; lint-init.el --- Lint bootstrap for rust_dive Emacs checks -*- lexical-binding: t; -*-
+;;; lint-init.el --- Lint bootstrap for difftron Emacs checks -*- lexical-binding: t; -*-
 
 ;;; Commentary:
 ;;
 ;; Usage:
-;;   emacs -Q -l /path/to/rust_dive/emacs/test-config/lint-init.el
+;;   emacs -Q -l /path/to/difftron/emacs/test-config/lint-init.el
 
 ;;; Code:
 
@@ -14,13 +14,13 @@
 (require 'package)
 
 (setq package-user-dir
-      (expand-file-name "rust-dive-emacs-package-cache"
+      (expand-file-name "difftron-emacs-package-cache"
 			temporary-file-directory))
 (setq package-archives '(("melpa" . "https://melpa.org/packages/")))
 (package-initialize)
 (unless package-archive-contents
   (package-refresh-contents))
-(rust-dive-test-config-bootstrap)
+(difftron-test-config-bootstrap)
 
 (straight-use-package 'package-lint)
 (straight-use-package 'relint)
@@ -31,9 +31,9 @@
   :demand t)
 
 (use-package
-  rust-dive-magit-lint
+  difftron-magit-lint
   :straight nil
-  :load-path rust-dive-elisp-root
+  :load-path difftron-elisp-root
   :demand t)
 
 (provide 'lint-init)

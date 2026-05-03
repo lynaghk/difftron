@@ -31,13 +31,13 @@ impl FormatTime for LocalTimeMillis {
 }
 
 pub fn init() -> Result<()> {
-    const APP_TARGET_PREFIX: &str = "rust_dive";
+    const APP_TARGET_PREFIX: &str = "difftron";
 
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
     let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("rust_dive=info"));
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("difftron=info"));
     let app_only = filter_fn(|metadata| metadata.target().starts_with(APP_TARGET_PREFIX));
 
     tracing_subscriber::registry()

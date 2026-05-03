@@ -4,12 +4,12 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 WORKSPACE_MANIFEST="${REPO_ROOT}/Cargo.toml"
 
-rust_dive_prepare_repo() {
+difftron_prepare_repo() {
   cd "${REPO_ROOT}"
 }
 
-rust_dive_prepare_emacs() {
-  rust_dive_prepare_repo
+difftron_prepare_emacs() {
+  difftron_prepare_repo
 
   if ! command -v emacs >/dev/null 2>&1 \
     && ! command -v emacs-nox >/dev/null 2>&1; then

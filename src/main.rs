@@ -129,7 +129,7 @@ fn run_diff(
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "rust_dive")]
+#[command(name = "difftron")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,

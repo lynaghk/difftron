@@ -20,7 +20,7 @@ normalize_snapshot_arg() {
 LHS=$(normalize_snapshot_arg "${1:-${REPO_ROOT}@89e41ef}")
 RHS=$(normalize_snapshot_arg "${2:-${REPO_ROOT}@d1818bf}")
 
-COMMAND=("${SCRIPT_DIR}/rust_dive_dev" "diff" "${LHS}" "${RHS}")
+COMMAND=("${SCRIPT_DIR}/difftron_dev" "diff" "${LHS}" "${RHS}")
 
 cd "${REPO_ROOT}"
 

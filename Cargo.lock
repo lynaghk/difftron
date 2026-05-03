@@ -342,6 +342,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "difftron"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arborium-clojure",
+ "arborium-typescript",
+ "clap",
+ "env_logger",
+ "gix",
+ "id-arena",
+ "minidiff",
+ "ra_ap_syntax",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "time",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-tree",
+ "tree-sitter-patched-arborium",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1997,30 +2021,6 @@ dependencies = [
  "memoffset",
  "rustc-hash 1.1.0",
  "text-size",
-]
-
-[[package]]
-name = "rust_dive"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arborium-clojure",
- "arborium-typescript",
- "clap",
- "env_logger",
- "gix",
- "id-arena",
- "minidiff",
- "ra_ap_syntax",
- "serde",
- "serde_json",
- "tempfile",
- "time",
- "toml",
- "tracing",
- "tracing-subscriber",
- "tracing-tree",
- "tree-sitter-patched-arborium",
 ]
 
 [[package]]

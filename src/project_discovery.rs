@@ -591,7 +591,7 @@ mod tests {
                 members = [".", "minidiff"]
 
                 [package]
-                name = "rust_dive"
+                name = "root_crate"
 
                 [lib]
                 path = "src/lib.rs"
@@ -622,7 +622,7 @@ mod tests {
                     language: Language::Rust,
                 },
                 TargetRoot {
-                    crate_name: "rust_dive".to_owned(),
+                    crate_name: "root_crate".to_owned(),
                     root_file: PathBuf::from("src/lib.rs"),
                     language: Language::Rust,
                 },

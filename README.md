@@ -1,9 +1,9 @@
-# rust_dive
+# difftron
 
-`rust_dive` is a Rust code-structure diff tool with:
+`difftron` is a Rust code-structure diff tool with:
 
 - a CLI for listing entities and diffing snapshots
-- an Emacs integration in [emacs/rust-dive-magit.el](/root/2026-04-21-diff/emacs/rust-dive-magit.el) that renders JSON output in a dedicated buffer
+- an Emacs integration in [emacs/difftron-magit.el](/root/2026-04-21-diff/emacs/difftron-magit.el) that renders JSON output in a dedicated buffer
 
 ## Development
 
@@ -27,48 +27,48 @@ chmod +x .git/hooks/pre-commit
 
 ## Emacs Usage
 
-The Emacs package assumes a normal `rust_dive` binary by default.
+The Emacs package assumes a normal `difftron` binary by default.
 
 For local development from this workspace, override that from outside the
-package by pointing `rust-dive-magit-executable` at the wrapper script in this
-repo. If you also want Rust Dive to appear in Magit's diff transient as `D`,
-enable `rust-dive-magit-bindings-mode`.
+package by pointing `difftron-magit-executable` at the wrapper script in this
+repo. If you also want difftron to appear in Magit's diff transient as `D`,
+enable `difftron-magit-bindings-mode`.
 
 Example Emacs config:
 
 ```elisp
-(add-to-list 'load-path "/path/to/rust_dive/emacs")
-(require 'rust-dive-magit)
+(add-to-list 'load-path "/path/to/difftron/emacs")
+(require 'difftron-magit)
 
-(setq rust-dive-magit-executable
-      "/path/to/rust_dive/script/rust_dive_dev")
+(setq difftron-magit-executable
+      "/path/to/difftron/script/difftron_dev")
 
-(rust-dive-magit-bindings-mode 1)
+(difftron-magit-bindings-mode 1)
 ```
 
 Example with `use-package`:
 
 ```elisp
-(use-package rust-dive-magit
-  :load-path "/path/to/rust_dive/emacs"
-  :commands (rust-dive-magit-diff)
+(use-package difftron-magit
+  :load-path "/path/to/difftron/emacs"
+  :commands (difftron-magit-diff)
   :init
-  (setq rust-dive-magit-executable
-        "/path/to/rust_dive/script/rust_dive_dev")
+  (setq difftron-magit-executable
+        "/path/to/difftron/script/difftron_dev")
   :config
-  (rust-dive-magit-bindings-mode 1))
+  (difftron-magit-bindings-mode 1))
 ```
 
 That wrapper runs:
 
 ```bash
-cargo run --release --manifest-path /path/to/rust_dive/Cargo.toml -- ...
+cargo run --release --manifest-path /path/to/difftron/Cargo.toml -- ...
 ```
 
 After that:
 
-- `M-x rust-dive-magit-diff` opens a Rust Dive diff buffer
-- in Magit's diff popup, `D` runs Rust Dive using Magit's current diff context
+- `M-x difftron-magit-diff` opens a difftron diff buffer
+- in Magit's diff popup, `D` runs difftron using Magit's current diff context
 
-`rust-dive-magit-diff` compares `HEAD` to the current working tree by default
-and renders results in the `*rust-dive*` buffer.
+`difftron-magit-diff` compares `HEAD` to the current working tree by default
+and renders results in the `*difftron*` buffer.
