@@ -533,6 +533,184 @@
       (lookup-key rust-dive-magit-mode-map (kbd "M-4"))
       #'magit-section-show-level-4-all)))
 
+(ert-deftest rust-dive-magit-binds-commit-navigation ()
+  (should
+    (eq
+      (lookup-key rust-dive-magit-mode-map (kbd "N"))
+      #'rust-dive-magit-next-commit))
+  (should
+    (eq
+      (lookup-key rust-dive-magit-mode-map (kbd "P"))
+      #'rust-dive-magit-previous-commit))
+  (should
+    (eq
+      (lookup-key rust-dive-magit-mode-map (kbd "n"))
+      #'magit-section-forward))
+  (should
+    (eq
+      (lookup-key rust-dive-magit-mode-map (kbd "p"))
+      #'magit-section-backward)))
+
+(ert-deftest rust-dive-magit-previous-commit-preserves-path-filters ()
+  (let
+    (
+      displayed-args
+      displayed-directory)
+    (cl-letf
+      (
+        ((symbol-function 'magit-git-lines)
+          (lambda (&rest args)
+            (pcase args
+              (`("rev-list" "-1" "--parents" "commit-c")
+                '("commit-c commit-b"))
+              (`("rev-list" "-1" "--parents" "commit-b")
+                '("commit-b commit-a"))
+              (_ (error "Unexpected git args: %S" args)))))
+        ((symbol-function 'rust-dive-magit--run-command)
+          (lambda (_default-directory _args)
+            rust-dive-magit-tests--sample-payload))
+        ((symbol-function 'rust-dive-magit--display-buffer)
+          (lambda (default-directory args _payload)
+            (setq displayed-directory default-directory)
+            (setq displayed-args args))))
+      (with-temp-buffer
+        (rust-dive-magit-mode)
+        (setq rust-dive-magit--default-directory "/tmp/repo/")
+        (setq rust-dive-magit--command-args
+          '
+          ("diff"
+            "commit-b"
+            "commit-c"
+            "--format"
+            "json"
+            "--path"
+            "src/lib.rs"))
+        (setq rust-dive-magit--payload
+          (rust-dive-magit-tests--diff-payload
+            :lhs-rev "commit-b"
+            :rhs-rev "commit-c"))
+        (rust-dive-magit-previous-commit)))
+    (should (equal displayed-directory "/tmp/repo/"))
+    (should
+      (equal
+        displayed-args
+        '
+        ("diff"
+          "commit-a"
+          "commit-b"
+          "--format"
+          "json"
+          "--path"
+          "src/lib.rs")))))
+
+(ert-deftest rust-dive-magit-next-commit-walks-head-first-parent ()
+  (let (displayed-args)
+    (cl-letf
+      (
+        ((symbol-function 'magit-git-lines)
+          (lambda (&rest args)
+            (pcase args
+              (
+                `
+                ("rev-list"
+                  "--first-parent"
+                  "--reverse"
+                  "commit-b..HEAD")
+                '("commit-c" "commit-d"))
+              (`("rev-list" "-1" "--parents" "commit-c")
+                '("commit-c commit-b"))
+              (_ (error "Unexpected git args: %S" args)))))
+        ((symbol-function 'rust-dive-magit--run-command)
+          (lambda (_default-directory _args)
+            rust-dive-magit-tests--sample-payload))
+        ((symbol-function 'rust-dive-magit--display-buffer)
+          (lambda (_default-directory args _payload)
+            (setq displayed-args args))))
+      (with-temp-buffer
+        (rust-dive-magit-mode)
+        (setq rust-dive-magit--default-directory "/tmp/repo/")
+        (setq rust-dive-magit--command-args
+          '
+          ("diff"
+            "commit-a"
+            "commit-b"
+            "--format"
+            "json"
+            "--path"
+            "src/lib.rs"
+            "--path"
+            "src/main.rs"))
+        (setq rust-dive-magit--payload
+          (rust-dive-magit-tests--diff-payload
+            :lhs-rev "commit-a"
+            :rhs-rev "commit-b"))
+        (rust-dive-magit-next-commit)))
+    (should
+      (equal
+        displayed-args
+        '
+        ("diff"
+          "commit-b"
+          "commit-c"
+          "--format"
+          "json"
+          "--path"
+          "src/lib.rs"
+          "--path"
+          "src/main.rs")))))
+
+(ert-deftest rust-dive-magit-commit-navigation-requires-git-rhs ()
+  (with-temp-buffer
+    (rust-dive-magit-mode)
+    (setq rust-dive-magit--payload
+      (list
+        :command "diff"
+        :rhs (list :kind "path" :label "/tmp/repo")))
+    (should-error (rust-dive-magit-previous-commit) :type 'user-error)
+    (should-error (rust-dive-magit-next-commit) :type 'user-error)))
+
+(ert-deftest rust-dive-magit-previous-commit-errors-at-root ()
+  (cl-letf
+    (
+      ((symbol-function 'magit-git-lines)
+        (lambda (&rest args)
+          (pcase args
+            (`("rev-list" "-1" "--parents" "commit-a") '("commit-a"))
+            (_ (error "Unexpected git args: %S" args))))))
+    (with-temp-buffer
+      (rust-dive-magit-mode)
+      (setq rust-dive-magit--payload
+        (rust-dive-magit-tests--diff-payload
+          :lhs-rev "commit-a^"
+          :rhs-rev "commit-a"))
+      (should-error
+        (rust-dive-magit-previous-commit)
+        :type 'user-error))))
+
+(ert-deftest rust-dive-magit-next-commit-errors-at-head ()
+  (cl-letf
+    (
+      ((symbol-function 'magit-git-lines)
+        (lambda (&rest args)
+          (pcase args
+            (
+              `
+              ("rev-list"
+                "--first-parent"
+                "--reverse"
+                "commit-c..HEAD")
+              nil)
+            (_ (error "Unexpected git args: %S" args))))))
+    (with-temp-buffer
+      (rust-dive-magit-mode)
+      (setq rust-dive-magit--payload
+        (rust-dive-magit-tests--diff-payload
+          :lhs-rev "commit-b"
+          :rhs-rev "commit-c"))
+      (should-error
+        (rust-dive-magit-next-commit)
+        :type 'user-error))))
+
 (ert-deftest rust-dive-magit-refresh-preserves-magit-display-state ()
   (let ((rust-dive-magit-default-grouping 'file))
     (with-temp-buffer

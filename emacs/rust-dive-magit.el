@@ -19,6 +19,7 @@
 (require 'cl-lib)
 (require 'diff-mode)
 (require 'json)
+(require 'magit-git)
 (require 'magit-mode)
 (require 'magit-section)
 (require 'seq)
@@ -68,6 +69,8 @@
     (define-key map (kbd "f") #'rust-dive-magit-cycle-grouping)
     (define-key map (kbd "h") #'rust-dive-magit-dispatch)
     (define-key map (kbd "?") #'rust-dive-magit-dispatch)
+    (define-key map (kbd "N") #'rust-dive-magit-next-commit)
+    (define-key map (kbd "P") #'rust-dive-magit-previous-commit)
     (define-key map (kbd "RET") #'rust-dive-magit-visit-thing)
     map)
   "Keymap for `rust-dive-magit-mode'.")
@@ -109,6 +112,8 @@
       ("M-3" "All level 3" magit-section-show-level-3-all)
       ("M-4" "All level 4" magit-section-show-level-4-all)]
     ["Movement"
+      ("N" "Next commit" rust-dive-magit-next-commit)
+      ("P" "Previous commit" rust-dive-magit-previous-commit)
       ("n" "Next section" magit-section-forward)
       ("p" "Previous section" magit-section-backward)
       ("M-n" "Next sibling" magit-section-forward-sibling)
@@ -181,6 +186,96 @@ working tree rooted at the current repository."
     rust-dive-magit--payload)
   (with-current-buffer rust-dive-magit-buffer-name
     (magit-section-show-level-3)))
+
+(defun rust-dive-magit-next-commit ()
+  "Show the next commit on HEAD's first-parent history."
+  (interactive)
+  (rust-dive-magit--show-commit-diff
+    (rust-dive-magit--next-commit
+      (rust-dive-magit--current-rhs-revision))))
+
+(defun rust-dive-magit-previous-commit ()
+  "Show the first-parent commit before the current RHS commit."
+  (interactive)
+  (rust-dive-magit--show-commit-diff
+    (or
+      (rust-dive-magit--commit-parent
+        (rust-dive-magit--current-rhs-revision))
+      (user-error "No previous commit"))))
+
+(defun rust-dive-magit--current-rhs-revision ()
+  "Return the Git revision for the current diff RHS."
+  (let ((rhs (plist-get rust-dive-magit--payload :rhs)))
+    (unless (equal (plist-get rhs :kind) "git_revision")
+      (user-error
+        "Rust Dive buffer is not showing a Git revision diff"))
+    (or (plist-get rhs :rev)
+      (user-error "Rust Dive diff RHS has no Git revision"))))
+
+(defun rust-dive-magit--next-commit (rev)
+  "Return the next commit after REV on HEAD's first-parent history."
+  (let
+    (
+      (default-directory
+        (or rust-dive-magit--default-directory default-directory)))
+    (or
+      (car
+        (magit-git-lines
+          "rev-list"
+          "--first-parent"
+          "--reverse"
+          (format "%s..HEAD" rev)))
+      (user-error "No next commit on HEAD's first-parent history"))))
+
+(defun rust-dive-magit--commit-parent (rev)
+  "Return the first parent of REV, or nil for a root commit."
+  (let*
+    (
+      (default-directory
+        (or rust-dive-magit--default-directory default-directory))
+      (line (car (magit-git-lines "rev-list" "-1" "--parents" rev)))
+      (parts (and line (split-string line))))
+    (cadr parts)))
+
+(defun rust-dive-magit--show-commit-diff (rev)
+  "Render the Rust Dive diff for commit REV."
+  (let
+    (
+      (parent
+        (or (rust-dive-magit--commit-parent rev)
+          (user-error "Commit %s has no parent" rev))))
+    (rust-dive-magit--run-and-display-diff parent rev)))
+
+(defun rust-dive-magit--run-and-display-diff (lhs rhs)
+  "Run and display a Rust Dive diff from LHS to RHS."
+  (unless rust-dive-magit--default-directory
+    (user-error
+      "No rust_dive command is associated with this buffer"))
+  (let*
+    (
+      (args
+        (append
+          (list "diff" lhs rhs "--format" "json")
+          (rust-dive-magit--command-path-args
+            rust-dive-magit--command-args)))
+      (payload
+        (rust-dive-magit--run-command
+          rust-dive-magit--default-directory
+          args)))
+    (rust-dive-magit--display-buffer
+      rust-dive-magit--default-directory
+      args
+      payload)))
+
+(defun rust-dive-magit--command-path-args (args)
+  "Return the --path arguments from rust_dive command ARGS."
+  (let (paths)
+    (while args
+      (let ((arg (pop args)))
+        (when (and (equal arg "--path") args)
+          (push "--path" paths)
+          (push (pop args) paths))))
+    (nreverse paths)))
 
 (defun rust-dive-magit-visit-thing ()
   "Visit the entity at point or activate a button."
