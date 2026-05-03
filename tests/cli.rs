@@ -128,6 +128,61 @@ fn diff_json_emits_moved_rust_entities() {
 }
 
 #[test]
+fn diff_json_emits_moved_modified_rust_entities() {
+    let repo = TestRepo::new();
+    repo.write_lib("pub mod old;\n");
+    repo.write_file("src/old.rs", "pub fn moved() -> u32 { 41 }\n");
+    repo.commit_all("initial");
+    repo.write_lib("pub mod new;\n");
+    repo.write_file("src/new.rs", "pub fn moved() -> u32 { 42 }\n");
+    repo.remove_file("src/old.rs");
+    repo.commit_all("move and change function");
+
+    let output = Command::new(binary_path())
+        .current_dir(repo.path())
+        .args(["diff", "HEAD~1", "HEAD", "--format", "json"])
+        .output()
+        .expect("failed to run rust_dive");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    let moved_modified = json["moved_modified"]
+        .as_array()
+        .expect("moved_modified should be an array");
+    let moved_function = moved_modified
+        .iter()
+        .find(|entry| entry["rhs"]["name"] == "demo::new::moved")
+        .expect("expected moved-modified function entry");
+
+    assert_eq!(moved_function["lhs"]["name"], "demo::old::moved");
+    assert_eq!(moved_function["lhs"]["snapshot_path"], "src/old.rs");
+    assert_eq!(moved_function["rhs"]["snapshot_path"], "src/new.rs");
+    assert_eq!(
+        moved_function["diff"]["rows"][0]["right"]["segments"][1]["text"],
+        "42"
+    );
+    assert!(
+        json["added"]
+            .as_array()
+            .expect("added should be an array")
+            .iter()
+            .all(|entry| entry["name"] != "demo::new::moved")
+    );
+    assert!(
+        json["deleted"]
+            .as_array()
+            .expect("deleted should be an array")
+            .iter()
+            .all(|entry| entry["name"] != "demo::old::moved")
+    );
+}
+
+#[test]
 fn diff_width_changes_rendered_layout() {
     let repo = TestRepo::new();
     repo.commit_all("initial");

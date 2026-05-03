@@ -971,6 +971,9 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     (mapcan
       #'rust-dive-magit--items-from-move
       (plist-get payload :moved))
+    (mapcan
+      #'rust-dive-magit--items-from-moved-modified
+      (plist-get payload :moved_modified))
     (mapcar
       #'rust-dive-magit--item-from-change
       (plist-get payload :modified))))
@@ -1002,6 +1005,28 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         :status 'moved-to
         :entity rhs
         :summary (format "Moved here from %s" (plist-get lhs :name))))))
+
+(defun rust-dive-magit--items-from-moved-modified (change)
+  "Build source-side and destination-side items from moved-modified CHANGE."
+  (let
+    (
+      (lhs (plist-get change :lhs))
+      (rhs (plist-get change :rhs)))
+    (list
+      (list
+        :kind (plist-get lhs :kind)
+        :status 'moved-modified-from
+        :entity lhs
+        :summary
+        (format "Moved from here to %s, with changes"
+          (plist-get rhs :name)))
+      (list
+        :kind (plist-get rhs :kind)
+        :status 'moved-modified-to
+        :entity rhs
+        :summary
+        (format "Moved here from %s, with changes"
+          (plist-get lhs :name))))))
 
 (defun rust-dive-magit--item-from-entity (status entity)
   "Build a display item from ENTITY with STATUS."
@@ -1110,7 +1135,12 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
   "Return the display rank for STATUS."
   (pcase status
     ('modified 0)
-    ((or 'moved-from 'moved-to) 1)
+    (
+      (or 'moved-from
+        'moved-to
+        'moved-modified-from
+        'moved-modified-to)
+      1)
     ('added 2)
     ('deleted 3)
     (_ 4)))

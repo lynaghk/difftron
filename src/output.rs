@@ -6,7 +6,10 @@ use tracing::{info, info_span};
 
 use crate::{
     entity_collector::{Entity, entity_kind_name, render_entity},
-    snapshot::{DiffResult, ModifiedEntity, MovedEntity, Snapshot, SnapshotSpec, snapshot_label},
+    snapshot::{
+        DiffResult, ModifiedEntity, MovedEntity, MovedModifiedEntity, Snapshot, SnapshotSpec,
+        snapshot_label,
+    },
 };
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, clap::ValueEnum)]
@@ -51,6 +54,7 @@ pub fn render_diff(
         added = diff.added.len(),
         deleted = diff.deleted.len(),
         moved = diff.moved.len(),
+        moved_modified = diff.moved_modified.len(),
         modified = diff.modified.len(),
         width = width
     )
@@ -64,6 +68,11 @@ pub fn render_diff(
                 .iter()
                 .map(ModifiedEntityOutput::try_from_change)
                 .collect::<Result<Vec<_>>>()?;
+            let moved_modified = diff
+                .moved_modified
+                .iter()
+                .map(MovedModifiedEntityOutput::try_from_change)
+                .collect::<Result<Vec<_>>>()?;
             info!("serializing diff json");
             serde_json::to_string_pretty(&DiffOutput {
                 command: "diff",
@@ -74,6 +83,7 @@ pub fn render_diff(
                 added: diff.added.iter().map(EntityOutput::from).collect(),
                 deleted: diff.deleted.iter().map(EntityOutput::from).collect(),
                 moved: diff.moved.iter().map(MovedEntityOutput::from).collect(),
+                moved_modified,
                 modified,
             })
             .map_err(Into::into)
@@ -105,6 +115,7 @@ fn render_diff_text(diff: &DiffResult, width: Option<usize>) -> Result<String> {
         added = diff.added.len(),
         deleted = diff.deleted.len(),
         moved = diff.moved.len(),
+        moved_modified = diff.moved_modified.len(),
         modified = diff.modified.len(),
         width = width
     )
@@ -121,6 +132,10 @@ fn render_diff_text(diff: &DiffResult, width: Option<usize>) -> Result<String> {
 
     for change in &diff.moved {
         sections.push(format!("R {} -> {}", change.lhs.name, change.rhs.name));
+    }
+
+    for change in &diff.moved_modified {
+        sections.push(format!("R~ {} -> {}", change.lhs.name, change.rhs.name));
     }
 
     for change in &diff.modified {
@@ -159,6 +174,7 @@ struct DiffOutput {
     added: Vec<EntityOutput>,
     deleted: Vec<EntityOutput>,
     moved: Vec<MovedEntityOutput>,
+    moved_modified: Vec<MovedModifiedEntityOutput>,
     modified: Vec<ModifiedEntityOutput>,
 }
 
@@ -395,6 +411,23 @@ impl From<&MovedEntity> for MovedEntityOutput {
 }
 
 #[derive(Debug, Serialize)]
+struct MovedModifiedEntityOutput {
+    lhs: EntityOutput,
+    rhs: EntityOutput,
+    diff: StructuredDiffOutput,
+}
+
+impl MovedModifiedEntityOutput {
+    fn try_from_change(value: &MovedModifiedEntity) -> Result<Self> {
+        Ok(Self {
+            lhs: EntityOutput::from(&value.lhs),
+            rhs: EntityOutput::from(&value.rhs),
+            diff: StructuredDiffOutput::try_from_entities(&value.lhs, &value.rhs)?,
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
 struct ModifiedEntityOutput {
     path: String,
     lhs: EntityOutput,
@@ -408,7 +441,7 @@ impl ModifiedEntityOutput {
             path: value.lhs.location.snapshot_path.display().to_string(),
             lhs: EntityOutput::from(&value.lhs),
             rhs: EntityOutput::from(&value.rhs),
-            diff: StructuredDiffOutput::try_from_change(value)?,
+            diff: StructuredDiffOutput::try_from_entities(&value.lhs, &value.rhs)?,
         })
     }
 }
@@ -419,14 +452,17 @@ struct StructuredDiffOutput {
 }
 
 impl StructuredDiffOutput {
-    fn try_from_change(value: &ModifiedEntity) -> Result<Self> {
+    fn try_from_entities(lhs: &Entity, rhs: &Entity) -> Result<Self> {
         let _span = info_span!(
             "render_modified_entity_json",
-            entity = %value.lhs.name,
-            path = %value.lhs.location.snapshot_path.display()
+            entity = %lhs.name,
+            path = %lhs.location.snapshot_path.display()
         )
         .entered();
-        let presentation = crate::minidiff_renderer::present_modified_entity(value)?;
+        let presentation = crate::minidiff_renderer::present_modified_entity(&ModifiedEntity {
+            lhs: lhs.clone(),
+            rhs: rhs.clone(),
+        })?;
         info!(
             rows = presentation.rows.len(),
             "built structured diff presentation"
@@ -639,6 +675,13 @@ mod tests {
                 lhs: sample_entity("crate::old", "src/old.rs"),
                 rhs: sample_entity("crate::new", "src/new.rs"),
             }],
+            moved_modified: vec![MovedModifiedEntity {
+                lhs: sample_entity("crate::old_changed", "src/old.rs"),
+                rhs: Entity {
+                    source_text: "fn demo() { changed(); }".to_owned(),
+                    ..sample_entity("crate::new_changed", "src/new.rs")
+                },
+            }],
             modified: vec![ModifiedEntity {
                 lhs: sample_entity("crate::changed", "src/lib.rs"),
                 rhs: Entity {
@@ -659,6 +702,18 @@ mod tests {
         assert_eq!(json["moved"][0]["lhs"]["name"], "crate::old");
         assert_eq!(json["moved"][0]["rhs"]["name"], "crate::new");
         assert_eq!(json["moved"][0]["rhs"]["snapshot_path"], "src/new.rs");
+        assert_eq!(
+            json["moved_modified"][0]["lhs"]["name"],
+            "crate::old_changed"
+        );
+        assert_eq!(
+            json["moved_modified"][0]["rhs"]["name"],
+            "crate::new_changed"
+        );
+        assert_eq!(
+            json["moved_modified"][0]["diff"]["rows"][0]["kind"],
+            "replaced_code"
+        );
         assert_eq!(json["modified"][0]["lhs"]["name"], "crate::changed");
         assert!(json["modified"][0].get("diff_display").is_none());
         assert_eq!(
@@ -691,12 +746,22 @@ mod tests {
                 lhs: sample_entity("crate::old", "src/old.rs"),
                 rhs: sample_entity("crate::new", "src/new.rs"),
             }],
+            moved_modified: vec![MovedModifiedEntity {
+                lhs: sample_entity("crate::old_changed", "src/old.rs"),
+                rhs: Entity {
+                    source_text: "fn demo() { changed(); }".to_owned(),
+                    ..sample_entity("crate::new_changed", "src/new.rs")
+                },
+            }],
             modified: Vec::new(),
         };
 
         let rendered = render_diff_text(&diff, None).unwrap();
 
-        assert_eq!(rendered, "R crate::old -> crate::new\n");
+        assert_eq!(
+            rendered,
+            "R crate::old -> crate::new\n\nR~ crate::old_changed -> crate::new_changed\n"
+        );
     }
 
     #[test]

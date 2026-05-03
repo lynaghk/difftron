@@ -44,11 +44,18 @@ pub struct DiffResult {
     pub added: Vec<Entity>,
     pub deleted: Vec<Entity>,
     pub moved: Vec<MovedEntity>,
+    pub moved_modified: Vec<MovedModifiedEntity>,
     pub modified: Vec<ModifiedEntity>,
 }
 
 #[derive(Debug, Clone)]
 pub struct MovedEntity {
+    pub lhs: Entity,
+    pub rhs: Entity,
+}
+
+#[derive(Debug, Clone)]
+pub struct MovedModifiedEntity {
     pub lhs: Entity,
     pub rhs: Entity,
 }
@@ -75,6 +82,14 @@ struct IndexedModifiedEntity {
 
 #[derive(Debug, Clone)]
 struct IndexedMovedEntity {
+    lhs_id: EntityId,
+    lhs: Entity,
+    rhs_id: EntityId,
+    rhs: Entity,
+}
+
+#[derive(Debug, Clone)]
+struct IndexedMovedModifiedEntity {
     lhs_id: EntityId,
     lhs: Entity,
     rhs_id: EntityId,
@@ -160,6 +175,7 @@ pub fn diff_snapshots(lhs: &Snapshot, rhs: &Snapshot, path_filters: &[PathBuf]) 
     let mut added = Vec::new();
     let mut deleted = Vec::new();
     let mut moved = Vec::new();
+    let mut moved_modified = Vec::new();
     let mut modified = Vec::new();
 
     let identities = lhs_by_identity
@@ -201,20 +217,31 @@ pub fn diff_snapshots(lhs: &Snapshot, rhs: &Snapshot, path_filters: &[PathBuf]) 
     }
 
     detect_unique_moves(&mut deleted, &mut added, &mut moved);
+    detect_unique_moved_modified(&mut deleted, &mut added, &mut moved_modified);
 
-    suppress_redundant_parents(lhs, rhs, &mut added, &mut deleted, &moved, &mut modified);
+    suppress_redundant_parents(
+        lhs,
+        rhs,
+        &mut added,
+        &mut deleted,
+        &moved,
+        &moved_modified,
+        &mut modified,
+    );
 
     filter_diff_by_paths(
         path_filters,
         &mut added,
         &mut deleted,
         &mut moved,
+        &mut moved_modified,
         &mut modified,
     );
 
     added.sort_by(|lhs, rhs| lhs.entity.cmp(&rhs.entity));
     deleted.sort_by(|lhs, rhs| lhs.entity.cmp(&rhs.entity));
     moved.sort_by(|lhs, rhs| lhs.rhs.name.cmp(&rhs.rhs.name));
+    moved_modified.sort_by(|lhs, rhs| lhs.rhs.name.cmp(&rhs.rhs.name));
     modified.sort_by(|lhs, rhs| lhs.lhs.name.cmp(&rhs.lhs.name));
 
     DiffResult {
@@ -223,6 +250,13 @@ pub fn diff_snapshots(lhs: &Snapshot, rhs: &Snapshot, path_filters: &[PathBuf]) 
         moved: moved
             .into_iter()
             .map(|change| MovedEntity {
+                lhs: change.lhs,
+                rhs: change.rhs,
+            })
+            .collect(),
+        moved_modified: moved_modified
+            .into_iter()
+            .map(|change| MovedModifiedEntity {
                 lhs: change.lhs,
                 rhs: change.rhs,
             })
@@ -248,6 +282,11 @@ pub fn render_diff_raw(diff: &DiffResult) -> Vec<String> {
     }
     for change in &diff.moved {
         lines.push(format!("R {} -> {}", change.lhs.name, change.rhs.name));
+        lines.push(format!("  lhs: {}", render_entity(&change.lhs)));
+        lines.push(format!("  rhs: {}", render_entity(&change.rhs)));
+    }
+    for change in &diff.moved_modified {
+        lines.push(format!("R~ {} -> {}", change.lhs.name, change.rhs.name));
         lines.push(format!("  lhs: {}", render_entity(&change.lhs)));
         lines.push(format!("  rhs: {}", render_entity(&change.rhs)));
     }
@@ -421,6 +460,131 @@ fn detect_unique_moves(
     remove_indices(added, &added_to_move);
 }
 
+fn detect_unique_moved_modified(
+    deleted: &mut Vec<IndexedEntity>,
+    added: &mut Vec<IndexedEntity>,
+    moved_modified: &mut Vec<IndexedMovedModifiedEntity>,
+) {
+    let mut candidates = Vec::new();
+
+    for (lhs_index, lhs_entity) in deleted.iter().enumerate() {
+        for (rhs_index, rhs_entity) in added.iter().enumerate() {
+            if let Some(score) = moved_modified_similarity(&lhs_entity.entity, &rhs_entity.entity) {
+                candidates.push((score, lhs_index, rhs_index));
+            }
+        }
+    }
+
+    let mut lhs_matches: BTreeMap<usize, Vec<(usize, usize)>> = BTreeMap::new();
+    let mut rhs_matches: BTreeMap<usize, Vec<(usize, usize)>> = BTreeMap::new();
+    for &(score, lhs_index, rhs_index) in &candidates {
+        lhs_matches
+            .entry(lhs_index)
+            .or_default()
+            .push((score, rhs_index));
+        rhs_matches
+            .entry(rhs_index)
+            .or_default()
+            .push((score, lhs_index));
+    }
+
+    let mut deleted_to_move = BTreeSet::new();
+    let mut added_to_move = BTreeSet::new();
+    let mut discovered = Vec::new();
+
+    for (score, lhs_index, rhs_index) in candidates {
+        if deleted_to_move.contains(&lhs_index) || added_to_move.contains(&rhs_index) {
+            continue;
+        }
+        if !is_unique_best_match(&lhs_matches[&lhs_index], score, rhs_index)
+            || !is_unique_best_match(&rhs_matches[&rhs_index], score, lhs_index)
+        {
+            continue;
+        }
+
+        let lhs_entity = deleted[lhs_index].clone();
+        let rhs_entity = added[rhs_index].clone();
+        discovered.push(IndexedMovedModifiedEntity {
+            lhs_id: lhs_entity.id,
+            lhs: lhs_entity.entity,
+            rhs_id: rhs_entity.id,
+            rhs: rhs_entity.entity,
+        });
+        deleted_to_move.insert(lhs_index);
+        added_to_move.insert(rhs_index);
+    }
+
+    moved_modified.extend(discovered);
+    remove_indices(deleted, &deleted_to_move);
+    remove_indices(added, &added_to_move);
+}
+
+fn is_unique_best_match(matches: &[(usize, usize)], score: usize, index: usize) -> bool {
+    let Some(best_score) = matches
+        .iter()
+        .map(|(candidate_score, _)| *candidate_score)
+        .max()
+    else {
+        return false;
+    };
+
+    score == best_score
+        && matches
+            .iter()
+            .filter(|(candidate_score, _)| *candidate_score == best_score)
+            .all(|(_, candidate_index)| *candidate_index == index)
+}
+
+fn moved_modified_similarity(lhs: &Entity, rhs: &Entity) -> Option<usize> {
+    if lhs.language != rhs.language
+        || entity_kind_name(&lhs.detail) != entity_kind_name(&rhs.detail)
+        || local_entity_name(&lhs.name) != local_entity_name(&rhs.name)
+        || lhs.source_text == rhs.source_text
+    {
+        return None;
+    }
+
+    let lhs_source = normalized_similarity_source(&lhs.source_text);
+    let rhs_source = normalized_similarity_source(&rhs.source_text);
+    if lhs_source.is_empty() || rhs_source.is_empty() {
+        return None;
+    }
+
+    let score = lcs_len(lhs_source.as_bytes(), rhs_source.as_bytes());
+    let longer = lhs_source.len().max(rhs_source.len());
+    (score * 100 >= longer * 75).then_some(score)
+}
+
+fn normalized_similarity_source(source: &str) -> String {
+    source
+        .chars()
+        .filter(|ch| ch.is_alphanumeric() || *ch == '_')
+        .collect()
+}
+
+fn local_entity_name(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
+}
+
+fn lcs_len(lhs: &[u8], rhs: &[u8]) -> usize {
+    let mut previous = vec![0; rhs.len() + 1];
+    let mut current = vec![0; rhs.len() + 1];
+
+    for lhs_byte in lhs {
+        for (rhs_index, rhs_byte) in rhs.iter().enumerate() {
+            current[rhs_index + 1] = if lhs_byte == rhs_byte {
+                previous[rhs_index] + 1
+            } else {
+                current[rhs_index].max(previous[rhs_index + 1])
+            };
+        }
+        std::mem::swap(&mut previous, &mut current);
+        current.fill(0);
+    }
+
+    previous[rhs.len()]
+}
+
 fn remove_indices<T>(values: &mut Vec<T>, indices: &BTreeSet<usize>) {
     let mut next_index = 0;
     values.retain(|_| {
@@ -436,12 +600,17 @@ fn suppress_redundant_parents(
     added: &mut Vec<IndexedEntity>,
     deleted: &mut Vec<IndexedEntity>,
     moved: &[IndexedMovedEntity],
+    moved_modified: &[IndexedMovedModifiedEntity],
     modified: &mut Vec<IndexedModifiedEntity>,
 ) {
     let rhs_changed = added
         .iter()
         .cloned()
         .chain(moved.iter().map(|change| IndexedEntity {
+            id: change.rhs_id,
+            entity: change.rhs.clone(),
+        }))
+        .chain(moved_modified.iter().map(|change| IndexedEntity {
             id: change.rhs_id,
             entity: change.rhs.clone(),
         }))
@@ -454,6 +623,10 @@ fn suppress_redundant_parents(
         .iter()
         .cloned()
         .chain(moved.iter().map(|change| IndexedEntity {
+            id: change.lhs_id,
+            entity: change.lhs.clone(),
+        }))
+        .chain(moved_modified.iter().map(|change| IndexedEntity {
             id: change.lhs_id,
             entity: change.lhs.clone(),
         }))
@@ -620,6 +793,7 @@ fn filter_diff_by_paths(
     added: &mut Vec<IndexedEntity>,
     deleted: &mut Vec<IndexedEntity>,
     moved: &mut Vec<IndexedMovedEntity>,
+    moved_modified: &mut Vec<IndexedMovedModifiedEntity>,
     modified: &mut Vec<IndexedModifiedEntity>,
 ) {
     if path_filters.is_empty() {
@@ -629,6 +803,10 @@ fn filter_diff_by_paths(
     added.retain(|entity| entity_matches_filters(&entity.entity, path_filters));
     deleted.retain(|entity| entity_matches_filters(&entity.entity, path_filters));
     moved.retain(|change| {
+        entity_matches_filters(&change.lhs, path_filters)
+            || entity_matches_filters(&change.rhs, path_filters)
+    });
+    moved_modified.retain(|change| {
         entity_matches_filters(&change.lhs, path_filters)
             || entity_matches_filters(&change.rhs, path_filters)
     });
@@ -807,6 +985,48 @@ mod tests {
             diff.moved[0].rhs.location.snapshot_path,
             PathBuf::from("src/new.rs")
         );
+    }
+
+    #[test]
+    fn reports_similar_path_change_as_moved_modified() {
+        let lhs = snapshot_from_entities(vec![Entity {
+            source_text: "fn moved() -> u32 { 41 }".to_owned(),
+            ..sample_entity(
+                "crate::old::moved",
+                SourceLocation {
+                    file_path: PathBuf::from("/tmp/project/src/old.rs"),
+                    snapshot_path: PathBuf::from("src/old.rs"),
+                    start_line: 1,
+                    start_col: 1,
+                    end_line: 1,
+                    end_col: 24,
+                },
+            )
+        }]);
+        let rhs = snapshot_from_entities(vec![Entity {
+            source_text: "fn moved() -> u32 { 42 }".to_owned(),
+            ..sample_entity(
+                "crate::new::moved",
+                SourceLocation {
+                    file_path: PathBuf::from("/tmp/project/src/new.rs"),
+                    snapshot_path: PathBuf::from("src/new.rs"),
+                    start_line: 1,
+                    start_col: 1,
+                    end_line: 1,
+                    end_col: 24,
+                },
+            )
+        }]);
+
+        let diff = diff_snapshots(&lhs, &rhs, &[]);
+
+        assert!(diff.added.is_empty());
+        assert!(diff.deleted.is_empty());
+        assert!(diff.moved.is_empty());
+        assert!(diff.modified.is_empty());
+        assert_eq!(diff.moved_modified.len(), 1);
+        assert_eq!(diff.moved_modified[0].lhs.name, "crate::old::moved");
+        assert_eq!(diff.moved_modified[0].rhs.name, "crate::new::moved");
     }
 
     #[test]

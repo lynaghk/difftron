@@ -126,12 +126,32 @@
 (defun rust-dive-magit-tests--moved-change (lhs rhs)
   (list :lhs lhs :rhs rhs))
 
+(defun rust-dive-magit-tests--moved-modified-change (lhs rhs)
+  (list
+    :lhs lhs
+    :rhs rhs
+    :diff
+    (list
+      :rows
+      (list
+        (list
+          :kind "replaced_code"
+          :left
+          (rust-dive-magit-tests--side
+            (plist-get lhs :source_text)
+            "old_location")
+          :right
+          (rust-dive-magit-tests--side
+            (plist-get rhs :source_text)
+            "new_location"))))))
+
 (cl-defun
   rust-dive-magit-tests--diff-payload
   (&key
     added
     deleted
     moved
+    moved-modified
     modified
     (lhs-label "repo@HEAD~1")
     (rhs-label "repo@HEAD")
@@ -146,6 +166,7 @@
     :added added
     :deleted deleted
     :moved moved
+    :moved_modified moved-modified
     :modified modified))
 
 (defconst rust-dive-magit-tests--sample-payload
@@ -373,6 +394,57 @@
         (should
           (string-match-p
             "^    Moved here from demo::old::moved$"
+            text))
+        (should
+          (string-match-p "fn moved() { old_location(); }" text))
+        (should
+          (string-match-p "fn moved() { new_location(); }" text))
+        (should
+          (equal (mapcar #'car grouped) '("src/new.rs" "src/old.rs")))
+        (should (equal (plist-get (car items) :entity) lhs))
+        (should (equal (plist-get (cadr items) :entity) rhs))))))
+
+(ert-deftest rust-dive-magit-renders-moved-modified-items ()
+  (let*
+    (
+      (lhs
+        (rust-dive-magit-tests--entity
+          "demo::old::moved"
+          "function"
+          "/tmp/repo/src/old.rs"
+          "src/old.rs"
+          "fn moved() { old_location(); }"))
+      (rhs
+        (rust-dive-magit-tests--entity
+          "demo::new::moved"
+          "function"
+          "/tmp/repo/src/new.rs"
+          "src/new.rs"
+          "fn moved() { new_location(); }"))
+      (payload
+        (rust-dive-magit-tests--diff-payload
+          :moved-modified
+          (list
+            (rust-dive-magit-tests--moved-modified-change lhs rhs)))))
+    (with-temp-buffer
+      (rust-dive-magit-mode)
+      (setq rust-dive-magit--grouping 'file)
+      (let ((inhibit-read-only t))
+        (rust-dive-magit--insert-payload payload))
+      (let*
+        (
+          (text (buffer-string))
+          (items (rust-dive-magit--diff-items payload))
+          (grouped (rust-dive-magit--group-items-by-file items)))
+        (should (string-match-p "^src/old\\.rs (1)$" text))
+        (should (string-match-p "^src/new\\.rs (1)$" text))
+        (should
+          (string-match-p
+            "^    Moved from here to demo::new::moved, with changes$"
+            text))
+        (should
+          (string-match-p
+            "^    Moved here from demo::old::moved, with changes$"
             text))
         (should
           (string-match-p "fn moved() { old_location(); }" text))
