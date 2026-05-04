@@ -56,3 +56,8 @@ set -euo pipefail
 EOF
 chmod +x .git/hooks/pre-commit
 ```
+
+
+## TODO / ideas
+
+- Instead of jumping to file from diff, jump to full git worktree (so LSP, etc. works)
