@@ -1,4 +1,4 @@
-;;; difftron-magit-tests.el --- Tests for difftron-magit  -*- lexical-binding: t; -*-
+;;; difftron-tests.el --- Tests for difftron  -*- lexical-binding: t; -*-
 
 ;;; Code:
 
@@ -8,11 +8,11 @@
 (add-to-list
  'load-path
  (file-name-directory (or load-file-name buffer-file-name)))
-(require 'difftron-magit)
+(require 'difftron)
 
-(defvar difftron-magit-tests--sample-payload)
+(defvar difftron-tests--sample-payload)
 
-(defconst difftron-magit-tests--entity-kind-order
+(defconst difftron-tests--entity-kind-order
   '
   ("struct"
    "enum"
@@ -31,7 +31,7 @@
    "module"
    "namespace"))
 
-(defconst difftron-magit-tests--entity-kinds
+(defconst difftron-tests--entity-kinds
   (list
    :struct (list :label "Struct" :group_label "Structs")
    :enum (list :label "Enum" :group_label "Enums")
@@ -50,7 +50,7 @@
    :module (list :label "Module" :group_label "Modules")
    :namespace (list :label "Namespace" :group_label "Namespaces")))
 
-(defun difftron-magit-tests--git-revision (label rev)
+(defun difftron-tests--git-revision (label rev)
   (list
    :label label
    :kind "git_revision"
@@ -58,7 +58,7 @@
    :rev rev
    :summary (format "Commit %s" rev)))
 
-(defun difftron-magit-tests--git-revision-in-repo
+(defun difftron-tests--git-revision-in-repo
     (repo label rev summary)
   (list
    :label label
@@ -67,13 +67,13 @@
    :rev rev
    :summary summary))
 
-(defun difftron-magit-tests--directory-snapshot (path)
+(defun difftron-tests--directory-snapshot (path)
   (list :label path :kind "directory" :root path))
 
-(defun difftron-magit-tests--file-snapshot (path)
+(defun difftron-tests--file-snapshot (path)
   (list :label path :kind "file" :root path))
 
-(defun difftron-magit-tests--snapshot-section (side)
+(defun difftron-tests--snapshot-section (side)
   (seq-find
    (lambda (section)
      (and
@@ -81,13 +81,13 @@
       (eq (oref section value) side)))
    (oref magit-root-section children)))
 
-(defun difftron-magit-tests--first-child-section (parent type)
+(defun difftron-tests--first-child-section (parent type)
   (seq-find
    (lambda (section)
      (eq (oref section type) type))
    (oref parent children)))
 
-(defun difftron-magit-tests--section-has-invisible-overlay-p
+(defun difftron-tests--section-has-invisible-overlay-p
     (section)
   "Return non-nil when SECTION's body has a hiding overlay."
   (when-let ((content (oref section content)))
@@ -96,10 +96,10 @@
        (overlay-get overlay 'invisible))
      (overlays-at content))))
 
-(defconst difftron-magit-tests--repo-git-env-regexp
+(defconst difftron-tests--repo-git-env-regexp
   "\\`GIT_\\(DIR\\|WORK_TREE\\|INDEX_FILE\\|OBJECT_DIRECTORY\\|ALTERNATE_OBJECT_DIRECTORIES\\|CEILING_DIRECTORIES\\|PREFIX\\)=")
 
-(defun difftron-magit-tests--git (repo &rest args)
+(defun difftron-tests--git (repo &rest args)
   "Run Git with ARGS in REPO and return stdout."
   (with-temp-buffer
     (let
@@ -108,7 +108,7 @@
           (seq-remove
            (lambda (entry)
              (string-match-p
-              difftron-magit-tests--repo-git-env-regexp
+              difftron-tests--repo-git-env-regexp
               entry))
            process-environment))
          (exit-code
@@ -127,18 +127,18 @@
          (buffer-string)))
       (string-trim-right (buffer-string)))))
 
-(defun difftron-magit-tests--write-file (repo path contents)
+(defun difftron-tests--write-file (repo path contents)
   "Write CONTENTS to PATH under REPO."
   (let ((file (expand-file-name path repo)))
     (make-directory (file-name-directory file) t)
     (with-temp-file file
       (insert contents))))
 
-(defun difftron-magit-tests--commit
+(defun difftron-tests--commit
     (repo path contents subject body date)
   "Create a commit in REPO and return its full hash."
-  (difftron-magit-tests--write-file repo path contents)
-  (difftron-magit-tests--git repo "add" path)
+  (difftron-tests--write-file repo path contents)
+  (difftron-tests--git repo "add" path)
   (let
       (
        (process-environment
@@ -151,7 +151,7 @@
           (format "GIT_AUTHOR_DATE=%s" date)
           (format "GIT_COMMITTER_DATE=%s" date))
          process-environment)))
-    (difftron-magit-tests--git
+    (difftron-tests--git
      repo
      "commit"
      "--no-verify"
@@ -159,16 +159,16 @@
      subject
      "-m"
      body))
-  (difftron-magit-tests--git repo "rev-parse" "HEAD"))
+  (difftron-tests--git repo "rev-parse" "HEAD"))
 
-(defun difftron-magit-tests--with-revision-repo (fn)
+(defun difftron-tests--with-revision-repo (fn)
   "Call FN with a temporary Git repo and two deterministic revisions."
   (let ((repo (file-name-as-directory
-               (make-temp-file "difftron-magit-repo-" t))))
+               (make-temp-file "difftron-repo-" t))))
     (unwind-protect
         (progn
-          (difftron-magit-tests--git repo "init" "-q")
-          (difftron-magit-tests--git
+          (difftron-tests--git repo "init" "-q")
+          (difftron-tests--git
            repo
            "symbolic-ref"
            "HEAD"
@@ -178,7 +178,7 @@
                (parent-subject "Move entity kind labels into JSON")
                (child-subject "Add Clojure entity kind metadata")
                (parent
-                (difftron-magit-tests--commit
+                (difftron-tests--commit
                  repo
                  "README.md"
                  "parent\n"
@@ -186,7 +186,7 @@
                  "Parent body."
                  "Tue Apr 28 16:50:00 2026 +0000"))
                (child
-                (difftron-magit-tests--commit
+                (difftron-tests--commit
                  repo
                  "README.md"
                  "child\n"
@@ -196,16 +196,16 @@
             (funcall fn repo parent child parent-subject child-subject)))
       (delete-directory repo t))))
 
-(defun difftron-magit-tests--payload-with-revisions
+(defun difftron-tests--payload-with-revisions
     (repo lhs-rev rhs-rev lhs-summary rhs-summary)
   "Return the sample payload with Git revisions from REPO."
-  (let ((payload (copy-sequence difftron-magit-tests--sample-payload)))
+  (let ((payload (copy-sequence difftron-tests--sample-payload)))
     (setq
      payload
      (plist-put
       payload
       :lhs
-      (difftron-magit-tests--git-revision-in-repo
+      (difftron-tests--git-revision-in-repo
        repo
        (format "repo@%s" (substring lhs-rev 0 7))
        lhs-rev
@@ -213,14 +213,14 @@
     (plist-put
      payload
      :rhs
-     (difftron-magit-tests--git-revision-in-repo
+     (difftron-tests--git-revision-in-repo
       repo
       (format "repo@%s" (substring rhs-rev 0 7))
       rhs-rev
       rhs-summary))))
 
 (cl-defun
-    difftron-magit-tests--entity
+    difftron-tests--entity
     (name
      kind
      file-path
@@ -244,7 +244,7 @@
    :end_col end-col
    :source_text source-text))
 
-(defun difftron-magit-tests--segments (text novel)
+(defun difftron-tests--segments (text novel)
   (let ((match (string-match (regexp-quote novel) text)))
     (list
      (list :text (substring text 0 match) :kind "context")
@@ -253,13 +253,13 @@
       :text (substring text (+ match (length novel)))
       :kind "context"))))
 
-(defun difftron-magit-tests--side (text novel)
+(defun difftron-tests--side (text novel)
   (list
    :line_number 1
    :text text
-   :segments (difftron-magit-tests--segments text novel)))
+   :segments (difftron-tests--segments text novel)))
 
-(defun difftron-magit-tests--modified-change
+(defun difftron-tests--modified-change
     (path lhs rhs lhs-novel rhs-novel)
   (list
    :path path
@@ -272,18 +272,18 @@
      (list
       :kind "replaced_code"
       :left
-      (difftron-magit-tests--side
+      (difftron-tests--side
        (plist-get lhs :source_text)
        lhs-novel)
       :right
-      (difftron-magit-tests--side
+      (difftron-tests--side
        (plist-get rhs :source_text)
        rhs-novel))))))
 
-(defun difftron-magit-tests--moved-change (lhs rhs)
+(defun difftron-tests--moved-change (lhs rhs)
   (list :lhs lhs :rhs rhs))
 
-(defun difftron-magit-tests--moved-modified-change (lhs rhs)
+(defun difftron-tests--moved-modified-change (lhs rhs)
   (list
    :lhs lhs
    :rhs rhs
@@ -294,16 +294,16 @@
      (list
       :kind "replaced_code"
       :left
-      (difftron-magit-tests--side
+      (difftron-tests--side
        (plist-get lhs :source_text)
        "old_location")
       :right
-      (difftron-magit-tests--side
+      (difftron-tests--side
        (plist-get rhs :source_text)
        "new_location"))))))
 
 (cl-defun
-    difftron-magit-tests--diff-payload
+    difftron-tests--diff-payload
     (&key
      added
      deleted
@@ -316,21 +316,21 @@
      (rhs-rev "HEAD"))
   (list
    :command "diff"
-   :entity_kind_order difftron-magit-tests--entity-kind-order
-   :entity_kinds difftron-magit-tests--entity-kinds
-   :lhs (difftron-magit-tests--git-revision lhs-label lhs-rev)
-   :rhs (difftron-magit-tests--git-revision rhs-label rhs-rev)
+   :entity_kind_order difftron-tests--entity-kind-order
+   :entity_kinds difftron-tests--entity-kinds
+   :lhs (difftron-tests--git-revision lhs-label lhs-rev)
+   :rhs (difftron-tests--git-revision rhs-label rhs-rev)
    :added added
    :deleted deleted
    :moved moved
    :moved_modified moved-modified
    :modified modified))
 
-(defconst difftron-magit-tests--sample-payload
+(defconst difftron-tests--sample-payload
   (let*
       (
        (added
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::added"
          "function"
          "/tmp/repo/src/lib.rs"
@@ -341,7 +341,7 @@
          :end-col 2
          :rendered-summary "function demo::added() @ /tmp/repo/src/lib.rs:10:1-12:2"))
        (lhs
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::meaning"
          "function"
          "/tmp/repo/src/lib.rs"
@@ -349,30 +349,30 @@
          "fn meaning() -> u32 { 41 }"
          :rendered-summary "function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10"))
        (rhs
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::meaning"
          "function"
          "/tmp/repo/src/lib.rs"
          "src/lib.rs"
          "fn meaning() -> u32 { 42 }"
          :rendered-summary "function demo::meaning() @ /tmp/repo/src/lib.rs:1:1-1:10")))
-    (difftron-magit-tests--diff-payload
+    (difftron-tests--diff-payload
      :added (list added)
      :deleted nil
      :modified
      (list
-      (difftron-magit-tests--modified-change
+      (difftron-tests--modified-change
        "src/lib.rs"
        lhs
        rhs
        "41"
        "42")))))
 
-(defconst difftron-magit-tests--multi-file-payload
+(defconst difftron-tests--multi-file-payload
   (let*
       (
        (added
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::added"
          "function"
          "/tmp/repo/src/a.rs"
@@ -383,7 +383,7 @@
          :end-col 2
          :rendered-summary "function demo::added()"))
        (deleted
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::old_struct"
          "struct"
          "/tmp/repo/src/b.rs"
@@ -394,7 +394,7 @@
          :end-col 2
          :rendered-summary "struct demo::old_struct"))
        (lhs
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::meaning"
          "function"
          "/tmp/repo/src/b.rs"
@@ -402,30 +402,30 @@
          "fn meaning() -> u32 { 41 }"
          :rendered-summary "function demo::meaning()"))
        (rhs
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::meaning"
          "function"
          "/tmp/repo/src/b.rs"
          "src/b.rs"
          "fn meaning() -> u32 { 42 }"
          :rendered-summary "function demo::meaning()")))
-    (difftron-magit-tests--diff-payload
+    (difftron-tests--diff-payload
      :added (list added)
      :deleted (list deleted)
      :modified
      (list
-      (difftron-magit-tests--modified-change
+      (difftron-tests--modified-change
        "src/b.rs"
        lhs
        rhs
        "41"
        "42")))))
 
-(defconst difftron-magit-tests--refresh-payload
+(defconst difftron-tests--refresh-payload
   (let*
       (
        (added
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::alpha"
          "function"
          "/tmp/repo/src/a.rs"
@@ -436,7 +436,7 @@
          :end-col 2
          :rendered-summary "function demo::alpha()"))
        (beta-lhs
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::beta"
          "function"
          "/tmp/repo/src/b.rs"
@@ -444,7 +444,7 @@
          "fn beta() -> u32 { 41 }"
          :rendered-summary "function demo::beta()"))
        (beta-rhs
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::beta"
          "function"
          "/tmp/repo/src/b.rs"
@@ -452,7 +452,7 @@
          "fn beta() -> u32 { 42 }"
          :rendered-summary "function demo::beta()"))
        (gamma-lhs
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::gamma"
          "function"
          "/tmp/repo/src/c.rs"
@@ -460,38 +460,38 @@
          "fn gamma() -> u32 { 7 }"
          :rendered-summary "function demo::gamma()"))
        (gamma-rhs
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::gamma"
          "function"
          "/tmp/repo/src/c.rs"
          "src/c.rs"
          "fn gamma() -> u32 { 8 }"
          :rendered-summary "function demo::gamma()")))
-    (difftron-magit-tests--diff-payload
+    (difftron-tests--diff-payload
      :added (list added)
      :deleted nil
      :modified
      (list
-      (difftron-magit-tests--modified-change
+      (difftron-tests--modified-change
        "src/b.rs"
        beta-lhs
        beta-rhs
        "41"
        "42")
-      (difftron-magit-tests--modified-change
+      (difftron-tests--modified-change
        "src/c.rs"
        gamma-lhs
        gamma-rhs
        "7"
        "8")))))
 
-(ert-deftest difftron-magit-groups-items-by-kind ()
+(ert-deftest difftron-groups-items-by-kind ()
   (let*
       (
        (items
-        (difftron-magit--diff-items
-         difftron-magit-tests--sample-payload))
-       (grouped (difftron-magit--group-items-by-kind items)))
+        (difftron--diff-items
+         difftron-tests--sample-payload))
+       (grouped (difftron--group-items-by-kind items)))
     (should (equal (caar grouped) "function"))
     (should (equal (length grouped) 1))
     (should
@@ -503,45 +503,45 @@
        #'string<)
       '("demo::added" "demo::meaning")))))
 
-(ert-deftest difftron-magit-groups-items-by-file ()
+(ert-deftest difftron-groups-items-by-file ()
   (let*
       (
        (items
-        (difftron-magit--diff-items
-         difftron-magit-tests--multi-file-payload))
-       (grouped (difftron-magit--group-items-by-file items)))
+        (difftron--diff-items
+         difftron-tests--multi-file-payload))
+       (grouped (difftron--group-items-by-file items)))
     (should (equal (mapcar #'car grouped) '("src/a.rs" "src/b.rs")))))
 
-(ert-deftest difftron-magit-renders-moved-items ()
+(ert-deftest difftron-renders-moved-items ()
   (let*
       (
        (lhs
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::old::moved"
          "function"
          "/tmp/repo/src/old.rs"
          "src/old.rs"
          "fn moved() { old_location(); }"))
        (rhs
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::new::moved"
          "function"
          "/tmp/repo/src/new.rs"
          "src/new.rs"
          "fn moved() { new_location(); }"))
        (payload
-        (difftron-magit-tests--diff-payload
-         :moved (list (difftron-magit-tests--moved-change lhs rhs)))))
+        (difftron-tests--diff-payload
+         :moved (list (difftron-tests--moved-change lhs rhs)))))
     (with-temp-buffer
-      (difftron-magit-mode)
-      (setq difftron-magit--grouping 'file)
+      (difftron-mode)
+      (setq difftron--grouping 'file)
       (let ((inhibit-read-only t))
-        (difftron-magit--insert-payload payload))
+        (difftron--insert-payload payload))
       (let*
           (
            (text (buffer-string))
-           (items (difftron-magit--diff-items payload))
-           (grouped (difftron-magit--group-items-by-file items)))
+           (items (difftron--diff-items payload))
+           (grouped (difftron--group-items-by-file items)))
         (should (string-match-p "^src/old\\.rs (1)$" text))
         (should (string-match-p "^src/new\\.rs (1)$" text))
         (should
@@ -561,38 +561,38 @@
         (should (equal (plist-get (car items) :entity) lhs))
         (should (equal (plist-get (cadr items) :entity) rhs))))))
 
-(ert-deftest difftron-magit-renders-moved-modified-items ()
+(ert-deftest difftron-renders-moved-modified-items ()
   (let*
       (
        (lhs
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::old::moved"
          "function"
          "/tmp/repo/src/old.rs"
          "src/old.rs"
          "fn moved() { old_location(); }"))
        (rhs
-        (difftron-magit-tests--entity
+        (difftron-tests--entity
          "demo::new::moved"
          "function"
          "/tmp/repo/src/new.rs"
          "src/new.rs"
          "fn moved() { new_location(); }"))
        (payload
-        (difftron-magit-tests--diff-payload
+        (difftron-tests--diff-payload
          :moved-modified
          (list
-          (difftron-magit-tests--moved-modified-change lhs rhs)))))
+          (difftron-tests--moved-modified-change lhs rhs)))))
     (with-temp-buffer
-      (difftron-magit-mode)
-      (setq difftron-magit--grouping 'file)
+      (difftron-mode)
+      (setq difftron--grouping 'file)
       (let ((inhibit-read-only t))
-        (difftron-magit--insert-payload payload))
+        (difftron--insert-payload payload))
       (let*
           (
            (text (buffer-string))
-           (items (difftron-magit--diff-items payload))
-           (grouped (difftron-magit--group-items-by-file items)))
+           (items (difftron--diff-items payload))
+           (grouped (difftron--group-items-by-file items)))
         (should (string-match-p "^src/old\\.rs (1)$" text))
         (should (string-match-p "^src/new\\.rs (1)$" text))
         (should
@@ -612,18 +612,18 @@
         (should (equal (plist-get (car items) :entity) lhs))
         (should (equal (plist-get (cadr items) :entity) rhs))))))
 
-(ert-deftest difftron-magit-renders-diff-buffer ()
+(ert-deftest difftron-renders-diff-buffer ()
   (with-temp-buffer
-    (difftron-magit-mode)
+    (difftron-mode)
     (let ((inhibit-read-only t))
-      (difftron-magit--insert-payload
-       difftron-magit-tests--sample-payload))
+      (difftron--insert-payload
+       difftron-tests--sample-payload))
     (let*
         (
          (text (buffer-string))
          (root magit-root-section)
          (kind-section
-          (difftron-magit-tests--first-child-section
+          (difftron-tests--first-child-section
            root
            'difftron-kind))
          (file-section (car (oref kind-section children)))
@@ -656,18 +656,18 @@
         "function demo::added() @ /tmp/repo/src/lib.rs:10:1-12:2"
         text)))))
 
-(ert-deftest difftron-magit-renders-kind-grouping-with-files ()
+(ert-deftest difftron-renders-kind-grouping-with-files ()
   (with-temp-buffer
-    (difftron-magit-mode)
-    (setq difftron-magit--grouping 'kind)
+    (difftron-mode)
+    (setq difftron--grouping 'kind)
     (let ((inhibit-read-only t))
-      (difftron-magit--insert-payload
-       difftron-magit-tests--multi-file-payload))
+      (difftron--insert-payload
+       difftron-tests--multi-file-payload))
     (let*
         (
          (root magit-root-section)
          (kind-section
-          (difftron-magit-tests--first-child-section
+          (difftron-tests--first-child-section
            root
            'difftron-kind))
          (file-section (car (oref kind-section children)))
@@ -680,21 +680,21 @@
       (should
        (eq
         (get-text-property (match-beginning 0) 'font-lock-face)
-        'difftron-magit-level-1-heading))
+        'difftron-level-1-heading))
       (should-not (string-match-p "Grouping:" (buffer-string))))))
 
-(ert-deftest difftron-magit-renders-file-grouping ()
+(ert-deftest difftron-renders-file-grouping ()
   (with-temp-buffer
-    (difftron-magit-mode)
-    (setq difftron-magit--grouping 'file)
+    (difftron-mode)
+    (setq difftron--grouping 'file)
     (let ((inhibit-read-only t))
-      (difftron-magit--insert-payload
-       difftron-magit-tests--multi-file-payload))
+      (difftron--insert-payload
+       difftron-tests--multi-file-payload))
     (let*
         (
          (root magit-root-section)
          (file-section
-          (difftron-magit-tests--first-child-section
+          (difftron-tests--first-child-section
            root
            'difftron-file))
          (kind-section (car (oref file-section children)))
@@ -714,15 +714,15 @@
        (string-match-p "^    \\+ demo::added$" (buffer-string)))
       (should-not (string-match-p "Grouping:" (buffer-string))))))
 
-(ert-deftest difftron-magit-renders-kind-labels-from-payload ()
+(ert-deftest difftron-renders-kind-labels-from-payload ()
   (with-temp-buffer
-    (difftron-magit-mode)
+    (difftron-mode)
     (let ((inhibit-read-only t))
-      (difftron-magit--insert-payload
-       (difftron-magit-tests--diff-payload
+      (difftron--insert-payload
+       (difftron-tests--diff-payload
         :added
         (list
-         (difftron-magit-tests--entity
+         (difftron-tests--entity
           "demo.core::message"
           "var"
           "/tmp/repo/src/demo/core.clj"
@@ -730,28 +730,28 @@
           "(def message \"hello\")")))))
     (should (string-match-p "^Vars (1)$" (buffer-string)))))
 
-(ert-deftest difftron-magit-default-grouping-is-file ()
+(ert-deftest difftron-default-grouping-is-file ()
   (should
    (eq
     (eval
-     (car (get 'difftron-magit-default-grouping 'standard-value))
+     (car (get 'difftron-default-grouping 'standard-value))
      t)
     'file)))
 
-(ert-deftest difftron-magit-display-buffer-uses-default-grouping ()
-  (let ((difftron-magit-default-grouping 'file))
+(ert-deftest difftron-display-buffer-uses-default-grouping ()
+  (let ((difftron-default-grouping 'file))
     (cl-letf
 	(((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
-      (difftron-magit--display-buffer
+      (difftron--display-buffer
        "/tmp/repo/"
        '("diff" "HEAD~1" "HEAD")
-       difftron-magit-tests--multi-file-payload))
-    (with-current-buffer difftron-magit-buffer-name
+       difftron-tests--multi-file-payload))
+    (with-current-buffer difftron-buffer-name
       (let*
           (
            (root magit-root-section)
            (file-section
-            (difftron-magit-tests--first-child-section
+            (difftron-tests--first-child-section
              root
              'difftron-file))
            (sibling-file-section
@@ -762,76 +762,76 @@
               (oref root children))))
            (kind-section (car (oref file-section children)))
            (entity-section (car (oref kind-section children))))
-        (should (eq difftron-magit--grouping 'file))
+        (should (eq difftron--grouping 'file))
         (should-not (string-match-p "Grouping:" (buffer-string)))
         (should-not (oref file-section hidden))
         (should-not (oref kind-section hidden))
         (should (oref entity-section hidden))
         (should
-         (difftron-magit-tests--section-has-invisible-overlay-p
+         (difftron-tests--section-has-invisible-overlay-p
           entity-section))
         (should (oref sibling-file-section hidden))
         (should
-         (difftron-magit-tests--section-has-invisible-overlay-p
+         (difftron-tests--section-has-invisible-overlay-p
           sibling-file-section))))))
 
-(ert-deftest difftron-magit-inherits-magit-all-level-bindings ()
+(ert-deftest difftron-inherits-magit-all-level-bindings ()
   (should
    (eq
-    (lookup-key difftron-magit-mode-map (kbd "M-1"))
+    (lookup-key difftron-mode-map (kbd "M-1"))
     #'magit-section-show-level-1-all))
   (should
    (eq
-    (lookup-key difftron-magit-mode-map (kbd "M-2"))
+    (lookup-key difftron-mode-map (kbd "M-2"))
     #'magit-section-show-level-2-all))
   (should
    (eq
-    (lookup-key difftron-magit-mode-map (kbd "M-3"))
+    (lookup-key difftron-mode-map (kbd "M-3"))
     #'magit-section-show-level-3-all))
   (should
    (eq
-    (lookup-key difftron-magit-mode-map (kbd "M-4"))
+    (lookup-key difftron-mode-map (kbd "M-4"))
     #'magit-section-show-level-4-all)))
 
-(ert-deftest difftron-magit-binds-commit-navigation ()
+(ert-deftest difftron-binds-commit-navigation ()
   (should
    (eq
-    (lookup-key difftron-magit-mode-map (kbd "N"))
-    #'difftron-magit-next-commit))
+    (lookup-key difftron-mode-map (kbd "N"))
+    #'difftron-next-commit))
   (should
    (eq
-    (lookup-key difftron-magit-mode-map (kbd "P"))
-    #'difftron-magit-previous-commit))
+    (lookup-key difftron-mode-map (kbd "P"))
+    #'difftron-previous-commit))
   (should
    (eq
-    (lookup-key difftron-magit-mode-map (kbd "n"))
+    (lookup-key difftron-mode-map (kbd "n"))
     #'magit-section-forward))
   (should
    (eq
-    (lookup-key difftron-magit-mode-map (kbd "p"))
+    (lookup-key difftron-mode-map (kbd "p"))
     #'magit-section-backward)))
 
-(ert-deftest difftron-magit-binds-side-selection ()
+(ert-deftest difftron-binds-side-selection ()
   (should
    (eq
-    (lookup-key difftron-magit-mode-map (kbd "l"))
-    #'difftron-magit-select-left))
+    (lookup-key difftron-mode-map (kbd "l"))
+    #'difftron-select-left))
   (should
    (eq
-    (lookup-key difftron-magit-mode-map (kbd "r"))
-    #'difftron-magit-select-right)))
+    (lookup-key difftron-mode-map (kbd "r"))
+    #'difftron-select-right)))
 
-(ert-deftest difftron-magit-binds-commit-message-toggle ()
+(ert-deftest difftron-binds-commit-message-toggle ()
   (should
    (eq
-    (lookup-key difftron-magit-mode-map (kbd "m"))
-    #'difftron-magit-toggle-commit-messages))
+    (lookup-key difftron-mode-map (kbd "m"))
+    #'difftron-toggle-commit-messages))
   (should
    (eq
-    (lookup-key difftron-magit-mode-map (kbd "TAB"))
-    #'difftron-magit-toggle-section-or-message)))
+    (lookup-key difftron-mode-map (kbd "TAB"))
+    #'difftron-toggle-section-or-message)))
 
-(ert-deftest difftron-magit-read-snapshot-arg-completes-ref ()
+(ert-deftest difftron-read-snapshot-arg-completes-ref ()
   (let (read-prompt read-default read-collection)
     (cl-letf
         (
@@ -852,7 +852,7 @@
             "feature")))
       (should
        (equal
-        (difftron-magit--read-snapshot-arg
+        (difftron--read-snapshot-arg
          'lhs
          "/tmp/repo/"
          "HEAD")
@@ -865,7 +865,7 @@
       "feature"
       (all-completions "" read-collection)))))
 
-(ert-deftest difftron-magit-read-snapshot-arg-groups-candidates ()
+(ert-deftest difftron-read-snapshot-arg-groups-candidates ()
   (let (read-collection)
     (cl-letf
         (
@@ -883,7 +883,7 @@
           (lambda (_prompt collection &rest _)
             (setq read-collection collection)
             "main")))
-      (difftron-magit--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD"))
+      (difftron--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD"))
     (let*
         (
          (metadata (funcall read-collection "" nil 'metadata))
@@ -934,7 +934,7 @@
         '("src/lib.rs" "" "")
         (funcall affixation-function '("src/lib.rs")))))))
 
-(ert-deftest difftron-magit-read-snapshot-arg-selects-full-commit-hash ()
+(ert-deftest difftron-read-snapshot-arg-selects-full-commit-hash ()
   (cl-letf
       (
        ((symbol-function 'magit-list-branch-names)
@@ -950,10 +950,10 @@
         (lambda (&rest _) "abc1234 Add thing")))
     (should
      (equal
-      (difftron-magit--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD")
+      (difftron--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD")
       "abc1234full"))))
 
-(ert-deftest difftron-magit-read-snapshot-arg-selects-repo-path ()
+(ert-deftest difftron-read-snapshot-arg-selects-repo-path ()
   (cl-letf
       (
        ((symbol-function 'magit-list-branch-names)
@@ -969,10 +969,10 @@
         (lambda (&rest _) "src/lib.rs")))
     (should
      (equal
-      (difftron-magit--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD")
+      (difftron--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD")
       "/tmp/repo/src/lib.rs"))))
 
-(ert-deftest difftron-magit-read-snapshot-arg-allows-typed-revision ()
+(ert-deftest difftron-read-snapshot-arg-allows-typed-revision ()
   (cl-letf
       (
        ((symbol-function 'magit-list-branch-names)
@@ -988,10 +988,10 @@
         (lambda (&rest _) "abc1234")))
     (should
      (equal
-      (difftron-magit--read-snapshot-arg 'rhs "/tmp/repo/" "HEAD")
+      (difftron--read-snapshot-arg 'rhs "/tmp/repo/" "HEAD")
       "abc1234"))))
 
-(ert-deftest difftron-magit-read-snapshot-arg-uses-default-on-empty-input ()
+(ert-deftest difftron-read-snapshot-arg-uses-default-on-empty-input ()
   (cl-letf
       (
        ((symbol-function 'magit-list-branch-names)
@@ -1007,10 +1007,10 @@
         (lambda (&rest _) "")))
     (should
      (equal
-      (difftron-magit--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD")
+      (difftron--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD")
       "HEAD"))))
 
-(ert-deftest difftron-magit-read-snapshot-arg-browses-file-path ()
+(ert-deftest difftron-read-snapshot-arg-browses-file-path ()
   (let (read-file-prompt read-file-dir read-file-default)
     (cl-letf
         (
@@ -1024,7 +1024,7 @@
               (`("ls-files") nil)
               (_ (error "Unexpected git args: %S" args)))))
          ((symbol-function 'completing-read)
-          (lambda (&rest _) difftron-magit--browse-path-choice))
+          (lambda (&rest _) difftron--browse-path-choice))
          ((symbol-function 'read-file-name)
           (lambda (prompt dir default-filename &rest _)
             (setq read-file-prompt prompt)
@@ -1035,7 +1035,7 @@
           (lambda (path) (equal path "/tmp/repo/src/"))))
       (should
        (equal
-        (difftron-magit--read-snapshot-arg
+        (difftron--read-snapshot-arg
          'rhs
          "/tmp/repo/"
          "/tmp/repo/src/")
@@ -1044,7 +1044,7 @@
     (should (equal read-file-dir "/tmp/repo/"))
     (should (equal read-file-default "/tmp/repo/src/"))))
 
-(ert-deftest difftron-magit-read-snapshot-arg-browses-directory-path ()
+(ert-deftest difftron-read-snapshot-arg-browses-directory-path ()
   (cl-letf
       (
        ((symbol-function 'magit-list-branch-names)
@@ -1057,19 +1057,19 @@
             (`("ls-files") nil)
             (_ (error "Unexpected git args: %S" args)))))
        ((symbol-function 'completing-read)
-        (lambda (&rest _) difftron-magit--browse-path-choice))
+        (lambda (&rest _) difftron--browse-path-choice))
        ((symbol-function 'read-file-name)
         (lambda (&rest _) "/tmp/repo/src"))
        ((symbol-function 'file-directory-p)
         (lambda (path) (equal path "/tmp/repo/src"))))
     (should
      (equal
-      (difftron-magit--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD")
+      (difftron--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD")
       "/tmp/repo/src/"))))
 
-(ert-deftest difftron-magit-read-snapshot-arg-expands-typed-repo-path ()
+(ert-deftest difftron-read-snapshot-arg-expands-typed-repo-path ()
   (let ((repo (file-name-as-directory
-               (make-temp-file "difftron-magit-path-" t))))
+               (make-temp-file "difftron-path-" t))))
     (unwind-protect
         (let ((file (expand-file-name "src/lib.rs" repo)))
           (make-directory (file-name-directory file) t)
@@ -1090,16 +1090,16 @@
                 (lambda (&rest _) "src/lib.rs")))
             (should
              (equal
-              (difftron-magit--read-snapshot-arg
+              (difftron--read-snapshot-arg
                'lhs
                repo
                "HEAD")
               file))))
       (delete-directory repo t))))
 
-(ert-deftest difftron-magit-read-snapshot-arg-prefers-ref-over-path ()
+(ert-deftest difftron-read-snapshot-arg-prefers-ref-over-path ()
   (let ((repo (file-name-as-directory
-               (make-temp-file "difftron-magit-path-" t))))
+               (make-temp-file "difftron-path-" t))))
     (unwind-protect
         (let ((file (expand-file-name "src/lib.rs" repo)))
           (make-directory (file-name-directory file) t)
@@ -1120,14 +1120,14 @@
                 (lambda (&rest _) "src/lib.rs")))
             (should
              (equal
-              (difftron-magit--read-snapshot-arg
+              (difftron--read-snapshot-arg
                'lhs
                repo
                "HEAD")
               "src/lib.rs"))))
       (delete-directory repo t))))
 
-(ert-deftest difftron-magit-selects-left-git-revision ()
+(ert-deftest difftron-selects-left-git-revision ()
   (let
       (
        displayed-args
@@ -1151,16 +1151,16 @@
             (setq read-collection collection)
             (setq read-default (nth 4 args))
             "feature"))
-         ((symbol-function 'difftron-magit--run-command)
+         ((symbol-function 'difftron--run-command)
           (lambda (_default-directory _args)
-            difftron-magit-tests--sample-payload))
-         ((symbol-function 'difftron-magit--display-buffer)
+            difftron-tests--sample-payload))
+         ((symbol-function 'difftron--display-buffer)
           (lambda (_default-directory args _payload)
             (setq displayed-args args))))
       (with-temp-buffer
-        (difftron-magit-mode)
-        (setq difftron-magit--default-directory "/tmp/repo/")
-        (setq difftron-magit--command-args
+        (difftron-mode)
+        (setq difftron--default-directory "/tmp/repo/")
+        (setq difftron--command-args
               '
               ("diff"
                "HEAD~1"
@@ -1169,15 +1169,15 @@
                "json"
                "--path"
                "src/lib.rs"))
-        (setq difftron-magit--payload
-              (copy-tree difftron-magit-tests--sample-payload))
-        (difftron-magit-select-left)))
+        (setq difftron--payload
+              (copy-tree difftron-tests--sample-payload))
+        (difftron-select-left)))
     (should (equal read-prompt "Left snapshot: "))
     (should (equal read-default "HEAD~1"))
     (should (member "feature" (all-completions "" read-collection)))
     (should
      (member
-      difftron-magit--browse-path-choice
+      difftron--browse-path-choice
       (all-completions "" read-collection)))
     (should
      (equal
@@ -1191,7 +1191,7 @@
        "--path"
        "src/lib.rs")))))
 
-(ert-deftest difftron-magit-selects-right-directory ()
+(ert-deftest difftron-selects-right-directory ()
   (let
       (
        displayed-args
@@ -1212,7 +1212,7 @@
          ((symbol-function 'completing-read)
           (lambda (prompt &rest _)
             (setq snapshot-prompt prompt)
-            difftron-magit--browse-path-choice))
+            difftron--browse-path-choice))
          ((symbol-function 'read-file-name)
           (lambda (prompt _dir default-filename &rest _)
             (setq path-prompt prompt)
@@ -1220,23 +1220,23 @@
             "/tmp/new-root"))
          ((symbol-function 'file-directory-p)
           (lambda (path) (equal path "/tmp/new-root")))
-         ((symbol-function 'difftron-magit--run-command)
+         ((symbol-function 'difftron--run-command)
           (lambda (_default-directory _args)
-            difftron-magit-tests--sample-payload))
-         ((symbol-function 'difftron-magit--display-buffer)
+            difftron-tests--sample-payload))
+         ((symbol-function 'difftron--display-buffer)
           (lambda (_default-directory args _payload)
             (setq displayed-args args))))
       (with-temp-buffer
-        (difftron-magit-mode)
-        (setq difftron-magit--default-directory "/tmp/repo/")
-        (setq difftron-magit--command-args
+        (difftron-mode)
+        (setq difftron--default-directory "/tmp/repo/")
+        (setq difftron--command-args
               '("diff" "HEAD~1" "/tmp/old-root" "--format" "json"))
-        (setq difftron-magit--payload
-              (difftron-magit-tests--diff-payload :lhs-rev "HEAD~1"))
+        (setq difftron--payload
+              (difftron-tests--diff-payload :lhs-rev "HEAD~1"))
         (plist-put
-         difftron-magit--payload
-         :rhs (difftron-magit-tests--directory-snapshot "/tmp/old-root"))
-        (difftron-magit-select-right)))
+         difftron--payload
+         :rhs (difftron-tests--directory-snapshot "/tmp/old-root"))
+        (difftron-select-right)))
     (should (equal snapshot-prompt "Right snapshot: "))
     (should (equal path-prompt "Right path: "))
     (should (equal path-default "/tmp/old-root"))
@@ -1245,7 +1245,7 @@
       displayed-args
       '("diff" "HEAD~1" "/tmp/new-root/" "--format" "json")))))
 
-(ert-deftest difftron-magit-selects-left-file ()
+(ert-deftest difftron-selects-left-file ()
   (let
       (
        displayed-args
@@ -1266,7 +1266,7 @@
          ((symbol-function 'completing-read)
           (lambda (prompt &rest _)
             (setq snapshot-prompt prompt)
-            difftron-magit--browse-path-choice))
+            difftron--browse-path-choice))
          ((symbol-function 'read-file-name)
           (lambda (prompt _dir default-filename &rest _)
             (setq path-prompt prompt)
@@ -1274,23 +1274,23 @@
             "/tmp/next.rs"))
          ((symbol-function 'file-directory-p)
           (lambda (_path) nil))
-         ((symbol-function 'difftron-magit--run-command)
+         ((symbol-function 'difftron--run-command)
           (lambda (_default-directory _args)
-            difftron-magit-tests--sample-payload))
-         ((symbol-function 'difftron-magit--display-buffer)
+            difftron-tests--sample-payload))
+         ((symbol-function 'difftron--display-buffer)
           (lambda (_default-directory args _payload)
             (setq displayed-args args))))
       (with-temp-buffer
-        (difftron-magit-mode)
-        (setq difftron-magit--default-directory "/tmp/repo/")
-        (setq difftron-magit--command-args
+        (difftron-mode)
+        (setq difftron--default-directory "/tmp/repo/")
+        (setq difftron--command-args
               '("diff" "/tmp/old.rs" "HEAD" "--format" "json"))
-        (setq difftron-magit--payload
-              (copy-tree difftron-magit-tests--sample-payload))
+        (setq difftron--payload
+              (copy-tree difftron-tests--sample-payload))
         (plist-put
-         difftron-magit--payload
-         :lhs (difftron-magit-tests--file-snapshot "/tmp/old.rs"))
-        (difftron-magit-select-left)))
+         difftron--payload
+         :lhs (difftron-tests--file-snapshot "/tmp/old.rs"))
+        (difftron-select-left)))
     (should (equal snapshot-prompt "Left snapshot: "))
     (should (equal path-prompt "Left path: "))
     (should (equal path-default "/tmp/old.rs"))
@@ -1299,13 +1299,13 @@
       displayed-args
       '("diff" "/tmp/next.rs" "HEAD" "--format" "json")))))
 
-(ert-deftest difftron-magit-side-selection-requires-payload ()
+(ert-deftest difftron-side-selection-requires-payload ()
   (with-temp-buffer
-    (difftron-magit-mode)
-    (should-error (difftron-magit-select-left) :type 'user-error)
-    (should-error (difftron-magit-select-right) :type 'user-error)))
+    (difftron-mode)
+    (should-error (difftron-select-left) :type 'user-error)
+    (should-error (difftron-select-right) :type 'user-error)))
 
-(ert-deftest difftron-magit-previous-commit-preserves-path-filters ()
+(ert-deftest difftron-previous-commit-preserves-path-filters ()
   (let
       (
        displayed-args
@@ -1320,17 +1320,17 @@
               (`("rev-list" "-1" "--parents" "commit-b")
                '("commit-b commit-a"))
               (_ (error "Unexpected git args: %S" args)))))
-         ((symbol-function 'difftron-magit--run-command)
+         ((symbol-function 'difftron--run-command)
           (lambda (_default-directory _args)
-            difftron-magit-tests--sample-payload))
-         ((symbol-function 'difftron-magit--display-buffer)
+            difftron-tests--sample-payload))
+         ((symbol-function 'difftron--display-buffer)
           (lambda (default-directory args _payload)
             (setq displayed-directory default-directory)
             (setq displayed-args args))))
       (with-temp-buffer
-        (difftron-magit-mode)
-        (setq difftron-magit--default-directory "/tmp/repo/")
-        (setq difftron-magit--command-args
+        (difftron-mode)
+        (setq difftron--default-directory "/tmp/repo/")
+        (setq difftron--command-args
               '
               ("diff"
                "commit-b"
@@ -1339,11 +1339,11 @@
                "json"
                "--path"
                "src/lib.rs"))
-        (setq difftron-magit--payload
-              (difftron-magit-tests--diff-payload
+        (setq difftron--payload
+              (difftron-tests--diff-payload
                :lhs-rev "commit-b"
                :rhs-rev "commit-c"))
-        (difftron-magit-previous-commit)))
+        (difftron-previous-commit)))
     (should (equal displayed-directory "/tmp/repo/"))
     (should
      (equal
@@ -1357,7 +1357,7 @@
        "--path"
        "src/lib.rs")))))
 
-(ert-deftest difftron-magit-next-commit-walks-head-first-parent ()
+(ert-deftest difftron-next-commit-walks-head-first-parent ()
   (let (displayed-args)
     (cl-letf
 	(
@@ -1374,16 +1374,16 @@
               (`("rev-list" "-1" "--parents" "commit-c")
                '("commit-c commit-b"))
               (_ (error "Unexpected git args: %S" args)))))
-         ((symbol-function 'difftron-magit--run-command)
+         ((symbol-function 'difftron--run-command)
           (lambda (_default-directory _args)
-            difftron-magit-tests--sample-payload))
-         ((symbol-function 'difftron-magit--display-buffer)
+            difftron-tests--sample-payload))
+         ((symbol-function 'difftron--display-buffer)
           (lambda (_default-directory args _payload)
             (setq displayed-args args))))
       (with-temp-buffer
-        (difftron-magit-mode)
-        (setq difftron-magit--default-directory "/tmp/repo/")
-        (setq difftron-magit--command-args
+        (difftron-mode)
+        (setq difftron--default-directory "/tmp/repo/")
+        (setq difftron--command-args
               '
               ("diff"
                "commit-a"
@@ -1394,11 +1394,11 @@
                "src/lib.rs"
                "--path"
                "src/main.rs"))
-        (setq difftron-magit--payload
-              (difftron-magit-tests--diff-payload
+        (setq difftron--payload
+              (difftron-tests--diff-payload
                :lhs-rev "commit-a"
                :rhs-rev "commit-b"))
-        (difftron-magit-next-commit)))
+        (difftron-next-commit)))
     (should
      (equal
       displayed-args
@@ -1413,17 +1413,17 @@
        "--path"
        "src/main.rs")))))
 
-(ert-deftest difftron-magit-commit-navigation-requires-git-rhs ()
+(ert-deftest difftron-commit-navigation-requires-git-rhs ()
   (with-temp-buffer
-    (difftron-magit-mode)
-    (setq difftron-magit--payload
+    (difftron-mode)
+    (setq difftron--payload
 	  (list
            :command "diff"
            :rhs (list :kind "path" :label "/tmp/repo")))
-    (should-error (difftron-magit-previous-commit) :type 'user-error)
-    (should-error (difftron-magit-next-commit) :type 'user-error)))
+    (should-error (difftron-previous-commit) :type 'user-error)
+    (should-error (difftron-next-commit) :type 'user-error)))
 
-(ert-deftest difftron-magit-previous-commit-errors-at-root ()
+(ert-deftest difftron-previous-commit-errors-at-root ()
   (cl-letf
       (
        ((symbol-function 'magit-git-lines)
@@ -1432,16 +1432,16 @@
             (`("rev-list" "-1" "--parents" "commit-a") '("commit-a"))
             (_ (error "Unexpected git args: %S" args))))))
     (with-temp-buffer
-      (difftron-magit-mode)
-      (setq difftron-magit--payload
-            (difftron-magit-tests--diff-payload
+      (difftron-mode)
+      (setq difftron--payload
+            (difftron-tests--diff-payload
              :lhs-rev "commit-a^"
              :rhs-rev "commit-a"))
       (should-error
-       (difftron-magit-previous-commit)
+       (difftron-previous-commit)
        :type 'user-error))))
 
-(ert-deftest difftron-magit-next-commit-errors-at-head ()
+(ert-deftest difftron-next-commit-errors-at-head ()
   (cl-letf
       (
        ((symbol-function 'magit-git-lines)
@@ -1456,33 +1456,33 @@
              nil)
             (_ (error "Unexpected git args: %S" args))))))
     (with-temp-buffer
-      (difftron-magit-mode)
-      (setq difftron-magit--payload
-            (difftron-magit-tests--diff-payload
+      (difftron-mode)
+      (setq difftron--payload
+            (difftron-tests--diff-payload
              :lhs-rev "commit-b"
              :rhs-rev "commit-c"))
       (should-error
-       (difftron-magit-next-commit)
+       (difftron-next-commit)
        :type 'user-error))))
 
-(ert-deftest difftron-magit-refresh-preserves-magit-display-state ()
-  (let ((difftron-magit-default-grouping 'file))
+(ert-deftest difftron-refresh-preserves-magit-display-state ()
+  (let ((difftron-default-grouping 'file))
     (with-temp-buffer
-      (rename-buffer difftron-magit-buffer-name t)
-      (difftron-magit-mode)
-      (setq difftron-magit--default-directory "/tmp/repo/")
-      (setq difftron-magit--command-args '("diff" "HEAD~1" "HEAD"))
-      (setq difftron-magit--payload
-            difftron-magit-tests--refresh-payload)
-      (setq difftron-magit--grouping 'kind)
+      (rename-buffer difftron-buffer-name t)
+      (difftron-mode)
+      (setq difftron--default-directory "/tmp/repo/")
+      (setq difftron--command-args '("diff" "HEAD~1" "HEAD"))
+      (setq difftron--payload
+            difftron-tests--refresh-payload)
+      (setq difftron--grouping 'kind)
       (let ((inhibit-read-only t))
-        (difftron-magit--insert-payload
-         difftron-magit-tests--refresh-payload))
+        (difftron--insert-payload
+         difftron-tests--refresh-payload))
       (let*
           (
            (root magit-root-section)
            (kind-section
-            (difftron-magit-tests--first-child-section
+            (difftron-tests--first-child-section
              root
              'difftron-kind))
            (file-section-b (nth 1 (oref kind-section children)))
@@ -1503,17 +1503,17 @@
              (expected-point-column (current-column)))
           (cl-letf
               (
-               ((symbol-function 'difftron-magit--run-command)
+               ((symbol-function 'difftron--run-command)
                 (lambda (_default-directory _args)
-                  difftron-magit-tests--refresh-payload))
+                  difftron-tests--refresh-payload))
                ((symbol-function 'pop-to-buffer)
                 (lambda (&rest _) nil)))
-            (difftron-magit-refresh))
+            (difftron-refresh))
           (let*
               (
                (new-root magit-root-section)
                (new-kind-section
-                (difftron-magit-tests--first-child-section
+                (difftron-tests--first-child-section
                  new-root
                  'difftron-kind))
                (new-file-section-a
@@ -1542,7 +1542,7 @@
                   new-entity-section-b
                   new-file-section-c
                   new-entity-section-c))))
-            (should (eq difftron-magit--grouping 'kind))
+            (should (eq difftron--grouping 'kind))
             (should
              (equal
               (car actual-visibility)
@@ -1558,15 +1558,15 @@
             (should
              (eq (magit-current-section) new-entity-section-c))))))))
 
-(ert-deftest difftron-magit-git-snapshots-are-expandable-sections ()
+(ert-deftest difftron-git-snapshots-are-expandable-sections ()
   (cl-letf
       (((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
-    (difftron-magit--display-buffer
+    (difftron--display-buffer
      "/tmp/repo/"
      '("diff" "HEAD~1" "HEAD")
-     difftron-magit-tests--sample-payload))
-  (with-current-buffer difftron-magit-buffer-name
-    (let ((lhs-section (difftron-magit-tests--snapshot-section 'lhs)))
+     difftron-tests--sample-payload))
+  (with-current-buffer difftron-buffer-name
+    (let ((lhs-section (difftron-tests--snapshot-section 'lhs)))
       (should lhs-section)
       (should (oref lhs-section hidden))
       (should
@@ -1577,29 +1577,29 @@
          (oref lhs-section start)
          (oref lhs-section content)))))))
 
-(ert-deftest difftron-magit-tab-toggles-revision-details-at-point ()
-  (difftron-magit-tests--with-revision-repo
+(ert-deftest difftron-tab-toggles-revision-details-at-point ()
+  (difftron-tests--with-revision-repo
    (lambda (repo parent child parent-subject child-subject)
      (let
          (
           (payload
-           (difftron-magit-tests--payload-with-revisions
+           (difftron-tests--payload-with-revisions
             repo
             child
             child
             child-subject
             child-subject)))
        (with-temp-buffer
-         (difftron-magit-mode)
-         (setq difftron-magit--default-directory repo)
+         (difftron-mode)
+         (setq difftron--default-directory repo)
          (let ((inhibit-read-only t))
-           (difftron-magit--insert-payload payload))
+           (difftron--insert-payload payload))
          (should-not (string-match-p "AuthorDate:" (buffer-string)))
          (goto-char (point-min))
          (search-forward "lhs: ")
-         (difftron-magit-toggle-section-or-message)
+         (difftron-toggle-section-or-message)
          (should-not
-          (oref (difftron-magit-tests--snapshot-section 'lhs) hidden))
+          (oref (difftron-tests--snapshot-section 'lhs) hidden))
          (should (string-match-p child (buffer-string)))
          (should (string-match-p "Author:     Codex <>" (buffer-string)))
          (should
@@ -1624,32 +1624,32 @@
           (string-match-p
            "Expose Clojure namespaces vars and related forms"
            (buffer-string)))
-         (difftron-magit-toggle-section-or-message)
+         (difftron-toggle-section-or-message)
          (should
-          (oref (difftron-magit-tests--snapshot-section 'lhs) hidden)))))))
+          (oref (difftron-tests--snapshot-section 'lhs) hidden)))))))
 
-(ert-deftest difftron-magit-m-toggles-all-revision-details ()
-  (difftron-magit-tests--with-revision-repo
+(ert-deftest difftron-m-toggles-all-revision-details ()
+  (difftron-tests--with-revision-repo
    (lambda (repo parent child parent-subject child-subject)
      (let
          (
           (payload
-           (difftron-magit-tests--payload-with-revisions
+           (difftron-tests--payload-with-revisions
             repo
             parent
             child
             parent-subject
             child-subject)))
        (with-temp-buffer
-         (difftron-magit-mode)
-         (setq difftron-magit--default-directory repo)
+         (difftron-mode)
+         (setq difftron--default-directory repo)
          (let ((inhibit-read-only t))
-           (difftron-magit--insert-payload payload))
-         (difftron-magit-toggle-commit-messages)
+           (difftron--insert-payload payload))
+         (difftron-toggle-commit-messages)
          (should-not
-          (oref (difftron-magit-tests--snapshot-section 'lhs) hidden))
+          (oref (difftron-tests--snapshot-section 'lhs) hidden))
          (should-not
-          (oref (difftron-magit-tests--snapshot-section 'rhs) hidden))
+          (oref (difftron-tests--snapshot-section 'rhs) hidden))
          (should (string-match-p parent-subject (buffer-string)))
          (should (string-match-p child-subject (buffer-string)))
          (should
@@ -1660,20 +1660,20 @@
           (string-match-p
            "CommitDate: Tue Apr 28 16:51:46 2026 [+]0000"
            (buffer-string)))
-         (difftron-magit-toggle-commit-messages)
+         (difftron-toggle-commit-messages)
          (should
-          (oref (difftron-magit-tests--snapshot-section 'lhs) hidden))
+          (oref (difftron-tests--snapshot-section 'lhs) hidden))
          (should
-          (oref (difftron-magit-tests--snapshot-section 'rhs) hidden)))))))
+          (oref (difftron-tests--snapshot-section 'rhs) hidden)))))))
 
-(ert-deftest difftron-magit-faces-added-and-deleted-entities ()
+(ert-deftest difftron-faces-added-and-deleted-entities ()
   (let*
       (
        (payload
-        (difftron-magit-tests--diff-payload
+        (difftron-tests--diff-payload
          :added
          (list
-          (difftron-magit-tests--entity
+          (difftron-tests--entity
            "demo::added"
            "function"
            "/tmp/repo/src/lib.rs"
@@ -1685,7 +1685,7 @@
            :rendered-summary "function demo::added()"))
          :deleted
          (list
-          (difftron-magit-tests--entity
+          (difftron-tests--entity
            "demo::deleted"
            "function"
            "/tmp/repo/src/lib.rs"
@@ -1697,15 +1697,15 @@
            :rendered-summary "function demo::deleted()"))
          :modified nil)))
     (with-temp-buffer
-      (difftron-magit-mode)
+      (difftron-mode)
       (let ((inhibit-read-only t))
-        (difftron-magit--insert-payload payload))
+        (difftron--insert-payload payload))
       (goto-char (point-min))
       (search-forward "+ demo::added")
       (should
        (eq
         (get-text-property (match-beginning 0) 'font-lock-face)
-        'difftron-magit-level-2-heading))
+        'difftron-level-2-heading))
       (search-forward "fn added() {}")
       (should
        (eq
@@ -1716,19 +1716,19 @@
       (should
        (eq
         (get-text-property (match-beginning 0) 'font-lock-face)
-        'difftron-magit-level-2-heading))
+        'difftron-level-2-heading))
       (search-forward "fn deleted() {}")
       (should
        (eq
         (get-text-property (match-beginning 0) 'font-lock-face)
         'magit-diff-removed)))))
 
-(ert-deftest difftron-magit-renders-structured-modified-diff-faces ()
+(ert-deftest difftron-renders-structured-modified-diff-faces ()
   (with-temp-buffer
-    (difftron-magit-mode)
+    (difftron-mode)
     (let ((inhibit-read-only t))
-      (difftron-magit--insert-payload
-       difftron-magit-tests--sample-payload))
+      (difftron--insert-payload
+       difftron-tests--sample-payload))
     (goto-char (point-min))
     (search-forward "41")
     (should
@@ -1760,12 +1760,12 @@
       (get-text-property (match-beginning 0) 'font-lock-face)
       'magit-diff-context))))
 
-(ert-deftest difftron-magit-diff-omits-width-for-json-output ()
+(ert-deftest difftron-diff-omits-width-for-json-output ()
   (cl-letf
       (
-       ((symbol-function 'difftron-magit--repo-root)
+       ((symbol-function 'difftron--repo-root)
         (lambda () "/tmp/repo/"))
-       ((symbol-function 'difftron-magit--run-command)
+       ((symbol-function 'difftron--run-command)
         (lambda (_default-directory args)
           (should
            (equal
@@ -1778,16 +1778,16 @@
              "json"
              "--path"
              "src/lib.rs")))
-          difftron-magit-tests--sample-payload))
-       ((symbol-function 'difftron-magit--display-buffer)
+          difftron-tests--sample-payload))
+       ((symbol-function 'difftron--display-buffer)
         (lambda (_default-directory _args _payload) nil)))
-    (difftron-magit-diff "HEAD~1" "HEAD" '("src/lib.rs"))))
+    (difftron-diff "HEAD~1" "HEAD" '("src/lib.rs"))))
 
-(ert-deftest difftron-magit-diff-interactive-does-not-read-paths ()
+(ert-deftest difftron-diff-interactive-does-not-read-paths ()
   (let (prompts defaults ran-args)
     (cl-letf
         (
-         ((symbol-function 'difftron-magit--repo-root)
+         ((symbol-function 'difftron--repo-root)
           (lambda () "/tmp/repo/"))
          ((symbol-function 'magit-list-branch-names)
           (lambda () '("main")))
@@ -1803,13 +1803,13 @@
             (push prompt prompts)
             (push (nth 4 args) defaults)
             ""))
-         ((symbol-function 'difftron-magit--run-command)
+         ((symbol-function 'difftron--run-command)
           (lambda (_default-directory args)
             (setq ran-args args)
-            difftron-magit-tests--sample-payload))
-         ((symbol-function 'difftron-magit--display-buffer)
+            difftron-tests--sample-payload))
+         ((symbol-function 'difftron--display-buffer)
           (lambda (_default-directory _args _payload) nil)))
-      (call-interactively #'difftron-magit-diff))
+      (call-interactively #'difftron-diff))
     (should
      (equal
       (nreverse prompts)
@@ -1821,25 +1821,25 @@
     (should
      (equal ran-args '("diff" "HEAD" "/tmp/repo/" "--format" "json")))))
 
-(ert-deftest difftron-magit-cycle-grouping-redraws-buffer ()
+(ert-deftest difftron-cycle-grouping-redraws-buffer ()
   (with-temp-buffer
-    (difftron-magit-mode)
-    (setq difftron-magit--default-directory "/tmp/repo/")
-    (setq difftron-magit--command-args '("diff" "HEAD~1" "HEAD"))
-    (setq difftron-magit--payload
-	  difftron-magit-tests--multi-file-payload)
-    (setq difftron-magit--grouping 'kind)
+    (difftron-mode)
+    (setq difftron--default-directory "/tmp/repo/")
+    (setq difftron--command-args '("diff" "HEAD~1" "HEAD"))
+    (setq difftron--payload
+	  difftron-tests--multi-file-payload)
+    (setq difftron--grouping 'kind)
     (cl-letf
 	(((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
-      (difftron-magit-cycle-grouping))
-    (should (eq difftron-magit-default-grouping 'file))
-    (should (eq difftron-magit--grouping 'file))
-    (with-current-buffer difftron-magit-buffer-name
+      (difftron-cycle-grouping))
+    (should (eq difftron-default-grouping 'file))
+    (should (eq difftron--grouping 'file))
+    (with-current-buffer difftron-buffer-name
       (let*
           (
            (root magit-root-section)
            (file-section
-            (difftron-magit-tests--first-child-section
+            (difftron-tests--first-child-section
              root
              'difftron-file))
            (kind-section (car (oref file-section children)))
@@ -1850,12 +1850,12 @@
         (should-not (oref kind-section hidden))
         (should (oref entity-section hidden))))))
 
-(ert-deftest difftron-magit-shortens-path-backed-diff-labels ()
+(ert-deftest difftron-shortens-path-backed-diff-labels ()
   (with-temp-buffer
-    (difftron-magit-mode)
+    (difftron-mode)
     (let ((inhibit-read-only t))
-      (difftron-magit--insert-payload
-       (difftron-magit-tests--diff-payload
+      (difftron--insert-payload
+       (difftron-tests--diff-payload
         :lhs-label "/Users/dev/work/incubator/2026-04-21-diff@5767f35^"
         :rhs-label "/Users/dev/work/incubator/2026-04-21-diff@5767f35")))
     (should
@@ -1865,19 +1865,19 @@
        "rhs: 2026-04-21-diff@5767f35  Commit HEAD\n\n")
       (buffer-string)))))
 
-(ert-deftest difftron-magit-renders-clickable-diff-snapshots ()
+(ert-deftest difftron-renders-clickable-diff-snapshots ()
   (with-temp-buffer
-    (difftron-magit-mode)
+    (difftron-mode)
     (let ((inhibit-read-only t))
-      (difftron-magit--insert-payload
-       difftron-magit-tests--sample-payload))
+      (difftron--insert-payload
+       difftron-tests--sample-payload))
     (goto-char (point-min))
     (search-forward "repo@HEAD~1")
     (should (button-at (1- (point))))
     (search-forward "repo@HEAD")
     (should (button-at (1- (point))))))
 
-(ert-deftest difftron-magit-visits-git-revision-snapshot ()
+(ert-deftest difftron-visits-git-revision-snapshot ()
   (let
       (
        visited-rev
@@ -1888,99 +1888,99 @@
           (lambda (rev &rest _)
             (setq visited-rev rev)
             (setq visited-directory default-directory))))
-      (difftron-magit--visit-snapshot
-       (difftron-magit-tests--git-revision "repo@HEAD~1" "HEAD~1")))
+      (difftron--visit-snapshot
+       (difftron-tests--git-revision "repo@HEAD~1" "HEAD~1")))
     (should (equal visited-rev "HEAD~1"))
     (should (equal visited-directory "/tmp/repo"))))
 
-(ert-deftest difftron-magit-ret-visits-diff-snapshot ()
+(ert-deftest difftron-ret-visits-diff-snapshot ()
   (let (visited-rev)
     (cl-letf
 	(
          ((symbol-function 'magit-show-commit)
           (lambda (rev &rest _) (setq visited-rev rev))))
       (with-temp-buffer
-        (difftron-magit-mode)
+        (difftron-mode)
         (let ((inhibit-read-only t))
-          (difftron-magit--insert-payload
-           difftron-magit-tests--sample-payload))
+          (difftron--insert-payload
+           difftron-tests--sample-payload))
         (goto-char (point-min))
         (search-forward "rhs: ")
         (search-forward "repo@HEAD")
-        (difftron-magit-visit-thing)))
+        (difftron-visit-thing)))
     (should (equal visited-rev "HEAD"))))
 
-(ert-deftest difftron-magit-dwim-endpoints-from-commit ()
+(ert-deftest difftron-dwim-endpoints-from-commit ()
   (should
    (equal
-    (difftron-magit--dwim-endpoints
+    (difftron--dwim-endpoints
      '(commit . "HEAD~2")
      "/tmp/repo")
     '("HEAD~2^" "HEAD~2"))))
 
-(ert-deftest difftron-magit-dwim-endpoints-from-range ()
+(ert-deftest difftron-dwim-endpoints-from-range ()
   (should
    (equal
-    (difftron-magit--dwim-endpoints "main..feature" "/tmp/repo")
+    (difftron--dwim-endpoints "main..feature" "/tmp/repo")
     '("main" "feature")))
   (should
    (equal
-    (difftron-magit--dwim-endpoints "HEAD" "/tmp/repo")
+    (difftron--dwim-endpoints "HEAD" "/tmp/repo")
     '("HEAD" "/tmp/repo"))))
 
-(ert-deftest difftron-magit-dwim-endpoints-from-worktree-context ()
+(ert-deftest difftron-dwim-endpoints-from-worktree-context ()
   (should
    (equal
-    (difftron-magit--dwim-endpoints 'unstaged "/tmp/repo")
+    (difftron--dwim-endpoints 'unstaged "/tmp/repo")
     '("HEAD" "/tmp/repo")))
   (should
    (equal
-    (difftron-magit--dwim-endpoints nil "/tmp/repo")
+    (difftron--dwim-endpoints nil "/tmp/repo")
     '("HEAD" "/tmp/repo"))))
 
-(ert-deftest difftron-magit-bindings-mode-registers-magit-suffix ()
+(ert-deftest difftron-bindings-mode-registers-magit-suffix ()
   (require 'magit-diff)
   (unwind-protect
       (progn
-	(difftron-magit-bindings-mode 1)
+	(difftron-bindings-mode 1)
 	(should (transient-get-suffix 'magit-diff "D")))
-    (difftron-magit-bindings-mode -1)))
+    (difftron-bindings-mode -1)))
 
-(ert-deftest difftron-magit-bindings-mode-registers-magit-diff-key ()
+(ert-deftest difftron-bindings-mode-registers-magit-diff-key ()
   (require 'magit-diff)
   (unwind-protect
       (progn
-	(difftron-magit-bindings-mode 1)
+	(difftron-bindings-mode 1)
 	(should
          (eq
           (lookup-key magit-diff-mode-map (kbd "D"))
-          #'difftron-magit-diff-at-point))
+          #'difftron-diff-at-point))
 	(should
          (eq
           (lookup-key magit-diff-section-map (kbd "D"))
-          #'difftron-magit-diff-at-point)))
-    (difftron-magit-bindings-mode -1)))
+          #'difftron-diff-at-point)))
+    (difftron-bindings-mode -1)))
 
-(ert-deftest difftron-magit-diff-at-point-jumps-to-current-entity ()
+(ert-deftest difftron-diff-at-point-jumps-to-current-entity ()
   (let (ran-args)
     (cl-letf
 	(
-         ((symbol-function 'difftron-magit--repo-root)
+         ((symbol-function 'difftron--repo-root)
           (lambda () "/tmp/repo/"))
          ((symbol-function 'magit-diff-arguments)
           (lambda (&rest _) (list '("--stat") nil)))
          ((symbol-function 'magit-diff--dwim)
           (lambda () "HEAD~1..HEAD"))
-         ((symbol-function 'difftron-magit--magit-diff-path-at-point)
+         ((symbol-function 'difftron--magit-diff-path-at-point)
           (lambda () "src/lib.rs"))
-         ((symbol-function 'difftron-magit--magit-diff-line-at-point)
+         ((symbol-function 'difftron--magit-diff-line-at-point)
           (lambda () 10))
-         ((symbol-function 'difftron-magit--run-command)
+         ((symbol-function 'difftron--run-command)
           (lambda (_default-directory args)
             (setq ran-args args)
-            difftron-magit-tests--sample-payload))
+            difftron-tests--sample-payload))
          ((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
-      (difftron-magit-diff-at-point))
+      (difftron-diff-at-point))
     (should
      (equal
       ran-args
@@ -1992,7 +1992,7 @@
        "json"
        "--path"
        "src/lib.rs")))
-    (with-current-buffer difftron-magit-buffer-name
+    (with-current-buffer difftron-buffer-name
       (let ((section (magit-current-section)))
         (should (equal (oref section type) 'difftron-entity))
         (should
@@ -2001,89 +2001,89 @@
           "+ demo::added"))
         (should-not (oref section hidden))))))
 
-(ert-deftest difftron-magit-diff-dwim-obeys-magit-path-toggle ()
+(ert-deftest difftron-diff-dwim-obeys-magit-path-toggle ()
   (let (selected-paths)
     (cl-letf
         (
-         ((symbol-function 'difftron-magit--repo-root)
+         ((symbol-function 'difftron--repo-root)
           (lambda () "/tmp/repo/"))
          ((symbol-function 'magit-diff-arguments)
           (lambda (&rest _) (list nil '("src/lib.rs"))))
          ((symbol-function 'magit-diff--dwim)
           (lambda () "HEAD~1..HEAD"))
-         ((symbol-function 'difftron-magit-diff)
+         ((symbol-function 'difftron-diff)
           (lambda (_lhs _rhs paths)
             (setq selected-paths paths))))
-      (let ((difftron-magit-use-magit-paths t))
-        (difftron-magit-diff-dwim))
+      (let ((difftron-use-magit-paths t))
+        (difftron-diff-dwim))
       (should (equal selected-paths '("src/lib.rs")))
-      (let ((difftron-magit-use-magit-paths nil))
-        (difftron-magit-diff-dwim))
+      (let ((difftron-use-magit-paths nil))
+        (difftron-diff-dwim))
       (should-not selected-paths))))
 
-(ert-deftest difftron-magit-diff-at-point-omits-path-when-toggle-off ()
+(ert-deftest difftron-diff-at-point-omits-path-when-toggle-off ()
   (let (ran-args)
     (cl-letf
         (
-         ((symbol-function 'difftron-magit--repo-root)
+         ((symbol-function 'difftron--repo-root)
           (lambda () "/tmp/repo/"))
          ((symbol-function 'magit-diff-arguments)
           (lambda (&rest _) (list nil '("src/other.rs"))))
          ((symbol-function 'magit-diff--dwim)
           (lambda () "HEAD~1..HEAD"))
-         ((symbol-function 'difftron-magit--magit-diff-path-at-point)
+         ((symbol-function 'difftron--magit-diff-path-at-point)
           (lambda () "src/lib.rs"))
-         ((symbol-function 'difftron-magit--magit-diff-line-at-point)
+         ((symbol-function 'difftron--magit-diff-line-at-point)
           (lambda () 10))
-         ((symbol-function 'difftron-magit--run-command)
+         ((symbol-function 'difftron--run-command)
           (lambda (_default-directory args)
             (setq ran-args args)
-            difftron-magit-tests--sample-payload))
+            difftron-tests--sample-payload))
          ((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
-      (let ((difftron-magit-use-magit-paths nil))
-        (difftron-magit-diff-at-point)))
+      (let ((difftron-use-magit-paths nil))
+        (difftron-diff-at-point)))
     (should
      (equal ran-args '("diff" "HEAD~1" "HEAD" "--format" "json")))
-    (with-current-buffer difftron-magit-buffer-name
+    (with-current-buffer difftron-buffer-name
       (let ((section (magit-current-section)))
         (should (equal (oref section type) 'difftron-entity))
         (should-not (oref section hidden))))))
 
-(ert-deftest difftron-magit-bindings-mode-registers-after-magit-load
+(ert-deftest difftron-bindings-mode-registers-after-magit-load
     ()
   (when (featurep 'magit-diff)
     (unload-feature 'magit-diff t))
   (unwind-protect
       (progn
-	(difftron-magit-bindings-mode 1)
+	(difftron-bindings-mode 1)
 	(should-not (featurep 'magit-diff))
 	(require 'magit-diff)
 	(should (transient-get-suffix 'magit-diff "D")))
-    (difftron-magit-bindings-mode -1)))
+    (difftron-bindings-mode -1)))
 
-(ert-deftest difftron-magit-bindings-mode-unregisters-magit-suffix ()
+(ert-deftest difftron-bindings-mode-unregisters-magit-suffix ()
   (require 'magit-diff)
-  (difftron-magit-bindings-mode 1)
-  (difftron-magit-bindings-mode -1)
+  (difftron-bindings-mode 1)
+  (difftron-bindings-mode -1)
   (should-not
    (ignore-errors
      (transient-get-suffix 'magit-diff "D")))
-  (should-not (difftron-magit--magit-diff-suffix-p "D")))
+  (should-not (difftron--magit-diff-suffix-p "D")))
 
-(ert-deftest difftron-magit-bindings-mode-unregisters-magit-diff-key
+(ert-deftest difftron-bindings-mode-unregisters-magit-diff-key
     ()
   (require 'magit-diff)
-  (difftron-magit-bindings-mode 1)
-  (difftron-magit-bindings-mode -1)
+  (difftron-bindings-mode 1)
+  (difftron-bindings-mode -1)
   (should-not
    (eq
     (lookup-key magit-diff-mode-map (kbd "D"))
-    #'difftron-magit-diff-at-point))
+    #'difftron-diff-at-point))
   (should-not
    (eq
     (lookup-key magit-diff-section-map (kbd "D"))
-    #'difftron-magit-diff-at-point)))
+    #'difftron-diff-at-point)))
 
-(provide 'difftron-magit-tests)
+(provide 'difftron-tests)
 
-;;; difftron-magit-tests.el ends here
+;;; difftron-tests.el ends here

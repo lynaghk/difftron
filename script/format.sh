@@ -18,8 +18,8 @@ run_emacs() {
   "${EMACS_BIN}" -Q --batch \
     -l "${REPO_ROOT}/emacs/test-config/lint-init.el" \
     -L "${REPO_ROOT}/emacs" \
-    -l difftron-magit-lint.el \
-    -f difftron-magit-format-batch-and-exit
+    -l difftron-lint.el \
+    -f difftron-format-batch-and-exit
 }
 
 if [[ $# -gt 1 ]]; then

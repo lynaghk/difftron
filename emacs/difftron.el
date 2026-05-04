@@ -1,4 +1,4 @@
-;;; difftron-magit.el --- View difftron output in Magit -*- lexical-binding: t; -*-
+;;; difftron.el --- View difftron output in Magit -*- lexical-binding: t; -*-
 
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "29.1") (magit "4.0.0"))
@@ -10,7 +10,7 @@
 ;;; Commentary:
 
 ;; Dedicated Emacs integration for the difftron CLI.  The main entrypoint is
-;; `difftron-magit-diff', which shells out to `difftron diff --format json'
+;; `difftron-diff', which shells out to `difftron diff --format json'
 ;; and renders the result in a foldable buffer.
 
 ;;; Code:
@@ -28,111 +28,111 @@
 
 (defvar magit-revision-headers-format)
 
-(defgroup difftron-magit nil
+(defgroup difftron nil
   "Emacs integration for the difftron CLI."
   :group 'tools)
 
-(defface difftron-magit-level-1-heading
+(defface difftron-level-1-heading
   '((t :inherit magit-diff-file-heading))
   "Face for first nested heading level in difftron buffers."
-  :group 'difftron-magit)
+  :group 'difftron)
 
-(defface difftron-magit-level-2-heading
+(defface difftron-level-2-heading
   '((t :inherit magit-diff-file-heading-selection))
   "Face for second nested heading level in difftron buffers."
-  :group 'difftron-magit)
+  :group 'difftron)
 
-(defcustom difftron-magit-executable "difftron"
+(defcustom difftron-executable "difftron"
   "Path to the difftron executable."
   :type 'file
-  :group 'difftron-magit)
+  :group 'difftron)
 
-(defcustom difftron-magit-buffer-name "*difftron*"
+(defcustom difftron-buffer-name "*difftron*"
   "Name of the difftron results buffer."
   :type 'string
-  :group 'difftron-magit)
+  :group 'difftron)
 
-(defcustom difftron-magit-default-grouping 'file
+(defcustom difftron-default-grouping 'file
   "Default top-level grouping for difftron buffers."
   :type
   '
   (choice
    (const :tag "Entity then file" kind)
    (const :tag "File then entity" file))
-  :group 'difftron-magit)
+  :group 'difftron)
 
-(defcustom difftron-magit-use-magit-paths t
+(defcustom difftron-use-magit-paths t
   "Whether Difftron commands launched from Magit use Magit's path filters."
   :type 'boolean
-  :group 'difftron-magit)
+  :group 'difftron)
 
-(defcustom difftron-magit-snapshot-commit-limit 100
+(defcustom difftron-snapshot-commit-limit 100
   "Maximum number of recent commits to offer in snapshot prompts."
   :type 'integer
-  :group 'difftron-magit)
+  :group 'difftron)
 
-(defconst difftron-magit--magit-diff-suffix
-  '("D" "Difftron" difftron-magit-diff-dwim))
+(defconst difftron--magit-diff-suffix
+  '("D" "Difftron" difftron-diff-dwim))
 
-(defconst difftron-magit--browse-path-choice "Browse path...")
+(defconst difftron--browse-path-choice "Browse path...")
 
-(defvar difftron-magit--snapshot-history nil
+(defvar difftron--snapshot-history nil
   "Minibuffer history for Difftron snapshot prompts.")
 
-(defvar difftron-magit-mode-map
+(defvar difftron-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map magit-section-mode-map)
-    (define-key map (kbd "g") #'difftron-magit-refresh)
-    (define-key map (kbd "f") #'difftron-magit-cycle-grouping)
-    (define-key map (kbd "h") #'difftron-magit-dispatch)
-    (define-key map (kbd "?") #'difftron-magit-dispatch)
-    (define-key map (kbd "l") #'difftron-magit-select-left)
+    (define-key map (kbd "g") #'difftron-refresh)
+    (define-key map (kbd "f") #'difftron-cycle-grouping)
+    (define-key map (kbd "h") #'difftron-dispatch)
+    (define-key map (kbd "?") #'difftron-dispatch)
+    (define-key map (kbd "l") #'difftron-select-left)
     (define-key
      map
      (kbd "m")
-     #'difftron-magit-toggle-commit-messages)
-    (define-key map (kbd "r") #'difftron-magit-select-right)
-    (define-key map (kbd "N") #'difftron-magit-next-commit)
-    (define-key map (kbd "P") #'difftron-magit-previous-commit)
+     #'difftron-toggle-commit-messages)
+    (define-key map (kbd "r") #'difftron-select-right)
+    (define-key map (kbd "N") #'difftron-next-commit)
+    (define-key map (kbd "P") #'difftron-previous-commit)
     (define-key
      map
      (kbd "TAB")
-     #'difftron-magit-toggle-section-or-message)
-    (define-key map (kbd "RET") #'difftron-magit-visit-thing)
+     #'difftron-toggle-section-or-message)
+    (define-key map (kbd "RET") #'difftron-visit-thing)
     map)
-  "Keymap for `difftron-magit-mode'.")
+  "Keymap for `difftron-mode'.")
 
-(defvar-local difftron-magit--command-args nil)
-(defvar-local difftron-magit--default-directory nil)
-(defvar-local difftron-magit--payload nil)
-(defvar-local difftron-magit--entity-kind-order nil)
-(defvar-local difftron-magit--entity-kinds nil)
-(defvar-local difftron-magit--grouping nil
+(defvar-local difftron--command-args nil)
+(defvar-local difftron--default-directory nil)
+(defvar-local difftron--payload nil)
+(defvar-local difftron--entity-kind-order nil)
+(defvar-local difftron--entity-kinds nil)
+(defvar-local difftron--grouping nil
   "Current grouping mode for the difftron buffer.")
 
 (define-derived-mode
-  difftron-magit-mode
+  difftron-mode
   magit-section-mode
   "difftron"
   "Major mode for difftron results."
   (setq-local truncate-lines t))
 
 (transient-define-prefix
-  difftron-magit-dispatch
+  difftron-dispatch
   ()
-  "Show commands for `difftron-magit-mode'."
+  "Show commands for `difftron-mode'."
   [
    ["difftron"
-    ("g" "Refresh" difftron-magit-refresh)
-    ("f" "Cycle grouping" difftron-magit-cycle-grouping)
-    ("l" "Select left" difftron-magit-select-left)
-    ("m" "Toggle details" difftron-magit-toggle-commit-messages)
-    ("r" "Select right" difftron-magit-select-right)
+    ("g" "Refresh" difftron-refresh)
+    ("f" "Cycle grouping" difftron-cycle-grouping)
+    ("l" "Select left" difftron-select-left)
+    ("m" "Toggle details" difftron-toggle-commit-messages)
+    ("r" "Select right" difftron-select-right)
     ("q" "Quit buffer" quit-window)
     ("TAB"
      "Toggle section/details"
-     difftron-magit-toggle-section-or-message)
-    ("RET" "Visit thing" difftron-magit-visit-thing)]
+     difftron-toggle-section-or-message)
+    ("RET" "Visit thing" difftron-visit-thing)]
    ["Visibility"
     ("<backtab>" "Cycle all" magit-section-cycle-global)
     ("1" "Level 1" magit-section-show-level-1)
@@ -144,48 +144,48 @@
     ("M-3" "All level 3" magit-section-show-level-3-all)
     ("M-4" "All level 4" magit-section-show-level-4-all)]
    ["Movement"
-    ("N" "Next commit" difftron-magit-next-commit)
-    ("P" "Previous commit" difftron-magit-previous-commit)
+    ("N" "Next commit" difftron-next-commit)
+    ("P" "Previous commit" difftron-previous-commit)
     ("n" "Next section" magit-section-forward)
     ("p" "Previous section" magit-section-backward)
     ("M-n" "Next sibling" magit-section-forward-sibling)
     ("M-p" "Previous sibling" magit-section-backward-sibling)]])
 
-(defun difftron-magit-diff-dwim ()
+(defun difftron-diff-dwim ()
   "Run `difftron diff' using the current Magit diff context."
   (interactive)
   (require 'magit-diff)
   (pcase-let*
       (
-       (default-directory (difftron-magit--repo-root))
+       (default-directory (difftron--repo-root))
        (`(,_args ,paths) (magit-diff-arguments))
        (`(,lhs ,rhs)
-        (difftron-magit--dwim-endpoints
+        (difftron--dwim-endpoints
          (ignore-errors
            (magit-diff--dwim))
          default-directory)))
-    (difftron-magit-diff
+    (difftron-diff
      lhs
      rhs
-     (and difftron-magit-use-magit-paths paths))))
+     (and difftron-use-magit-paths paths))))
 
-(defun difftron-magit-diff-at-point ()
+(defun difftron-diff-at-point ()
   "Run difftron for the current Magit diff and entity at point."
   (interactive)
   (require 'magit-diff)
   (pcase-let*
       (
-       (default-directory (difftron-magit--repo-root))
-       (path (difftron-magit--magit-diff-path-at-point))
-       (line (difftron-magit--magit-diff-line-at-point))
+       (default-directory (difftron--repo-root))
+       (path (difftron--magit-diff-path-at-point))
+       (line (difftron--magit-diff-line-at-point))
        (`(,_args ,paths) (magit-diff-arguments))
        (`(,lhs ,rhs)
-        (difftron-magit--dwim-endpoints
+        (difftron--dwim-endpoints
          (ignore-errors
            (magit-diff--dwim))
          default-directory))
        (selected-paths
-        (and difftron-magit-use-magit-paths
+        (and difftron-use-magit-paths
              (or (and path (list path)) paths)))
        (args
         (append
@@ -193,112 +193,112 @@
          (cl-mapcan
           (lambda (selected-path) (list "--path" selected-path))
           selected-paths)))
-       (payload (difftron-magit--run-command default-directory args)))
-    (difftron-magit--display-buffer default-directory args payload)
+       (payload (difftron--run-command default-directory args)))
+    (difftron--display-buffer default-directory args payload)
     (when path
-      (with-current-buffer difftron-magit-buffer-name
-        (difftron-magit--goto-entity-for-source path line)))))
+      (with-current-buffer difftron-buffer-name
+        (difftron--goto-entity-for-source path line)))))
 
-(defun difftron-magit-diff (lhs rhs &optional paths)
+(defun difftron-diff (lhs rhs &optional paths)
   "Run `difftron diff' for LHS, RHS, and optional PATHS.
 When called interactively, default to comparing `HEAD' against the current
 working tree rooted at the current repository."
   (interactive
    (let*
        (
-        (repo-root (difftron-magit--repo-root))
+        (repo-root (difftron--repo-root))
         (default-lhs "HEAD")
         (default-rhs repo-root)
         (lhs
-         (difftron-magit--read-snapshot-arg
+         (difftron--read-snapshot-arg
           'lhs
           repo-root
           default-lhs))
         (rhs
-         (difftron-magit--read-snapshot-arg
+         (difftron--read-snapshot-arg
           'rhs
           repo-root
           default-rhs)))
      (list lhs rhs)))
   (let*
       (
-       (default-directory (difftron-magit--repo-root))
+       (default-directory (difftron--repo-root))
        (args
         (append
          (list "diff" lhs rhs "--format" "json")
          (cl-mapcan (lambda (path) (list "--path" path)) paths)))
-       (payload (difftron-magit--run-command default-directory args)))
-    (difftron-magit--display-buffer default-directory args payload)))
+       (payload (difftron--run-command default-directory args)))
+    (difftron--display-buffer default-directory args payload)))
 
-(defun difftron-magit-refresh ()
+(defun difftron-refresh ()
   "Re-run the last difftron command in the current buffer."
   (interactive)
   (unless
-      (and difftron-magit--command-args
-           difftron-magit--default-directory)
+      (and difftron--command-args
+           difftron--default-directory)
     (user-error
      "No difftron command is associated with this buffer"))
   (magit-refresh-buffer))
 
-(defun difftron-magit-cycle-grouping ()
+(defun difftron-cycle-grouping ()
   "Cycle the difftron grouping mode for the current buffer."
   (interactive)
-  (unless difftron-magit--payload
+  (unless difftron--payload
     (user-error
      "No difftron payload is associated with this buffer"))
-  (setq difftron-magit-default-grouping
-        (pcase difftron-magit--grouping
+  (setq difftron-default-grouping
+        (pcase difftron--grouping
           ('kind 'file)
           (_ 'kind)))
-  (setq difftron-magit--grouping difftron-magit-default-grouping)
-  (difftron-magit--display-buffer
-   difftron-magit--default-directory
-   difftron-magit--command-args
-   difftron-magit--payload)
-  (with-current-buffer difftron-magit-buffer-name
-    (difftron-magit--show-entity-tree-level-3)))
+  (setq difftron--grouping difftron-default-grouping)
+  (difftron--display-buffer
+   difftron--default-directory
+   difftron--command-args
+   difftron--payload)
+  (with-current-buffer difftron-buffer-name
+    (difftron--show-entity-tree-level-3)))
 
-(defun difftron-magit-select-left ()
+(defun difftron-select-left ()
   "Select a new left-hand snapshot and refresh the diff."
   (interactive)
-  (difftron-magit--select-side 'lhs))
+  (difftron--select-side 'lhs))
 
-(defun difftron-magit-select-right ()
+(defun difftron-select-right ()
   "Select a new right-hand snapshot and refresh the diff."
   (interactive)
-  (difftron-magit--select-side 'rhs))
+  (difftron--select-side 'rhs))
 
-(defun difftron-magit--select-side (side)
+(defun difftron--select-side (side)
   "Select a new snapshot for SIDE and refresh the current diff."
-  (unless difftron-magit--payload
+  (unless difftron--payload
     (user-error
      "No difftron payload is associated with this buffer"))
-  (unless difftron-magit--default-directory
+  (unless difftron--default-directory
     (user-error
      "No difftron command is associated with this buffer"))
   (let*
       (
-       (lhs-snapshot (plist-get difftron-magit--payload :lhs))
-       (rhs-snapshot (plist-get difftron-magit--payload :rhs))
+       (lhs-snapshot (plist-get difftron--payload :lhs))
+       (rhs-snapshot (plist-get difftron--payload :rhs))
        (new-arg
-        (difftron-magit--read-snapshot-arg
+        (difftron--read-snapshot-arg
          side
-         difftron-magit--default-directory
-         (difftron-magit--snapshot-arg
+         difftron--default-directory
+         (difftron--snapshot-arg
           (pcase side
             ('lhs lhs-snapshot)
             (_ rhs-snapshot)))))
        (lhs
         (if (eq side 'lhs)
             new-arg
-          (difftron-magit--snapshot-arg lhs-snapshot)))
+          (difftron--snapshot-arg lhs-snapshot)))
        (rhs
         (if (eq side 'rhs)
             new-arg
-          (difftron-magit--snapshot-arg rhs-snapshot))))
-    (difftron-magit--run-and-display-diff lhs rhs)))
+          (difftron--snapshot-arg rhs-snapshot))))
+    (difftron--run-and-display-diff lhs rhs)))
 
-(defun difftron-magit--read-snapshot-arg
+(defun difftron--read-snapshot-arg
     (side repo-root &optional default-arg)
   "Read a snapshot argument for SIDE in REPO-ROOT.
 DEFAULT-ARG is used when the minibuffer input is empty."
@@ -306,48 +306,48 @@ DEFAULT-ARG is used when the minibuffer input is empty."
       (
        (repo-root (file-name-as-directory (expand-file-name repo-root)))
        (default-directory repo-root)
-       (candidates (difftron-magit--snapshot-candidates repo-root))
+       (candidates (difftron--snapshot-candidates repo-root))
        (completion-table
-        (difftron-magit--snapshot-completion-table candidates))
+        (difftron--snapshot-completion-table candidates))
        (input
         (completing-read
-         (format "%s snapshot: " (difftron-magit--side-label side))
+         (format "%s snapshot: " (difftron--side-label side))
          completion-table
          nil
          nil
          nil
-         'difftron-magit--snapshot-history
+         'difftron--snapshot-history
          default-arg))
        (input
         (if (and (string-empty-p input) default-arg)
             default-arg
           input))
        (candidate
-        (difftron-magit--snapshot-candidate-by-label
+        (difftron--snapshot-candidate-by-label
          input
          candidates)))
     (cond
      ((equal (plist-get candidate :value) 'browse-path)
-      (difftron-magit--read-snapshot-path side repo-root default-arg))
+      (difftron--read-snapshot-path side repo-root default-arg))
      (candidate (plist-get candidate :value))
-     ((difftron-magit--snapshot-existing-path input repo-root))
+     ((difftron--snapshot-existing-path input repo-root))
      (t input))))
 
-(defun difftron-magit--snapshot-candidates (repo-root)
+(defun difftron--snapshot-candidates (repo-root)
   "Return snapshot completion candidates rooted at REPO-ROOT."
-  (difftron-magit--uniquify-snapshot-candidate-labels
+  (difftron--uniquify-snapshot-candidate-labels
    (append
-    (difftron-magit--snapshot-branch-candidates)
-    (difftron-magit--snapshot-commit-candidates)
-    (difftron-magit--snapshot-path-candidates repo-root)
+    (difftron--snapshot-branch-candidates)
+    (difftron--snapshot-commit-candidates)
+    (difftron--snapshot-path-candidates repo-root)
     (list
      (list
-      :label difftron-magit--browse-path-choice
+      :label difftron--browse-path-choice
       :value 'browse-path
       :group "Repo Paths"
       :kind 'browse)))))
 
-(defun difftron-magit--snapshot-branch-candidates ()
+(defun difftron--snapshot-branch-candidates ()
   "Return branch candidates for snapshot completion."
   (mapcar
    (lambda (branch)
@@ -361,7 +361,7 @@ DEFAULT-ARG is used when the minibuffer input is empty."
      #'stringp
      (append '("HEAD") (or (magit-list-branch-names) nil))))))
 
-(defun difftron-magit--snapshot-commit-candidates ()
+(defun difftron--snapshot-commit-candidates ()
   "Return recent commit candidates for snapshot completion."
   (seq-keep
    (lambda (line)
@@ -385,11 +385,11 @@ DEFAULT-ARG is used when the minibuffer input is empty."
           :kind 'commit))))
    (magit-git-lines
     "log"
-    (format "--max-count=%d" difftron-magit-snapshot-commit-limit)
+    (format "--max-count=%d" difftron-snapshot-commit-limit)
     "--date=short"
     "--format=%h%x09%H%x09%an%x09%ad%x09%s")))
 
-(defun difftron-magit--snapshot-commit-annotation
+(defun difftron--snapshot-commit-annotation
     (author date column)
   "Return aligned completion metadata for commit AUTHOR and DATE at COLUMN."
   (concat
@@ -399,20 +399,20 @@ DEFAULT-ARG is used when the minibuffer input is empty."
     `(space :align-to ,column))
    (format "%-24s %s" author date)))
 
-(defun difftron-magit--snapshot-path-candidates (repo-root)
+(defun difftron--snapshot-path-candidates (repo-root)
   "Return tracked path candidates rooted at REPO-ROOT."
   (mapcar
    (lambda (path)
      (list
       :label path
       :value
-      (difftron-magit--format-snapshot-path
+      (difftron--format-snapshot-path
        (expand-file-name path repo-root))
       :group "Repo Paths"
       :kind 'path))
-   (difftron-magit--snapshot-repo-paths)))
+   (difftron--snapshot-repo-paths)))
 
-(defun difftron-magit--snapshot-repo-paths ()
+(defun difftron--snapshot-repo-paths ()
   "Return tracked file and directory paths in the current repository."
   (let (paths)
     (dolist (file (magit-git-lines "ls-files"))
@@ -426,7 +426,7 @@ DEFAULT-ARG is used when the minibuffer input is empty."
                    (directory-file-name dir)))))))
     (sort (delete-dups paths) #'string<)))
 
-(defun difftron-magit--uniquify-snapshot-candidate-labels
+(defun difftron--uniquify-snapshot-candidate-labels
     (candidates)
   "Return CANDIDATES with duplicate labels disambiguated."
   (let
@@ -448,7 +448,7 @@ DEFAULT-ARG is used when the minibuffer input is empty."
           (puthash label t seen)
           (push candidate unique))))))
 
-(defun difftron-magit--snapshot-completion-table
+(defun difftron--snapshot-completion-table
     (candidates)
   "Return a completion table for snapshot CANDIDATES."
   (let*
@@ -458,7 +458,7 @@ DEFAULT-ARG is used when the minibuffer input is empty."
                   (plist-get candidate :label))
                 candidates))
        (annotation-column
-        (difftron-magit--snapshot-annotation-column labels)))
+        (difftron--snapshot-annotation-column labels)))
     (lambda (string pred action)
       (if (eq action 'metadata)
           `(metadata
@@ -470,7 +470,7 @@ DEFAULT-ARG is used when the minibuffer input is empty."
                     candidate
                   (or
                    (plist-get
-                    (difftron-magit--snapshot-candidate-by-label
+                    (difftron--snapshot-candidate-by-label
                      candidate
                      candidates)
                     :group)
@@ -486,13 +486,13 @@ DEFAULT-ARG is used when the minibuffer input is empty."
                     (let
                         (
                          (snapshot-candidate
-                          (difftron-magit--snapshot-candidate-by-label
+                          (difftron--snapshot-candidate-by-label
                            candidate
                            candidates)))
                       (if (eq
                            (plist-get snapshot-candidate :kind)
                            'commit)
-                          (difftron-magit--snapshot-commit-annotation
+                          (difftron--snapshot-commit-annotation
                            (plist-get snapshot-candidate :author)
                            (plist-get snapshot-candidate :date)
                            annotation-column)
@@ -502,11 +502,11 @@ DEFAULT-ARG is used when the minibuffer input is empty."
             (cycle-sort-function . identity))
 	(complete-with-action action labels string pred)))))
 
-(defun difftron-magit--snapshot-annotation-column (labels)
+(defun difftron--snapshot-annotation-column (labels)
   "Return the metadata column for completion LABELS."
   (+ 2 (apply #'max 0 (mapcar #'length labels))))
 
-(defun difftron-magit--snapshot-candidate-by-label
+(defun difftron--snapshot-candidate-by-label
     (label candidates)
   "Return the candidate with LABEL from CANDIDATES."
   (seq-find
@@ -514,18 +514,18 @@ DEFAULT-ARG is used when the minibuffer input is empty."
      (equal (plist-get candidate :label) label))
    candidates))
 
-(defun difftron-magit--read-snapshot-path
+(defun difftron--read-snapshot-path
     (side repo-root default-arg)
   "Read a filesystem snapshot path for SIDE in REPO-ROOT.
 DEFAULT-ARG provides the initial path when it names a path."
-  (difftron-magit--format-snapshot-path
+  (difftron--format-snapshot-path
    (read-file-name
-    (format "%s path: " (difftron-magit--side-label side))
+    (format "%s path: " (difftron--side-label side))
     repo-root
-    (difftron-magit--snapshot-path-default default-arg repo-root)
+    (difftron--snapshot-path-default default-arg repo-root)
     t)))
 
-(defun difftron-magit--snapshot-path-default
+(defun difftron--snapshot-path-default
     (default-arg repo-root)
   "Return a path default from DEFAULT-ARG rooted at REPO-ROOT."
   (cond
@@ -537,21 +537,21 @@ DEFAULT-ARG provides the initial path when it names a path."
           path
         repo-root)))))
 
-(defun difftron-magit--snapshot-existing-path
+(defun difftron--snapshot-existing-path
     (input repo-root)
   "Return normalized INPUT as a path under REPO-ROOT if it exists."
   (let ((path (expand-file-name input repo-root)))
     (and (file-exists-p path)
-         (difftron-magit--format-snapshot-path path))))
+         (difftron--format-snapshot-path path))))
 
-(defun difftron-magit--format-snapshot-path (path)
+(defun difftron--format-snapshot-path (path)
   "Normalize PATH as a Difftron snapshot argument."
   (let ((path (expand-file-name path)))
     (if (file-directory-p path)
         (file-name-as-directory path)
       path)))
 
-(defun difftron-magit--snapshot-arg (snapshot)
+(defun difftron--snapshot-arg (snapshot)
   "Return the command argument for SNAPSHOT."
   (pcase (plist-get snapshot :kind)
     ("git_revision"
@@ -564,23 +564,23 @@ DEFAULT-ARG provides the initial path when it names a path."
      (user-error "Don't know how to use %s snapshots"
                  (plist-get snapshot :kind)))))
 
-(defun difftron-magit--side-label (side)
+(defun difftron--side-label (side)
   "Return a prompt label for SIDE."
   (pcase side
     ('lhs "Left")
     (_ "Right")))
 
-(defun difftron-magit-toggle-section-or-message ()
+(defun difftron-toggle-section-or-message ()
   "Toggle revision details at point or the current Magit section."
   (interactive)
   (magit-section-toggle
-   (or (difftron-magit--snapshot-section-at-point)
+   (or (difftron--snapshot-section-at-point)
        (magit-current-section))))
 
-(defun difftron-magit-toggle-commit-messages ()
+(defun difftron-toggle-commit-messages ()
   "Toggle revision details for both Git revision snapshots."
   (interactive)
-  (let ((sections (difftron-magit--snapshot-sections)))
+  (let ((sections (difftron--snapshot-sections)))
     (unless sections
       (user-error "No expandable Git revision snapshots in this buffer"))
     (if
@@ -594,7 +594,7 @@ DEFAULT-ARG provides the initial path when it names a path."
       (dolist (section sections)
         (magit-section-hide section)))))
 
-(defun difftron-magit--snapshot-section-at-point ()
+(defun difftron--snapshot-section-at-point ()
   "Return the snapshot section at point, if point is inside one."
   (let ((section (magit-current-section)))
     (while
@@ -602,7 +602,7 @@ DEFAULT-ARG provides the initial path when it names a path."
       (setq section (oref section parent)))
     section))
 
-(defun difftron-magit--snapshot-sections ()
+(defun difftron--snapshot-sections ()
   "Return expandable Git snapshot sections in the current buffer."
   (and
    magit-root-section
@@ -611,64 +611,64 @@ DEFAULT-ARG provides the initial path when it names a path."
       (eq (oref section type) 'difftron-snapshot))
     (oref magit-root-section children))))
 
-(defun difftron-magit--show-entity-tree-level-3 ()
+(defun difftron--show-entity-tree-level-3 ()
   "Show the entity tree to level 3 while leaving snapshots collapsed."
-  (when-let ((section (difftron-magit--first-entity-tree-section)))
+  (when-let ((section (difftron--first-entity-tree-section)))
     (goto-char (oref section start))
     (magit-section-show-level-3))
-  (difftron-magit--hide-snapshot-sections))
+  (difftron--hide-snapshot-sections))
 
-(defun difftron-magit--first-entity-tree-section ()
+(defun difftron--first-entity-tree-section ()
   "Return the first root child that belongs to the entity tree."
   (seq-find
    (lambda (section)
      (not (eq (oref section type) 'difftron-snapshot)))
    (oref magit-root-section children)))
 
-(defun difftron-magit--hide-snapshot-sections ()
+(defun difftron--hide-snapshot-sections ()
   "Collapse all expandable Git snapshot sections."
-  (dolist (section (difftron-magit--snapshot-sections))
+  (dolist (section (difftron--snapshot-sections))
     (if (oref section hidden)
         (magit-section-maybe-update-visibility-indicator section)
       (magit-section-hide section))))
 
-(defun difftron-magit--paint-section-visibility ()
+(defun difftron--paint-section-visibility ()
   "Apply Magit's visibility overlays from the root section."
   (when magit-root-section
     (let ((magit-section-cache-visibility nil))
       (magit-section-show magit-root-section))))
 
-(defun difftron-magit-next-commit ()
+(defun difftron-next-commit ()
   "Show the next commit on HEAD's first-parent history."
   (interactive)
-  (difftron-magit--show-commit-diff
-   (difftron-magit--next-commit
-    (difftron-magit--current-rhs-revision))))
+  (difftron--show-commit-diff
+   (difftron--next-commit
+    (difftron--current-rhs-revision))))
 
-(defun difftron-magit-previous-commit ()
+(defun difftron-previous-commit ()
   "Show the first-parent commit before the current RHS commit."
   (interactive)
-  (difftron-magit--show-commit-diff
+  (difftron--show-commit-diff
    (or
-    (difftron-magit--commit-parent
-     (difftron-magit--current-rhs-revision))
+    (difftron--commit-parent
+     (difftron--current-rhs-revision))
     (user-error "No previous commit"))))
 
-(defun difftron-magit--current-rhs-revision ()
+(defun difftron--current-rhs-revision ()
   "Return the Git revision for the current diff RHS."
-  (let ((rhs (plist-get difftron-magit--payload :rhs)))
+  (let ((rhs (plist-get difftron--payload :rhs)))
     (unless (equal (plist-get rhs :kind) "git_revision")
       (user-error
        "Difftron buffer is not showing a Git revision diff"))
     (or (plist-get rhs :rev)
         (user-error "Difftron diff RHS has no Git revision"))))
 
-(defun difftron-magit--next-commit (rev)
+(defun difftron--next-commit (rev)
   "Return the next commit after REV on HEAD's first-parent history."
   (let
       (
        (default-directory
-        (or difftron-magit--default-directory default-directory)))
+        (or difftron--default-directory default-directory)))
     (or
      (car
       (magit-git-lines
@@ -678,28 +678,28 @@ DEFAULT-ARG provides the initial path when it names a path."
        (format "%s..HEAD" rev)))
      (user-error "No next commit on HEAD's first-parent history"))))
 
-(defun difftron-magit--commit-parent (rev)
+(defun difftron--commit-parent (rev)
   "Return the first parent of REV, or nil for a root commit."
   (let*
       (
        (default-directory
-        (or difftron-magit--default-directory default-directory))
+        (or difftron--default-directory default-directory))
        (line (car (magit-git-lines "rev-list" "-1" "--parents" rev)))
        (parts (and line (split-string line))))
     (cadr parts)))
 
-(defun difftron-magit--show-commit-diff (rev)
+(defun difftron--show-commit-diff (rev)
   "Render the difftron diff for commit REV."
   (let
       (
        (parent
-        (or (difftron-magit--commit-parent rev)
+        (or (difftron--commit-parent rev)
             (user-error "Commit %s has no parent" rev))))
-    (difftron-magit--run-and-display-diff parent rev)))
+    (difftron--run-and-display-diff parent rev)))
 
-(defun difftron-magit--run-and-display-diff (lhs rhs)
+(defun difftron--run-and-display-diff (lhs rhs)
   "Run and display a difftron diff from LHS to RHS."
-  (unless difftron-magit--default-directory
+  (unless difftron--default-directory
     (user-error
      "No difftron command is associated with this buffer"))
   (let*
@@ -707,18 +707,18 @@ DEFAULT-ARG provides the initial path when it names a path."
        (args
         (append
          (list "diff" lhs rhs "--format" "json")
-         (difftron-magit--command-path-args
-          difftron-magit--command-args)))
+         (difftron--command-path-args
+          difftron--command-args)))
        (payload
-        (difftron-magit--run-command
-         difftron-magit--default-directory
+        (difftron--run-command
+         difftron--default-directory
          args)))
-    (difftron-magit--display-buffer
-     difftron-magit--default-directory
+    (difftron--display-buffer
+     difftron--default-directory
      args
      payload)))
 
-(defun difftron-magit--command-path-args (args)
+(defun difftron--command-path-args (args)
   "Return the --path arguments from difftron command ARGS."
   (let (paths)
     (while args
@@ -728,117 +728,117 @@ DEFAULT-ARG provides the initial path when it names a path."
           (push (pop args) paths))))
     (nreverse paths)))
 
-(defun difftron-magit-visit-thing ()
+(defun difftron-visit-thing ()
   "Visit the entity at point or activate a button."
   (interactive)
   (if-let*
       (
-       (section (difftron-magit--entity-section-at-point))
+       (section (difftron--entity-section-at-point))
        (entity (plist-get (oref section value) :entity)))
-      (difftron-magit--visit-entity entity)
-    (if-let ((button (difftron-magit--button-at-point)))
+      (difftron--visit-entity entity)
+    (if-let ((button (difftron--button-at-point)))
         (push-button (button-start button))
       (magit-section-toggle (magit-current-section)))))
 
-(defun difftron-magit--button-at-point ()
+(defun difftron--button-at-point ()
   "Return the button at point, accepting point just after button text."
   (or (button-at (point))
       (and (> (point) (point-min)) (button-at (1- (point))))))
 
-(defun difftron-magit--display-buffer
+(defun difftron--display-buffer
     (repo-default-directory args payload)
   "Render PAYLOAD in the dedicated buffer.
 REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
-  (let ((buffer (get-buffer-create difftron-magit-buffer-name)))
+  (let ((buffer (get-buffer-create difftron-buffer-name)))
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
-        (difftron-magit-mode)
-        (setq difftron-magit--grouping
-              difftron-magit-default-grouping)
-        (setq difftron-magit--default-directory
+        (difftron-mode)
+        (setq difftron--grouping
+              difftron-default-grouping)
+        (setq difftron--default-directory
               repo-default-directory)
-        (setq difftron-magit--command-args args)
-        (setq difftron-magit--payload payload)
+        (setq difftron--command-args args)
+        (setq difftron--payload payload)
         (erase-buffer)
-        (difftron-magit--insert-payload payload)
-        (difftron-magit--show-entity-tree-level-3)
-        (difftron-magit--paint-section-visibility)
+        (difftron--insert-payload payload)
+        (difftron--show-entity-tree-level-3)
+        (difftron--paint-section-visibility)
         (goto-char (point-min))))
     (pop-to-buffer buffer)))
 
-(defun difftron-magit-refresh-buffer ()
+(defun difftron-refresh-buffer ()
   "Refresh the current difftron buffer using Magit's refresh machinery."
-  (setq difftron-magit--payload
-        (difftron-magit--run-command
-         difftron-magit--default-directory
-         difftron-magit--command-args))
-  (difftron-magit--insert-payload difftron-magit--payload))
+  (setq difftron--payload
+        (difftron--run-command
+         difftron--default-directory
+         difftron--command-args))
+  (difftron--insert-payload difftron--payload))
 
-(defun difftron-magit--insert-payload (payload)
+(defun difftron--insert-payload (payload)
   "Insert PAYLOAD into the current buffer."
-  (setq difftron-magit--entity-kind-order
+  (setq difftron--entity-kind-order
         (plist-get payload :entity_kind_order))
-  (setq difftron-magit--entity-kinds
+  (setq difftron--entity-kinds
         (plist-get payload :entity_kinds))
   (magit-insert-section
       (difftron-root)
     (pcase (plist-get payload :command)
-      ("diff" (difftron-magit--insert-diff payload))
-      ("list" (difftron-magit--insert-list payload))
+      ("diff" (difftron--insert-diff payload))
+      ("list" (difftron--insert-list payload))
       (_
        (insert
         (format "Unsupported difftron command: %S" payload))))))
 
-(defun difftron-magit--insert-list (payload)
+(defun difftron--insert-list (payload)
   "Insert a list-mode PAYLOAD into the current buffer."
-  (difftron-magit--insert-title
+  (difftron--insert-title
    (format "difftron list %s"
            (plist-get (plist-get payload :snapshot) :label)))
-  (difftron-magit--insert-items
+  (difftron--insert-items
    (mapcar
-    #'difftron-magit--list-entity->item
+    #'difftron--list-entity->item
     (plist-get payload :entities))))
 
-(defun difftron-magit--insert-diff (payload)
+(defun difftron--insert-diff (payload)
   "Insert a diff PAYLOAD into the current buffer."
   (let
       (
        (lhs (plist-get payload :lhs))
        (rhs (plist-get payload :rhs)))
-    (difftron-magit--insert-snapshot-line "lhs" lhs)
-    (difftron-magit--insert-snapshot-line "rhs" rhs)
+    (difftron--insert-snapshot-line "lhs" lhs)
+    (difftron--insert-snapshot-line "rhs" rhs)
     (insert "\n")
-    (difftron-magit--insert-items
-     (difftron-magit--diff-items payload))))
+    (difftron--insert-items
+     (difftron--diff-items payload))))
 
-(defun difftron-magit--insert-snapshot-line (name snapshot)
+(defun difftron--insert-snapshot-line (name snapshot)
   "Insert one clickable diff endpoint NAME for SNAPSHOT."
   (if (equal (plist-get snapshot :kind) "git_revision")
       (let ((side (intern name)))
         (magit-insert-section
             (difftron-snapshot side t)
-          (difftron-magit--insert-snapshot-heading name snapshot)
+          (difftron--insert-snapshot-heading name snapshot)
           (magit-insert-heading)
-          (difftron-magit--add-snapshot-heading-properties
+          (difftron--add-snapshot-heading-properties
            side
            snapshot
            (oref magit-insert-section--current start)
            (oref magit-insert-section--current content))
           (magit-insert-section-body
-            (difftron-magit--insert-revision-details snapshot))))
-    (difftron-magit--insert-snapshot-heading name snapshot)
+            (difftron--insert-revision-details snapshot))))
+    (difftron--insert-snapshot-heading name snapshot)
     (insert "\n")))
 
-(defun difftron-magit--insert-snapshot-heading (name snapshot)
+(defun difftron--insert-snapshot-heading (name snapshot)
   "Insert the snapshot heading for endpoint NAME and SNAPSHOT."
   (insert
    (propertize (format "%s: " name)
                'font-lock-face
                'magit-section-heading))
   (insert-text-button
-   (difftron-magit--display-label (plist-get snapshot :label))
+   (difftron--display-label (plist-get snapshot :label))
    'action
-   (lambda (_button) (difftron-magit--visit-snapshot snapshot))
+   (lambda (_button) (difftron--visit-snapshot snapshot))
    'follow-link
    t
    'help-echo
@@ -852,22 +852,22 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
                    'font-lock-face
                    'magit-section-secondary-heading)))))
 
-(defun difftron-magit--add-snapshot-heading-properties
+(defun difftron--add-snapshot-heading-properties
     (side snapshot start end)
   "Mark the Git snapshot heading from START to END for SIDE and SNAPSHOT."
   (add-text-properties
    start end
    (list
-    'difftron-magit-snapshot-side
+    'difftron-snapshot-side
     side
-    'difftron-magit-snapshot
+    'difftron-snapshot
     snapshot
     'mouse-face
     'highlight
     'help-echo
     "TAB toggles revision details, RET visits snapshot")))
 
-(defun difftron-magit--insert-revision-details (snapshot)
+(defun difftron--insert-revision-details (snapshot)
   "Insert Magit-style revision details for SNAPSHOT."
   (condition-case err
       (let
@@ -891,7 +891,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
        'font-lock-face
        'magit-section-secondary-heading)))))
 
-(defun difftron-magit--visit-snapshot (snapshot)
+(defun difftron--visit-snapshot (snapshot)
   "Visit SNAPSHOT using the best available Magit action."
   (pcase (plist-get snapshot :kind)
     ("git_revision"
@@ -907,7 +907,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
      (user-error "Don't know how to visit %s snapshots"
                  (plist-get snapshot :kind)))))
 
-(defun difftron-magit--display-label (label)
+(defun difftron--display-label (label)
   "Return a compact display form for snapshot LABEL."
   (if (string-match "\\`\\(.+\\)@\\(.+\\)\\'" label)
       (let
@@ -921,98 +921,98 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
                 rev))
     label))
 
-(defun difftron-magit--insert-title (title)
+(defun difftron--insert-title (title)
   "Insert TITLE at the top of the current buffer."
   (insert (propertize title 'font-lock-face 'magit-section-heading))
   (insert "\n\n"))
 
-(defun difftron-magit--insert-kind-groups (items)
+(defun difftron--insert-kind-groups (items)
   "Insert ITEMS grouped by entity kind."
-  (let ((groups (difftron-magit--group-items-by-kind items)))
+  (let ((groups (difftron--group-items-by-kind items)))
     (if groups
         (dolist (group groups)
-          (difftron-magit--insert-kind-file-group
+          (difftron--insert-kind-file-group
            (car group)
            (cdr group)
            0))
       (insert "No entities\n"))))
 
-(defun difftron-magit--insert-file-groups (items)
+(defun difftron--insert-file-groups (items)
   "Insert ITEMS grouped by file."
-  (let ((groups (difftron-magit--group-items-by-file items)))
+  (let ((groups (difftron--group-items-by-file items)))
     (if groups
         (dolist (group groups)
-          (difftron-magit--insert-file-kind-group
+          (difftron--insert-file-kind-group
            (car group)
            (cdr group)
            0))
       (insert "No entities\n"))))
 
-(defun difftron-magit--insert-kind-file-group (kind items depth)
+(defun difftron--insert-kind-file-group (kind items depth)
   "Insert a kind heading for KIND and file groups for ITEMS at DEPTH."
   (magit-insert-section
       (difftron-kind kind t)
     (magit-insert-heading
-      (difftron-magit--kind-heading kind items depth))
-    (dolist (group (difftron-magit--group-items-by-file items))
-      (difftron-magit--insert-file-entity-group
+      (difftron--kind-heading kind items depth))
+    (dolist (group (difftron--group-items-by-file items))
+      (difftron--insert-file-entity-group
        (car group)
        (cdr group)
        (1+ depth)))
     (insert "\n")))
 
-(defun difftron-magit--insert-file-kind-group (file items depth)
+(defun difftron--insert-file-kind-group (file items depth)
   "Insert a file heading for FILE and kind groups for ITEMS at DEPTH."
   (magit-insert-section
       (difftron-file file t)
     (magit-insert-heading
-      (difftron-magit--file-heading file items depth))
-    (dolist (group (difftron-magit--group-items-by-kind items))
-      (difftron-magit--insert-kind-entity-group
+      (difftron--file-heading file items depth))
+    (dolist (group (difftron--group-items-by-kind items))
+      (difftron--insert-kind-entity-group
        (car group)
        (cdr group)
        (1+ depth)))
     (insert "\n")))
 
-(defun difftron-magit--insert-kind-entity-group (kind items depth)
+(defun difftron--insert-kind-entity-group (kind items depth)
   "Insert a kind heading for KIND and entity ITEMS at DEPTH."
   (magit-insert-section
       (difftron-kind kind t)
     (magit-insert-heading
-      (difftron-magit--kind-heading kind items depth))
+      (difftron--kind-heading kind items depth))
     (dolist (item items)
-      (difftron-magit--insert-item item (1+ depth)))
+      (difftron--insert-item item (1+ depth)))
     (insert "\n")))
 
-(defun difftron-magit--insert-file-entity-group (file items depth)
+(defun difftron--insert-file-entity-group (file items depth)
   "Insert a file heading for FILE and entity ITEMS at DEPTH."
   (magit-insert-section
       (difftron-file file t)
     (magit-insert-heading
-      (difftron-magit--file-heading file items depth))
+      (difftron--file-heading file items depth))
     (dolist (item items)
-      (difftron-magit--insert-item item (1+ depth)))
+      (difftron--insert-item item (1+ depth)))
     (insert "\n")))
 
-(defun difftron-magit--kind-heading (kind items depth)
+(defun difftron--kind-heading (kind items depth)
   "Return the heading text for KIND containing ITEMS at DEPTH."
   (propertize
    (format "%s%s (%d)"
-           (difftron-magit--indent depth)
-           (difftron-magit--kind-label kind)
+           (difftron--indent depth)
+           (difftron--kind-label kind)
            (length items))
-   'font-lock-face (difftron-magit--heading-face depth)))
+   'font-lock-face (difftron--heading-face depth)))
 
-(defun difftron-magit--file-heading (file items depth)
+(defun difftron--file-heading (file items depth)
   "Return the heading text for FILE containing ITEMS at DEPTH."
   (propertize
    (format "%s%s (%d)"
-           (difftron-magit--indent depth)
+           (difftron--indent depth)
            file
            (length items))
-   'font-lock-face (difftron-magit--heading-face depth)))
+   'font-lock-face (difftron--heading-face depth)))
 
-(defun difftron-magit--insert-item (item depth)
+(defun difftron--insert-item (item depth)
   "Insert ITEM as a foldable heading at DEPTH."
   (let ((entity (plist-get item :entity)))
     (magit-insert-section
@@ -1020,9 +1020,9 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
       (magit-insert-heading
         (propertize
          (format "%s%s"
-                 (difftron-magit--indent depth)
+                 (difftron--indent depth)
                  (plist-get item :summary))
-         'font-lock-face (difftron-magit--heading-face depth)))
+         'font-lock-face (difftron--heading-face depth)))
       (add-text-properties
        (oref magit-insert-section--current start)
        (oref magit-insert-section--current content)
@@ -1033,64 +1033,64 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         "RET visits source, TAB toggles section"))
       (pcase (plist-get item :status)
         ('modified
-         (difftron-magit--insert-structured-diff
+         (difftron--insert-structured-diff
           (plist-get item :diff)))
         (_
          (when-let ((source (plist-get entity :source_text)))
-           (difftron-magit--insert-diff-text
+           (difftron--insert-diff-text
             source
-            (difftron-magit--status-face (plist-get item :status)))
+            (difftron--status-face (plist-get item :status)))
            (unless (string-suffix-p "\n" source)
              (insert "\n")))))
       (unless (eq (char-before) ?\n)
         (insert "\n"))
       (insert "\n"))))
 
-(defun difftron-magit--insert-structured-diff (diff)
+(defun difftron--insert-structured-diff (diff)
   "Insert structured DIFF rows using Emacs layout and faces."
   (let ((rows (plist-get diff :rows)))
     (if rows
-        (let ((column-width (difftron-magit--modified-column-width)))
+        (let ((column-width (difftron--modified-column-width)))
           (dolist (row rows)
-            (difftron-magit--insert-structured-diff-row
+            (difftron--insert-structured-diff-row
              row
              column-width)))
       (insert "No diff output.\n"))))
 
-(defun difftron-magit--insert-structured-diff-row (row column-width)
+(defun difftron--insert-structured-diff-row (row column-width)
   "Insert one structured diff ROW using COLUMN-WIDTH per side."
-  (difftron-magit--insert-structured-side
+  (difftron--insert-structured-side
    (plist-get row :left)
    'left
    column-width)
   (insert " | ")
-  (difftron-magit--insert-structured-side
+  (difftron--insert-structured-side
    (plist-get row :right)
    'right
    column-width)
   (insert "\n"))
 
-(defun difftron-magit--insert-structured-side
+(defun difftron--insert-structured-side
     (side side-name column-width)
   "Insert SIDE for SIDE-NAME truncated to COLUMN-WIDTH."
   (if side
       (let
           (
            (start (point))
-           (face (difftron-magit--side-face side-name)))
-        (difftron-magit--insert-structured-segments
+           (face (difftron--side-face side-name)))
+        (difftron--insert-structured-segments
          (plist-get side :segments)
          side-name
          face
          column-width)
         (when (eq side-name 'left)
-          (difftron-magit--insert-diff-text
+          (difftron--insert-diff-text
            (make-string (max 0 (- column-width (- (point) start))) ?\s)
            face)))
     (when (eq side-name 'left)
       (insert (make-string column-width ?\s)))))
 
-(defun difftron-magit--insert-structured-segments
+(defun difftron--insert-structured-segments
     (segments side-name face remaining-width)
   "Insert SEGMENTS for SIDE-NAME with FACE within REMAINING-WIDTH columns."
   (let ((remaining remaining-width))
@@ -1105,31 +1105,31 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
                0
                nil))
              (refine-face
-              (difftron-magit--segment-refine-face
+              (difftron--segment-refine-face
                side-name
                (plist-get segment :kind)))
              (start (point)))
           (unless (string-empty-p text)
-            (difftron-magit--insert-diff-text text face)
+            (difftron--insert-diff-text text face)
             (when refine-face
-              (difftron-magit--add-refine-overlay
+              (difftron--add-refine-overlay
                start
                (point)
                refine-face))
             (setq remaining (- remaining (string-width text)))))))))
 
-(defun difftron-magit--insert-diff-text (text face)
+(defun difftron--insert-diff-text (text face)
   "Insert TEXT with optional diff FACE."
   (if face
       (insert (propertize text 'font-lock-face face))
     (insert text)))
 
-(defun difftron-magit--side-face (side-name)
+(defun difftron--side-face (side-name)
   "Return the base diff face for SIDE-NAME."
   (ignore side-name)
   'magit-diff-context)
 
-(defun difftron-magit--segment-refine-face (side-name kind)
+(defun difftron--segment-refine-face (side-name kind)
   "Return the refinement face for segment KIND on SIDE-NAME."
   (pcase kind
     ("novel"
@@ -1138,7 +1138,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
        (_ 'diff-refine-added)))
     (_ nil)))
 
-(defun difftron-magit--add-refine-overlay (start end face)
+(defun difftron--add-refine-overlay (start end face)
   "Add a Magit-style fine diff overlay from START to END using FACE."
   (let ((overlay (make-overlay start end nil t)))
     (overlay-put overlay 'diff-mode 'fine)
@@ -1146,11 +1146,11 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     (overlay-put overlay 'face face)
     overlay))
 
-(defun difftron-magit--modified-column-width ()
+(defun difftron--modified-column-width ()
   "Return the per-side width for structured modified diffs."
-  (max 24 (/ (- (difftron-magit--current-display-width) 3) 2)))
+  (max 24 (/ (- (difftron--current-display-width) 3) 2)))
 
-(defun difftron-magit--visit-entity (entity)
+(defun difftron--visit-entity (entity)
   "Visit ENTITY in another buffer."
   (let
       (
@@ -1162,28 +1162,28 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     (forward-line (1- line))
     (move-to-column (max 0 (1- column)))))
 
-(defun difftron-magit--diff-items (payload)
+(defun difftron--diff-items (payload)
   "Flatten diff PAYLOAD into display items."
   (append
    (mapcar
     (lambda (entity)
-      (difftron-magit--item-from-entity 'added entity))
+      (difftron--item-from-entity 'added entity))
     (plist-get payload :added))
    (mapcar
     (lambda (entity)
-      (difftron-magit--item-from-entity 'deleted entity))
+      (difftron--item-from-entity 'deleted entity))
     (plist-get payload :deleted))
    (mapcan
-    #'difftron-magit--items-from-move
+    #'difftron--items-from-move
     (plist-get payload :moved))
    (mapcan
-    #'difftron-magit--items-from-moved-modified
+    #'difftron--items-from-moved-modified
     (plist-get payload :moved_modified))
    (mapcar
-    #'difftron-magit--item-from-change
+    #'difftron--item-from-change
     (plist-get payload :modified))))
 
-(defun difftron-magit--item-from-change (change)
+(defun difftron--item-from-change (change)
   "Build a display item from modified CHANGE."
   (let ((rhs (plist-get change :rhs)))
     (list
@@ -1193,7 +1193,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
      :summary (format "M %s" (plist-get rhs :name))
      :diff (plist-get change :diff))))
 
-(defun difftron-magit--items-from-move (change)
+(defun difftron--items-from-move (change)
   "Build source-side and destination-side display items from moved CHANGE."
   (let
       (
@@ -1211,7 +1211,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
       :entity rhs
       :summary (format "Moved here from %s" (plist-get lhs :name))))))
 
-(defun difftron-magit--items-from-moved-modified (change)
+(defun difftron--items-from-moved-modified (change)
   "Build source-side and destination-side items from moved-modified CHANGE."
   (let
       (
@@ -1233,7 +1233,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
       (format "Moved here from %s, with changes"
               (plist-get lhs :name))))))
 
-(defun difftron-magit--item-from-entity (status entity)
+(defun difftron--item-from-entity (status entity)
   "Build a display item from ENTITY with STATUS."
   (list
    :kind (plist-get entity :kind)
@@ -1247,7 +1247,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
              (_ " "))
            (plist-get entity :name))))
 
-(defun difftron-magit--list-entity->item (entity)
+(defun difftron--list-entity->item (entity)
   "Build a display item from a list-mode ENTITY."
   (list
    :kind (plist-get entity :kind)
@@ -1255,7 +1255,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
    :entity entity
    :summary (plist-get entity :name)))
 
-(defun difftron-magit--group-items
+(defun difftron--group-items
     (items key-fn group-lessp &optional item-lessp)
   "Group ITEMS by KEY-FN, sorting groups with GROUP-LESSP.
 When ITEM-LESSP is non-nil, sort items within each group using it."
@@ -1279,64 +1279,64 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
             group-items))))
      (sort keys group-lessp))))
 
-(defun difftron-magit--group-items-by-kind (items)
+(defun difftron--group-items-by-kind (items)
   "Group ITEMS by entity kind in display order."
-  (difftron-magit--group-items
+  (difftron--group-items
    items
    (lambda (item) (plist-get item :kind))
-   #'difftron-magit--kind-lessp))
+   #'difftron--kind-lessp))
 
-(defun difftron-magit--group-items-by-file (items)
+(defun difftron--group-items-by-file (items)
   "Group ITEMS by relative path."
-  (difftron-magit--group-items items
-                               (lambda (item)
-                                 (plist-get (plist-get item :entity) :snapshot_path))
-                               #'string<
-                               #'difftron-magit--item-lessp))
+  (difftron--group-items items
+                         (lambda (item)
+                           (plist-get (plist-get item :entity) :snapshot_path))
+                         #'string<
+                         #'difftron--item-lessp))
 
-(defun difftron-magit--item-lessp (lhs rhs)
+(defun difftron--item-lessp (lhs rhs)
   "Return non-nil when LHS should sort before RHS."
   (let
       (
        (lhs-rank
-        (difftron-magit--status-rank (plist-get lhs :status)))
+        (difftron--status-rank (plist-get lhs :status)))
        (rhs-rank
-        (difftron-magit--status-rank (plist-get rhs :status))))
+        (difftron--status-rank (plist-get rhs :status))))
     (if (/= lhs-rank rhs-rank)
         (< lhs-rank rhs-rank)
       (string< (plist-get lhs :summary) (plist-get rhs :summary)))))
 
-(defun difftron-magit--kind-lessp (lhs rhs)
+(defun difftron--kind-lessp (lhs rhs)
   "Return non-nil when kind LHS should sort before RHS."
   (let
       (
-       (lhs-rank (difftron-magit--kind-rank lhs))
-       (rhs-rank (difftron-magit--kind-rank rhs)))
+       (lhs-rank (difftron--kind-rank lhs))
+       (rhs-rank (difftron--kind-rank rhs)))
     (if (= lhs-rank rhs-rank)
         (string< lhs rhs)
       (< lhs-rank rhs-rank))))
 
-(defun difftron-magit--kind-rank (kind)
+(defun difftron--kind-rank (kind)
   "Return the display rank for KIND."
   (or
    (cl-position
     kind
-    difftron-magit--entity-kind-order
+    difftron--entity-kind-order
     :test #'equal)
-   (length difftron-magit--entity-kind-order)))
+   (length difftron--entity-kind-order)))
 
-(defun difftron-magit--kind-label (kind)
+(defun difftron--kind-label (kind)
   "Return the user-facing heading label for KIND."
-  (or (plist-get (difftron-magit--kind-metadata kind) :group_label)
+  (or (plist-get (difftron--kind-metadata kind) :group_label)
       kind))
 
-(defun difftron-magit--kind-metadata (kind)
+(defun difftron--kind-metadata (kind)
   "Return the metadata plist for KIND."
   (plist-get
-   difftron-magit--entity-kinds
+   difftron--entity-kinds
    (intern (concat ":" kind))))
 
-(defun difftron-magit--status-rank (status)
+(defun difftron--status-rank (status)
   "Return the display rank for STATUS."
   (pcase status
     ('modified 0)
@@ -1350,38 +1350,38 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
     ('deleted 3)
     (_ 4)))
 
-(defun difftron-magit--status-face (status)
+(defun difftron--status-face (status)
   "Return the Magit face for STATUS."
   (pcase status
     ('added 'magit-diff-added)
     ('deleted 'magit-diff-removed)
     (_ nil)))
 
-(defun difftron-magit--insert-items (items)
+(defun difftron--insert-items (items)
   "Insert ITEMS using the current grouping mode."
-  (pcase difftron-magit--grouping
-    ('file (difftron-magit--insert-file-groups items))
-    (_ (difftron-magit--insert-kind-groups items))))
+  (pcase difftron--grouping
+    ('file (difftron--insert-file-groups items))
+    (_ (difftron--insert-kind-groups items))))
 
-(defun difftron-magit--indent (depth)
+(defun difftron--indent (depth)
   "Return indentation for section DEPTH."
   (make-string (* depth 2) ?\s))
 
-(defun difftron-magit--heading-face (depth)
+(defun difftron--heading-face (depth)
   "Return the heading face for section DEPTH."
   (pcase depth
     (0 'magit-section-heading)
-    (1 'difftron-magit-level-1-heading)
-    (_ 'difftron-magit-level-2-heading)))
+    (1 'difftron-level-1-heading)
+    (_ 'difftron-level-2-heading)))
 
-(defun difftron-magit--current-display-width ()
+(defun difftron--current-display-width ()
   "Return the current window body width in character columns."
   (max 20
        (if-let ((window (selected-window)))
            (window-body-width window)
          (frame-width))))
 
-(defun difftron-magit--run-command (repo-default-directory args)
+(defun difftron--run-command (repo-default-directory args)
   "Run difftron with ARGS from REPO-DEFAULT-DIRECTORY and parse JSON output."
   (with-temp-buffer
     (let
@@ -1393,7 +1393,7 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
               (
                (status
                 (apply #'process-file
-                       difftron-magit-executable
+                       difftron-executable
                        nil
                        (list (current-buffer) stderr-file)
                        nil
@@ -1409,7 +1409,7 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
             (json-parse-buffer :object-type 'plist :array-type 'list))
         (delete-file stderr-file)))))
 
-(defun difftron-magit--repo-root ()
+(defun difftron--repo-root ()
   "Return the repository root for the current buffer."
   (or
    (and (fboundp 'magit-toplevel)
@@ -1418,7 +1418,7 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
    (locate-dominating-file default-directory ".git")
    (user-error "Not inside a Git repository")))
 
-(defun difftron-magit--dwim-endpoints (spec repo-root)
+(defun difftron--dwim-endpoints (spec repo-root)
   "Return difftron LHS and RHS endpoints from Magit SPEC in REPO-ROOT."
   (pcase spec
     ((or 'unstaged 'staged 'unmerged 'undefined)
@@ -1426,11 +1426,11 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
     (`(commit . ,rev) (list (format "%s^" rev) rev))
     (`(stash . ,rev) (list (format "%s^" rev) rev))
     ((pred stringp)
-     (or (difftron-magit--range-endpoints spec)
+     (or (difftron--range-endpoints spec)
          (list spec repo-root)))
     (_ (list "HEAD" repo-root))))
 
-(defun difftron-magit--range-endpoints (range)
+(defun difftron--range-endpoints (range)
   "Return LHS and RHS endpoints for Git diff RANGE, or nil."
   (cond
    ((string-match "\\`\\(.+\\)\\.\\.\\.\\(.+\\)\\'" range)
@@ -1438,53 +1438,53 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
    ((string-match "\\`\\(.+\\)\\.\\.\\(.+\\)\\'" range)
     (list (match-string 1 range) (match-string 2 range)))))
 
-(defun difftron-magit--magit-diff-path-at-point ()
+(defun difftron--magit-diff-path-at-point ()
   "Return the relative Magit diff file path at point, if any."
   (when-let ((section (magit-diff--file-section)))
     (or
-     (and (difftron-magit--magit-diff-removed-line-p)
+     (and (difftron--magit-diff-removed-line-p)
           (oref section source))
      (oref section value)
      (oref section source))))
 
-(defun difftron-magit--magit-diff-line-at-point ()
+(defun difftron--magit-diff-line-at-point ()
   "Return the Magit diff hunk line at point, if any."
   (when-let ((section (magit-diff--hunk-section)))
     (magit-diff-hunk-line
      section
-     (difftron-magit--magit-diff-removed-line-p))))
+     (difftron--magit-diff-removed-line-p))))
 
-(defun difftron-magit--magit-diff-removed-line-p ()
+(defun difftron--magit-diff-removed-line-p ()
   "Return non-nil if point is on a removed Magit diff line."
   (and (fboundp 'magit-diff-on-removed-line-p)
        (magit-diff-on-removed-line-p)))
 
-(defun difftron-magit--goto-entity-for-source (path line)
+(defun difftron--goto-entity-for-source (path line)
   "Move point to the difftron entity for PATH and optional LINE."
   (when-let
       (
        (section
-        (or (difftron-magit--find-entity-section path line)
-            (difftron-magit--find-entity-section path nil))))
-    (difftron-magit--show-section-and-ancestors section)
+        (or (difftron--find-entity-section path line)
+            (difftron--find-entity-section path nil))))
+    (difftron--show-section-and-ancestors section)
     (goto-char (oref section start))))
 
-(defun difftron-magit--find-entity-section (path line)
+(defun difftron--find-entity-section (path line)
   "Return the entity section matching PATH and LINE."
   (seq-find
    (lambda (section)
-     (difftron-magit--entity-section-matches-p section path line))
-   (difftron-magit--entity-sections magit-root-section)))
+     (difftron--entity-section-matches-p section path line))
+   (difftron--entity-sections magit-root-section)))
 
-(defun difftron-magit--entity-sections (section)
+(defun difftron--entity-sections (section)
   "Return entity sections below SECTION."
   (append
    (and (eq (oref section type) 'difftron-entity) (list section))
    (mapcan
-    #'difftron-magit--entity-sections
+    #'difftron--entity-sections
     (oref section children))))
 
-(defun difftron-magit--entity-section-matches-p (section path line)
+(defun difftron--entity-section-matches-p (section path line)
   "Return non-nil when SECTION has PATH and optional LINE."
   (let*
       (
@@ -1499,14 +1499,14 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
                   (<= start-line line)
                   (<= line end-line))))))
 
-(defun difftron-magit--show-section-and-ancestors (section)
+(defun difftron--show-section-and-ancestors (section)
   "Show SECTION and its ancestors."
   (let ((current section))
     (while current
       (magit-section-show current)
       (setq current (oref current parent)))))
 
-(defun difftron-magit--entity-section-at-point ()
+(defun difftron--entity-section-at-point ()
   "Return the nearest entity section at point, if any."
   (let ((section (magit-current-section)))
     (while
@@ -1514,76 +1514,76 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
       (setq section (oref section parent)))
     section))
 
-(defun difftron-magit-register-magit-diff-suffix ()
+(defun difftron-register-magit-diff-suffix ()
   "Register difftron in the `magit-diff' transient."
   (when (featurep 'magit-diff)
-    (unless (difftron-magit--magit-diff-suffix-p "D")
+    (unless (difftron--magit-diff-suffix-p "D")
       (transient-append-suffix
         'magit-diff
         "d"
-        difftron-magit--magit-diff-suffix))))
+        difftron--magit-diff-suffix))))
 
-(defun difftron-magit--magit-diff-suffix-p (key)
+(defun difftron--magit-diff-suffix-p (key)
   "Return non-nil if KEY is registered in the `magit-diff' transient."
   (ignore-errors
     (transient-get-suffix 'magit-diff key)))
 
-(defun difftron-magit-register-magit-diff-bindings ()
+(defun difftron-register-magit-diff-bindings ()
   "Register difftron bindings in Magit diff buffers."
   (when (featurep 'magit-diff)
-    (difftron-magit-register-magit-diff-suffix)
+    (difftron-register-magit-diff-suffix)
     (define-key
      magit-diff-mode-map
      (kbd "D")
-     #'difftron-magit-diff-at-point)
+     #'difftron-diff-at-point)
     (define-key
      magit-diff-section-map
      (kbd "D")
-     #'difftron-magit-diff-at-point)))
+     #'difftron-diff-at-point)))
 
-(defun difftron-magit-unregister-magit-diff-suffix ()
+(defun difftron-unregister-magit-diff-suffix ()
   "Remove difftron from the `magit-diff' transient."
   (when (featurep 'magit-diff)
-    (when (difftron-magit--magit-diff-suffix-p "D")
+    (when (difftron--magit-diff-suffix-p "D")
       (transient-remove-suffix 'magit-diff "D"))))
 
-(defun difftron-magit-unregister-magit-diff-bindings ()
+(defun difftron-unregister-magit-diff-bindings ()
   "Remove difftron bindings from Magit diff buffers."
   (when (featurep 'magit-diff)
-    (difftron-magit-unregister-magit-diff-suffix)
+    (difftron-unregister-magit-diff-suffix)
     (define-key magit-diff-mode-map (kbd "D") nil)
     (define-key magit-diff-section-map (kbd "D") nil)))
 
-(defun difftron-magit--maybe-register-magit-diff-suffix
+(defun difftron--maybe-register-magit-diff-suffix
     (&optional file)
   "Register difftron bindings when `magit-diff' becomes available.
 When FILE is non-nil, it is the path passed by `after-load-functions'."
   (when
-      (and difftron-magit-bindings-mode
+      (and difftron-bindings-mode
            (or (null file) (string= (file-name-base file) "magit-diff")))
     (remove-hook
      'after-load-functions
-     #'difftron-magit--maybe-register-magit-diff-suffix)
-    (difftron-magit-register-magit-diff-bindings)))
+     #'difftron--maybe-register-magit-diff-suffix)
+    (difftron-register-magit-diff-bindings)))
 
 ;;;###autoload
-(define-minor-mode difftron-magit-bindings-mode
+(define-minor-mode difftron-bindings-mode
   "Toggle difftron bindings in Magit transients."
   :global t
-  :group 'difftron-magit
+  :group 'difftron
   :require
-  'difftron-magit
-  (if difftron-magit-bindings-mode
+  'difftron
+  (if difftron-bindings-mode
       (if (featurep 'magit-diff)
-          (difftron-magit--maybe-register-magit-diff-suffix)
+          (difftron--maybe-register-magit-diff-suffix)
         (add-hook
          'after-load-functions
-         #'difftron-magit--maybe-register-magit-diff-suffix))
+         #'difftron--maybe-register-magit-diff-suffix))
     (remove-hook
      'after-load-functions
-     #'difftron-magit--maybe-register-magit-diff-suffix)
-    (difftron-magit-unregister-magit-diff-bindings)))
+     #'difftron--maybe-register-magit-diff-suffix)
+    (difftron-unregister-magit-diff-bindings)))
 
-(provide 'difftron-magit)
+(provide 'difftron)
 
-;;; difftron-magit.el ends here
+;;; difftron.el ends here

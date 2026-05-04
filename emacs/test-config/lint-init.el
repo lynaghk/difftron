@@ -31,7 +31,7 @@
   :demand t)
 
 (use-package
-  difftron-magit-lint
+  difftron-lint
   :straight nil
   :load-path difftron-elisp-root
   :demand t)

@@ -23,13 +23,13 @@ run_emacs() {
   "${EMACS_BIN}" -Q --batch \
     -l "${REPO_ROOT}/emacs/test-config/lint-init.el" \
     -L "${REPO_ROOT}/emacs" \
-    -l difftron-magit-lint.el \
-    -f difftron-magit-lint-batch-and-exit
+    -l difftron-lint.el \
+    -f difftron-lint-batch-and-exit
   "${EMACS_BIN}" -Q --batch \
     -l "${REPO_ROOT}/emacs/test-config/init.el" \
     -L "${REPO_ROOT}/emacs" \
-    -l difftron-magit-lint-tests.el \
-    -l difftron-magit-tests.el \
+    -l difftron-lint-tests.el \
+    -l difftron-tests.el \
     -f ert-run-tests-batch-and-exit
 }
 

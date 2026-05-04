@@ -27,13 +27,13 @@ This is the function I use to (re)load the package:
   (interactive)
   (let ((base-path "/where-you-put-difftron-project-folder"))
     (when (featurep 'difftron)
-      (unload-feature 'difftron-magit t))
-    (load (concat base-path "/emacs/difftron-magit.el"))
-    (difftron-magit-bindings-mode)
-    (setq difftron-magit-executable (concat base-path "/script/difftron_dev"))))
+      (unload-feature 'difftron t))
+    (load (concat base-path "/emacs/difftron.el"))
+    (difftron-bindings-mode)
+    (setq difftron-executable (concat base-path "/script/difftron_dev"))))
 ```
 
-You can run `M-x difftron-magit-diff` to diff two snapshots, but I tend to use it from within Magit's diff popup (press `d` for Magit's popup, then `D` for Difftron).
+You can run `M-x difftron-diff` to diff two snapshots, but I tend to use it from within Magit's diff popup (press `d` for Magit's popup, then `D` for Difftron).
 Doing this from a Magit diff will jump to the corresponding entity in Difftron.
 
 

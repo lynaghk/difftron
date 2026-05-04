@@ -23,13 +23,13 @@
   :defer t)
 
 (use-package
-  difftron-magit
+  difftron
   :straight nil
   :load-path difftron-elisp-root
   :demand t
-  :bind ("C-c r d" . difftron-magit-diff)
-  :init (setq difftron-magit-executable difftron-dev-wrapper)
-  :config (difftron-magit-bindings-mode 1))
+  :bind ("C-c r d" . difftron-diff)
+  :init (setq difftron-executable difftron-dev-wrapper)
+  :config (difftron-bindings-mode 1))
 
 (provide 'init)
 
