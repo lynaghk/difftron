@@ -731,14 +731,16 @@ DEFAULT-ARG provides the initial path when it names a path."
 (defun difftron-visit-thing ()
   "Visit the entity at point or activate a button."
   (interactive)
-  (if-let*
-      (
-       (section (difftron--entity-section-at-point))
-       (entity (plist-get (oref section value) :entity)))
-      (difftron--visit-entity entity)
-    (if-let ((button (difftron--button-at-point)))
-        (push-button (button-start button))
-      (magit-section-toggle (magit-current-section)))))
+  (if-let ((button (difftron--button-at-point)))
+      (push-button (button-start button))
+    (if-let ((source (difftron--source-location-at-point)))
+        (difftron--visit-source-location source)
+      (if-let*
+	  (
+	   (section (difftron--entity-section-at-point))
+	   (item (oref section value)))
+          (difftron--visit-item item)
+        (magit-section-toggle (magit-current-section))))))
 
 (defun difftron--button-at-point ()
   "Return the button at point, accepting point just after button text."
@@ -776,6 +778,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
 
 (defun difftron--insert-payload (payload)
   "Insert PAYLOAD into the current buffer."
+  (setq difftron--payload payload)
   (setq difftron--entity-kind-order
         (plist-get payload :entity_kind_order))
   (setq difftron--entity-kinds
@@ -1038,8 +1041,7 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         "RET visits source, TAB toggles section"))
       (pcase (plist-get item :status)
         ('modified
-         (difftron--insert-structured-diff
-          (plist-get item :diff)))
+         (difftron--insert-structured-diff item))
         (_
          (when-let ((source (plist-get entity :source_text)))
            (difftron--insert-diff-text
@@ -1051,53 +1053,88 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         (insert "\n"))
       (insert "\n"))))
 
-(defun difftron--insert-structured-diff (diff)
-  "Insert structured DIFF rows using Emacs layout and faces."
-  (let ((rows (plist-get diff :rows)))
+(defun difftron--insert-structured-diff (item)
+  "Insert structured diff for ITEM using Emacs layout and faces."
+  (let ((rows (plist-get (plist-get item :diff) :rows)))
     (if rows
         (let ((column-width (difftron--modified-column-width)))
           (dolist (row rows)
             (difftron--insert-structured-diff-row
+             item
              row
              column-width)))
       (insert "No diff output.\n"))))
 
-(defun difftron--insert-structured-diff-row (row column-width)
-  "Insert one structured diff ROW using COLUMN-WIDTH per side."
+(defun difftron--insert-structured-diff-row
+    (item row column-width)
+  "Insert one structured diff ROW for ITEM using COLUMN-WIDTH per side."
   (difftron--insert-structured-side
    (plist-get row :left)
    'left
-   column-width)
+   column-width
+   (difftron--structured-side-source item 'lhs))
   (insert " | ")
   (difftron--insert-structured-side
    (plist-get row :right)
    'right
-   column-width)
+   column-width
+   (difftron--structured-side-source item 'rhs))
   (insert "\n"))
 
 (defun difftron--insert-structured-side
-    (side side-name column-width)
-  "Insert SIDE for SIDE-NAME truncated to COLUMN-WIDTH."
+    (side side-name column-width source)
+  "Insert SIDE for SIDE-NAME using SOURCE, truncated to COLUMN-WIDTH."
   (if side
       (let
           (
            (start (point))
+           (side-column (current-column))
            (face (difftron--side-face side-name)))
         (difftron--insert-structured-segments
          (plist-get side :segments)
          side-name
          face
-         column-width)
+         column-width
+         (plist-put
+          (copy-sequence source)
+          :row-line
+          (plist-get side :line_number))
+         side-column)
         (when (eq side-name 'left)
-          (difftron--insert-diff-text
-           (make-string (max 0 (- column-width (- (point) start))) ?\s)
-           face)))
+          (let
+              (
+               (padding-start (point))
+               (padding
+                (make-string
+                 (max 0 (- column-width (- (point) start)))
+                 ?\s)))
+            (difftron--insert-diff-text padding face)
+            (difftron--add-source-properties
+             padding-start
+             (point)
+             (plist-put
+              (copy-sequence source)
+              :row-line
+              (plist-get side :line_number))
+             side-column))))
     (when (eq side-name 'left)
       (insert (make-string column-width ?\s)))))
 
+(defun difftron--structured-side-source (item side)
+  "Return source metadata for SIDE of structured diff ITEM."
+  (list
+   :side side
+   :entity
+   (or
+    (pcase side
+      ('lhs (plist-get item :lhs))
+      (_ (plist-get item :rhs)))
+    (plist-get item :entity))))
+
 (defun difftron--insert-structured-segments
-    (segments side-name face remaining-width)
-  "Insert SEGMENTS for SIDE-NAME with FACE within REMAINING-WIDTH columns."
+    (segments side-name face remaining-width source side-column)
+  "Insert SEGMENTS for SIDE-NAME with FACE and SOURCE metadata.
+Insert at most REMAINING-WIDTH columns, starting at SIDE-COLUMN."
   (let ((remaining remaining-width))
     (dolist (segment segments)
       (when (> remaining 0)
@@ -1116,6 +1153,11 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
              (start (point)))
           (unless (string-empty-p text)
             (difftron--insert-diff-text text face)
+            (difftron--add-source-properties
+             start
+             (point)
+             source
+             side-column)
             (when refine-face
               (difftron--add-refine-overlay
                start
@@ -1151,21 +1193,180 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     (overlay-put overlay 'face face)
     overlay))
 
+(defun difftron--add-source-properties
+    (start end source side-column)
+  "Mark START to END as source text from SOURCE at SIDE-COLUMN."
+  (add-text-properties
+   start end
+   (list
+    'difftron-source-side
+    (plist-get source :side)
+    'difftron-source-entity
+    (plist-get source :entity)
+    'difftron-source-row-line
+    (plist-get source :row-line)
+    'difftron-source-side-column
+    side-column
+    'mouse-face
+    'highlight
+    'help-echo
+    "RET visits this side at point in history")))
+
 (defun difftron--modified-column-width ()
   "Return the per-side width for structured modified diffs."
   (max 24 (/ (- (difftron--current-display-width) 3) 2)))
 
-(defun difftron--visit-entity (entity)
-  "Visit ENTITY in another buffer."
+(defun difftron--visit-item (item)
+  "Visit the default source location for ITEM."
+  (let*
+      (
+       (side (difftron--default-side-for-item item))
+       (entity (difftron--entity-for-item-side item side)))
+    (difftron--visit-entity-in-snapshot
+     (difftron--snapshot-for-side side)
+     entity)))
+
+(defun difftron--source-location-at-point ()
+  "Return the side-aware source location at point, if any."
+  (when-let
+      (
+       (source-position (difftron--source-property-position))
+       (side
+        (get-text-property source-position 'difftron-source-side))
+       (entity
+        (get-text-property source-position 'difftron-source-entity)))
+    (let*
+        (
+         (row-line
+          (or
+           (get-text-property
+            source-position
+            'difftron-source-row-line)
+           1))
+         (side-column
+          (or
+           (get-text-property
+            source-position
+            'difftron-source-side-column)
+           (current-column)))
+         (line
+          (+ (or (plist-get entity :start_line) 1)
+             row-line
+             -1))
+         (column
+          (+ (if (= row-line 1)
+                 (max 0 (1- (or (plist-get entity :start_col) 1)))
+               0)
+             (max 0 (- (current-column) side-column)))))
+      (list
+       :snapshot (difftron--snapshot-for-side side)
+       :entity entity
+       :line line
+       :column column))))
+
+(defun difftron--source-property-position ()
+  "Return the position carrying source metadata at or before point."
+  (or
+   (and
+    (get-text-property (point) 'difftron-source-side)
+    (point))
+   (and
+    (> (point) (point-min))
+    (get-text-property (1- (point)) 'difftron-source-side)
+    (1- (point)))))
+
+(defun difftron--visit-source-location (source)
+  "Visit side-aware SOURCE."
+  (difftron--visit-entity-in-snapshot
+   (plist-get source :snapshot)
+   (plist-get source :entity)
+   (plist-get source :line)
+   (plist-get source :column)))
+
+(defun difftron--visit-entity-in-snapshot
+    (snapshot entity &optional line column)
+  "Visit ENTITY in SNAPSHOT at LINE and COLUMN."
   (let
       (
-       (file (plist-get entity :file_path))
-       (line (plist-get entity :start_line))
-       (column (plist-get entity :start_col)))
-    (find-file-other-window file)
-    (goto-char (point-min))
-    (forward-line (1- line))
-    (move-to-column (max 0 (1- column)))))
+       (line (or line (plist-get entity :start_line) 1))
+       (column
+        (or column
+            (max 0 (1- (or (plist-get entity :start_col) 1))))))
+    (pcase (plist-get snapshot :kind)
+      ("git_revision"
+       (difftron--visit-git-entity snapshot entity line column))
+      ((or "directory" "file")
+       (difftron--visit-filesystem-entity entity line column))
+      (_
+       (difftron--visit-filesystem-entity entity line column)))))
+
+(defun difftron--visit-git-entity
+    (snapshot entity line column)
+  "Visit ENTITY from Git SNAPSHOT at LINE and COLUMN."
+  (require 'magit-diff)
+  (let*
+      (
+       (rev
+        (or (plist-get snapshot :rev)
+            (user-error "Git revision snapshot has no revision")))
+       (file
+        (or (plist-get entity :snapshot_path)
+            (user-error "Entity has no snapshot path")))
+       (default-directory
+        (or (plist-get snapshot :root) default-directory))
+       (buffer (magit-find-file-noselect rev file))
+       (pos (difftron--buffer-position buffer line column)))
+    (pop-to-buffer-same-window buffer)
+    (magit-diff-visit-file--setup buffer pos)
+    buffer))
+
+(defun difftron--visit-filesystem-entity
+    (entity line column)
+  "Visit filesystem ENTITY at LINE and COLUMN."
+  (let*
+      (
+       (file
+        (or (plist-get entity :file_path)
+            (plist-get entity :snapshot_path)
+            (user-error "Entity has no file path")))
+       (buffer (find-file-noselect file))
+       (pos (difftron--buffer-position buffer line column)))
+    (pop-to-buffer-same-window buffer)
+    (with-current-buffer buffer
+      (goto-char pos))
+    buffer))
+
+(defun difftron--buffer-position
+    (buffer line column)
+  "Return position in BUFFER at LINE and COLUMN."
+  (with-current-buffer buffer
+    (save-restriction
+      (widen)
+      (goto-char (point-min))
+      (forward-line (max 0 (1- line)))
+      (move-to-column (max 0 column))
+      (point))))
+
+(defun difftron--snapshot-for-side (side)
+  "Return the payload snapshot for SIDE."
+  (pcase side
+    ('lhs (plist-get difftron--payload :lhs))
+    ('rhs (plist-get difftron--payload :rhs))
+    (_ (plist-get difftron--payload :snapshot))))
+
+(defun difftron--default-side-for-item (item)
+  "Return the default source side for ITEM."
+  (pcase (plist-get item :status)
+    ((or 'deleted 'moved-from 'moved-modified-from) 'lhs)
+    (_ 'rhs)))
+
+(defun difftron--entity-for-item-side (item side)
+  "Return ITEM's entity for SIDE."
+  (or
+   (pcase side
+     ('lhs (plist-get item :lhs))
+     ('rhs (plist-get item :rhs)))
+   (plist-get item :entity)))
 
 (defun difftron--diff-items (payload)
   "Flatten diff PAYLOAD into display items."
@@ -1190,10 +1391,15 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
 
 (defun difftron--item-from-change (change)
   "Build a display item from modified CHANGE."
-  (let ((rhs (plist-get change :rhs)))
+  (let
+      (
+       (lhs (plist-get change :lhs))
+       (rhs (plist-get change :rhs)))
     (list
      :kind (plist-get rhs :kind)
      :status 'modified
+     :lhs lhs
+     :rhs rhs
      :entity rhs
      :summary (format "M %s" (plist-get rhs :name))
      :diff (plist-get change :diff))))

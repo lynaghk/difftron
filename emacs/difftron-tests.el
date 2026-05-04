@@ -1950,6 +1950,244 @@
         (difftron-visit-thing)))
     (should (equal visited-rev "HEAD"))))
 
+(defun difftron-tests--with-visit-capture (fn)
+  "Call FN while capturing Magit file visits."
+  (let
+      (
+       visited-rev
+       visited-file
+       visited-line
+       visited-column
+       shown-buffer
+       (target-buffer (generate-new-buffer " *difftron-visited*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer target-buffer
+            (insert
+             (mapconcat
+              (lambda (_line)
+                "abcdefghijklmnopqrstuvwxyz0123456789")
+              (number-sequence 1 80)
+              "\n")))
+          (cl-letf
+              (
+               ((symbol-function 'magit-find-file-noselect)
+                (lambda (rev file)
+                  (setq visited-rev rev)
+                  (setq visited-file file)
+                  target-buffer))
+               ((symbol-function 'pop-to-buffer-same-window)
+                (lambda (buffer &rest _)
+                  (setq shown-buffer buffer)))
+               ((symbol-function 'magit-diff-visit-file--setup)
+                (lambda (buffer pos)
+                  (with-current-buffer buffer
+                    (goto-char pos)
+                    (setq visited-line (line-number-at-pos))
+                    (setq visited-column (current-column))))))
+            (funcall fn)
+            (list
+             :rev visited-rev
+             :file visited-file
+             :line visited-line
+             :column visited-column
+             :shown-buffer-name (buffer-name shown-buffer))))
+      (kill-buffer target-buffer))))
+
+(ert-deftest difftron-ret-on-left-structured-diff-visits-lhs-snapshot ()
+  (let*
+      (
+       (payload
+        (difftron-tests--diff-payload
+         :lhs-rev "base-rev"
+         :rhs-rev "topic-rev"
+         :modified
+         (list
+          (difftron-tests--modified-change
+           "src/lib.rs"
+           (difftron-tests--entity
+            "demo::meaning"
+            "function"
+            "/tmp/repo/src/lib.rs"
+            "src/lib.rs"
+            "fn meaning() -> u32 { 41 }"
+            :start-line 10
+            :start-col 3)
+           (difftron-tests--entity
+            "demo::meaning"
+            "function"
+            "/tmp/repo/src/lib.rs"
+            "src/lib.rs"
+            "fn meaning() -> u32 { 42 }"
+            :start-line 20
+            :start-col 5)
+           "41"
+           "42"))))
+       (visit
+        (difftron-tests--with-visit-capture
+         (lambda ()
+           (with-temp-buffer
+             (difftron-mode)
+             (let ((inhibit-read-only t))
+               (difftron--insert-payload payload))
+             (goto-char (point-min))
+             (search-forward "41")
+             (goto-char (match-beginning 0))
+             (difftron-visit-thing))))))
+    (should (equal (plist-get visit :rev) "base-rev"))
+    (should (equal (plist-get visit :file) "src/lib.rs"))
+    (should (equal (plist-get visit :line) 10))
+    (should (equal (plist-get visit :shown-buffer-name)
+                   " *difftron-visited*"))))
+
+(ert-deftest difftron-ret-on-right-structured-diff-visits-rhs-snapshot ()
+  (let*
+      (
+       (payload
+        (difftron-tests--diff-payload
+         :lhs-rev "base-rev"
+         :rhs-rev "topic-rev"
+         :modified
+         (list
+          (difftron-tests--modified-change
+           "src/lib.rs"
+           (difftron-tests--entity
+            "demo::meaning"
+            "function"
+            "/tmp/repo/src/lib.rs"
+            "src/lib.rs"
+            "fn meaning() -> u32 { 41 }"
+            :start-line 10
+            :start-col 3)
+           (difftron-tests--entity
+            "demo::meaning"
+            "function"
+            "/tmp/repo/src/lib.rs"
+            "src/lib.rs"
+            "fn meaning() -> u32 { 42 }"
+            :start-line 20
+            :start-col 5)
+           "41"
+           "42"))))
+       (visit
+        (difftron-tests--with-visit-capture
+         (lambda ()
+           (with-temp-buffer
+             (difftron-mode)
+             (let ((inhibit-read-only t))
+               (difftron--insert-payload payload))
+             (goto-char (point-min))
+             (search-forward "42")
+             (goto-char (match-beginning 0))
+             (difftron-visit-thing))))))
+    (should (equal (plist-get visit :rev) "topic-rev"))
+    (should (equal (plist-get visit :file) "src/lib.rs"))
+    (should (equal (plist-get visit :line) 20))))
+
+(ert-deftest difftron-ret-after-right-structured-diff-text-keeps-row-line ()
+  (let*
+      (
+       (lhs
+        (difftron-tests--entity
+         "demo::meaning"
+         "function"
+         "/tmp/repo/src/lib.rs"
+         "src/lib.rs"
+         "line 1\nold line\nline 3"
+         :start-line 10))
+       (rhs
+        (difftron-tests--entity
+         "demo::meaning"
+         "function"
+         "/tmp/repo/src/lib.rs"
+         "src/lib.rs"
+         "line 1\nnew line\nline 3"
+         :start-line 20))
+       (change
+        (list
+         :path "src/lib.rs"
+         :lhs lhs
+         :rhs rhs
+         :diff
+         (list
+          :rows
+          (list
+           (list
+            :kind "replaced_code"
+            :left
+            (list
+             :line_number 2
+             :text "old line"
+             :segments
+             (list (list :text "old line" :kind "novel")))
+            :right
+            (list
+             :line_number 2
+             :text "new line"
+             :segments
+             (list (list :text "new line" :kind "novel"))))))))
+       (payload
+        (difftron-tests--diff-payload
+         :lhs-rev "base-rev"
+         :rhs-rev "topic-rev"
+         :modified
+         (list change)))
+       (visit
+        (difftron-tests--with-visit-capture
+         (lambda ()
+           (with-temp-buffer
+             (difftron-mode)
+             (let ((inhibit-read-only t))
+               (difftron--insert-payload payload))
+             (goto-char (point-min))
+             (search-forward "new line")
+             (difftron-visit-thing))))))
+    (should (equal (plist-get visit :rev) "topic-rev"))
+    (should (equal (plist-get visit :file) "src/lib.rs"))
+    (should (equal (plist-get visit :line) 21))))
+
+(ert-deftest difftron-ret-on-modified-heading-defaults-to-rhs-snapshot ()
+  (let*
+      (
+       (payload
+        (difftron-tests--diff-payload
+         :lhs-rev "base-rev"
+         :rhs-rev "topic-rev"
+         :modified
+         (list
+          (difftron-tests--modified-change
+           "src/lib.rs"
+           (difftron-tests--entity
+            "demo::meaning"
+            "function"
+            "/tmp/repo/src/lib.rs"
+            "src/lib.rs"
+            "fn meaning() -> u32 { 41 }"
+            :start-line 10)
+           (difftron-tests--entity
+            "demo::meaning"
+            "function"
+            "/tmp/repo/src/lib.rs"
+            "src/lib.rs"
+            "fn meaning() -> u32 { 42 }"
+            :start-line 20)
+           "41"
+           "42"))))
+       (visit
+        (difftron-tests--with-visit-capture
+         (lambda ()
+           (with-temp-buffer
+             (difftron-mode)
+             (let ((inhibit-read-only t))
+               (difftron--insert-payload payload))
+             (goto-char (point-min))
+             (search-forward "M demo::meaning")
+             (goto-char (match-beginning 0))
+             (difftron-visit-thing))))))
+    (should (equal (plist-get visit :rev) "topic-rev"))
+    (should (equal (plist-get visit :file) "src/lib.rs"))
+    (should (equal (plist-get visit :line) 20))))
+
 (ert-deftest difftron-dwim-endpoints-from-commit ()
   (should
    (equal
