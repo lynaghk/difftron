@@ -1498,12 +1498,18 @@ Insert at most REMAINING-WIDTH columns, starting at SIDE-COLUMN."
       :kind (plist-get lhs :kind)
       :status 'moved-from
       :entity lhs
-      :summary (format "Moved from here to %s" (plist-get rhs :name)))
+      :summary
+      (format "  %s moved to %s"
+              (plist-get lhs :name)
+              (plist-get rhs :name)))
      (list
       :kind (plist-get rhs :kind)
       :status 'moved-to
       :entity rhs
-      :summary (format "Moved here from %s" (plist-get lhs :name))))))
+      :summary
+      (format "  %s moved from %s"
+              (plist-get rhs :name)
+              (plist-get lhs :name))))))
 
 (defun difftron--items-from-moved-modified (change)
   "Build source-side and destination-side items from moved-modified CHANGE."
@@ -1517,14 +1523,16 @@ Insert at most REMAINING-WIDTH columns, starting at SIDE-COLUMN."
       :status 'moved-modified-from
       :entity lhs
       :summary
-      (format "Moved from here to %s, with changes"
+      (format "M %s moved to %s"
+              (plist-get lhs :name)
               (plist-get rhs :name)))
      (list
       :kind (plist-get rhs :kind)
       :status 'moved-modified-to
       :entity rhs
       :summary
-      (format "Moved here from %s, with changes"
+      (format "M %s moved from %s"
+              (plist-get rhs :name)
               (plist-get lhs :name))))))
 
 (defun difftron--item-from-entity (status entity)

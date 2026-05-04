@@ -556,11 +556,11 @@
         (should (string-match-p "^src/new\\.rs (1)$" text))
         (should
          (string-match-p
-          "^    Moved from here to demo::new::moved$"
+          "^      demo::old::moved moved to demo::new::moved$"
           text))
         (should
          (string-match-p
-          "^    Moved here from demo::old::moved$"
+          "^      demo::new::moved moved from demo::old::moved$"
           text))
         (should
          (string-match-p "fn moved() { old_location(); }" text))
@@ -607,11 +607,11 @@
         (should (string-match-p "^src/new\\.rs (1)$" text))
         (should
          (string-match-p
-          "^    Moved from here to demo::new::moved, with changes$"
+          "^    M demo::old::moved moved to demo::new::moved$"
           text))
         (should
          (string-match-p
-          "^    Moved here from demo::old::moved, with changes$"
+          "^    M demo::new::moved moved from demo::old::moved$"
           text))
         (should
          (string-match-p "fn moved() { old_location(); }" text))
