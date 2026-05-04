@@ -66,6 +66,11 @@
   :type 'boolean
   :group 'difftron)
 
+(defcustom difftron-scroll-section-after-navigation t
+  "Whether Difftron section navigation scrolls the destination to the top."
+  :type 'boolean
+  :group 'difftron)
+
 (defcustom difftron-snapshot-commit-limit 100
   "Maximum number of recent commits to offer in snapshot prompts."
   :type 'integer
@@ -92,6 +97,8 @@
      (kbd "m")
      #'difftron-toggle-commit-messages)
     (define-key map (kbd "r") #'difftron-select-right)
+    (define-key map (kbd "n") #'difftron-next-section)
+    (define-key map (kbd "p") #'difftron-previous-section)
     (define-key map (kbd "N") #'difftron-next-commit)
     (define-key map (kbd "P") #'difftron-previous-commit)
     (define-key
@@ -109,6 +116,8 @@
 (defvar-local difftron--entity-kinds nil)
 (defvar-local difftron--grouping nil
   "Current grouping mode for the difftron buffer.")
+(defvar-local difftron--temporary-expanded-entity nil
+  "Temporarily expanded entity section and its previous visibility state.")
 
 (define-derived-mode
   difftron-mode
@@ -146,8 +155,8 @@
    ["Movement"
     ("N" "Next commit" difftron-next-commit)
     ("P" "Previous commit" difftron-previous-commit)
-    ("n" "Next section" magit-section-forward)
-    ("p" "Previous section" magit-section-backward)
+    ("n" "Next section" difftron-next-section)
+    ("p" "Previous section" difftron-previous-section)
     ("M-n" "Next sibling" magit-section-forward-sibling)
     ("M-p" "Previous sibling" magit-section-backward-sibling)]])
 
@@ -637,6 +646,80 @@ DEFAULT-ARG provides the initial path when it names a path."
   (when magit-root-section
     (let ((magit-section-cache-visibility nil))
       (magit-section-show magit-root-section))))
+
+(defun difftron-next-section ()
+  "Move to the beginning of the next visible section."
+  (interactive)
+  (magit-section-forward)
+  (difftron--temporarily-unfold-entity-at-point)
+  (difftron--scroll-navigation-destination))
+
+(defun difftron-previous-section ()
+  "Move to the beginning of the current or previous visible section."
+  (interactive)
+  (magit-section-backward)
+  (difftron--temporarily-unfold-entity-at-point)
+  (difftron--scroll-navigation-destination))
+
+(defun difftron--scroll-navigation-destination ()
+  "Scroll the selected window after section navigation, if configured."
+  (when difftron-scroll-section-after-navigation
+    (recenter 0)))
+
+(defun difftron--temporarily-unfold-entity-at-point ()
+  "Fully show the entity at point while preserving temporary visibility."
+  (let ((entity (difftron--entity-section-at-point)))
+    (difftron--restore-temporary-expanded-entity entity)
+    (when
+        (and entity
+             (not
+              (and difftron--temporary-expanded-entity
+                   (eq
+                    (car difftron--temporary-expanded-entity)
+                    entity)))
+             (difftron--section-tree-hidden-p entity))
+      (setq difftron--temporary-expanded-entity
+            (cons
+             entity
+             (difftron--section-visibility-state entity)))
+      (magit-section-show-children entity))))
+
+(defun difftron--restore-temporary-expanded-entity (current-entity)
+  "Restore temporary entity visibility unless it is CURRENT-ENTITY."
+  (when
+      (and difftron--temporary-expanded-entity
+           (not
+            (eq
+             (car difftron--temporary-expanded-entity)
+             current-entity)))
+    (difftron--restore-section-visibility-state
+     (cdr difftron--temporary-expanded-entity))
+    (setq difftron--temporary-expanded-entity nil)))
+
+(defun difftron--section-tree-hidden-p (section)
+  "Return non-nil when SECTION or any descendant section is hidden."
+  (or
+   (oref section hidden)
+   (seq-some
+    #'difftron--section-tree-hidden-p
+    (oref section children))))
+
+(defun difftron--section-visibility-state (section)
+  "Return SECTION and descendants paired with their hidden state."
+  (cons
+   (cons section (oref section hidden))
+   (mapcan
+    #'difftron--section-visibility-state
+    (oref section children))))
+
+(defun difftron--restore-section-visibility-state (state)
+  "Restore section visibility from STATE."
+  (dolist (entry state)
+    (oset (car entry) hidden (cdr entry)))
+  (let ((section (caar state)))
+    (if (oref section hidden)
+        (magit-section-hide section)
+      (magit-section-show section))))
 
 (defun difftron-next-commit ()
   "Show the next commit on HEAD's first-parent history."

@@ -96,6 +96,16 @@
        (overlay-get overlay 'invisible))
      (overlays-at content))))
 
+(defun difftron-tests--show-section-ancestors (section)
+  "Show SECTION's ancestors without changing SECTION visibility."
+  (let ((ancestor (oref section parent))
+        ancestors)
+    (while ancestor
+      (push ancestor ancestors)
+      (setq ancestor (oref ancestor parent)))
+    (dolist (visible-section (nreverse ancestors))
+      (magit-section-show visible-section))))
+
 (defconst difftron-tests--repo-git-env-regexp
   "\\`GIT_\\(DIR\\|WORK_TREE\\|INDEX_FILE\\|OBJECT_DIRECTORY\\|ALTERNATE_OBJECT_DIRECTORIES\\|CEILING_DIRECTORIES\\|PREFIX\\)=")
 
@@ -738,6 +748,17 @@
      t)
     'file)))
 
+(ert-deftest difftron-scroll-section-after-navigation-defaults-to-true ()
+  (should
+   (eq
+    (eval
+     (car
+      (get
+       'difftron-scroll-section-after-navigation
+       'standard-value))
+     t)
+    t)))
+
 (ert-deftest difftron-display-buffer-uses-default-grouping ()
   (let ((difftron-default-grouping 'file))
     (cl-letf
@@ -805,11 +826,114 @@
   (should
    (eq
     (lookup-key difftron-mode-map (kbd "n"))
-    #'magit-section-forward))
+    #'difftron-next-section))
   (should
    (eq
     (lookup-key difftron-mode-map (kbd "p"))
-    #'magit-section-backward)))
+    #'difftron-previous-section)))
+
+(ert-deftest difftron-next-section-scrolls-to-top-when-enabled ()
+  (let ((difftron-scroll-section-after-navigation t)
+        calls)
+    (cl-letf
+        (
+         ((symbol-function 'magit-section-forward)
+          (lambda () (push 'forward calls)))
+         ((symbol-function 'recenter)
+          (lambda (arg) (push (list 'recenter arg) calls))))
+      (difftron-next-section))
+    (should
+     (equal
+      (nreverse calls)
+      '(forward (recenter 0))))))
+
+(ert-deftest difftron-previous-section-scrolls-to-top-when-enabled ()
+  (let ((difftron-scroll-section-after-navigation t)
+        calls)
+    (cl-letf
+        (
+         ((symbol-function 'magit-section-backward)
+          (lambda () (push 'backward calls)))
+         ((symbol-function 'recenter)
+          (lambda (arg) (push (list 'recenter arg) calls))))
+      (difftron-previous-section))
+    (should
+     (equal
+      (nreverse calls)
+      '(backward (recenter 0))))))
+
+(ert-deftest difftron-next-section-does-not-scroll-when-disabled ()
+  (let ((difftron-scroll-section-after-navigation nil)
+        calls)
+    (cl-letf
+        (
+         ((symbol-function 'magit-section-forward)
+          (lambda () (push 'forward calls)))
+         ((symbol-function 'recenter)
+          (lambda (arg) (push (list 'recenter arg) calls))))
+      (difftron-next-section))
+    (should (equal (nreverse calls) '(forward)))))
+
+(ert-deftest difftron-previous-section-does-not-scroll-when-disabled ()
+  (let ((difftron-scroll-section-after-navigation nil)
+        calls)
+    (cl-letf
+        (
+         ((symbol-function 'magit-section-backward)
+          (lambda () (push 'backward calls)))
+         ((symbol-function 'recenter)
+          (lambda (arg) (push (list 'recenter arg) calls))))
+      (difftron-previous-section))
+    (should (equal (nreverse calls) '(backward)))))
+
+(ert-deftest difftron-next-section-temporarily-unfolds-entity ()
+  (let ((difftron-scroll-section-after-navigation nil))
+    (with-temp-buffer
+      (difftron-mode)
+      (let ((inhibit-read-only t))
+        (difftron--insert-payload difftron-tests--sample-payload))
+      (let*
+          (
+           (entities
+            (difftron--entity-sections magit-root-section))
+           (first-entity (car entities))
+           (second-entity (cadr entities))
+           (parent-section (oref first-entity parent)))
+        (difftron-tests--show-section-ancestors first-entity)
+        (goto-char (oref parent-section start))
+        (should (oref first-entity hidden))
+        (should (oref second-entity hidden))
+        (difftron-next-section)
+        (should (eq (magit-current-section) first-entity))
+        (should-not (oref first-entity hidden))
+        (difftron-next-section)
+        (should (eq (magit-current-section) second-entity))
+        (should (oref first-entity hidden))
+        (should-not (oref second-entity hidden))))))
+
+(ert-deftest difftron-next-section-preserves-already-unfolded-entity ()
+  (let ((difftron-scroll-section-after-navigation nil))
+    (with-temp-buffer
+      (difftron-mode)
+      (let ((inhibit-read-only t))
+        (difftron--insert-payload difftron-tests--sample-payload))
+      (let*
+          (
+           (entities
+            (difftron--entity-sections magit-root-section))
+           (first-entity (car entities))
+           (second-entity (cadr entities))
+           (parent-section (oref first-entity parent)))
+        (difftron-tests--show-section-ancestors first-entity)
+        (magit-section-show first-entity)
+        (goto-char (oref parent-section start))
+        (difftron-next-section)
+        (should (eq (magit-current-section) first-entity))
+        (should-not (oref first-entity hidden))
+        (difftron-next-section)
+        (should (eq (magit-current-section) second-entity))
+        (should-not (oref first-entity hidden))
+        (should-not (oref second-entity hidden))))))
 
 (ert-deftest difftron-binds-side-selection ()
   (should
