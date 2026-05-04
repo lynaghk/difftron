@@ -699,7 +699,7 @@ DEFAULT-ARG provides the initial path when it names a path."
   (when-let ((section (difftron--first-entity-tree-section)))
     (goto-char (oref section start))
     (magit-section-show-level
-     (1+ (length (difftron--effective-hierarchy)))))
+     (- (1+ (length (difftron--effective-hierarchy))))))
   (difftron--hide-snapshot-sections))
 
 (defun difftron--first-entity-tree-section ()
@@ -919,6 +919,8 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
               repo-default-directory)
         (setq difftron--command-args args)
         (setq difftron--payload payload)
+        (setq magit-section-visibility-cache nil)
+        (setq difftron--temporary-expanded-entity nil)
         (erase-buffer)
         (difftron--insert-payload payload)
         (difftron--show-entity-tree-level-3)

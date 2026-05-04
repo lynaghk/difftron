@@ -87,6 +87,15 @@
      (eq (oref section type) type))
    (oref parent children)))
 
+(defun difftron-tests--sections-of-type (type)
+  "Return all Magit sections whose type is TYPE."
+  (let (sections)
+    (magit-map-sections
+     (lambda (section)
+       (when (eq (oref section type) type)
+         (push section sections))))
+    (nreverse sections)))
+
 (defun difftron-tests--section-has-invisible-overlay-p
     (section)
   "Return non-nil when SECTION's body has a hiding overlay."
@@ -833,10 +842,34 @@
         (should
          (difftron-tests--section-has-invisible-overlay-p
           entity-section))
-        (should (oref sibling-file-section hidden))
-        (should
+        (should-not (oref sibling-file-section hidden))
+        (should-not
          (difftron-tests--section-has-invisible-overlay-p
           sibling-file-section))))))
+
+(ert-deftest difftron-display-buffer-shows-all-default-hierarchy-groups ()
+  (let ((difftron-default-hierarchy '(kind file)))
+    (cl-letf
+	(((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
+      (difftron--display-buffer
+       "/tmp/repo/"
+       '("diff" "HEAD~1" "HEAD")
+       difftron-tests--multi-file-payload))
+    (with-current-buffer difftron-buffer-name
+      (dolist (section
+               (append
+                (difftron-tests--sections-of-type 'difftron-kind)
+                (difftron-tests--sections-of-type 'difftron-file)))
+        (should-not (oref section hidden))
+        (should-not
+         (difftron-tests--section-has-invisible-overlay-p
+          section)))
+      (dolist (section
+               (difftron-tests--sections-of-type 'difftron-entity))
+        (should (oref section hidden))
+        (should
+         (difftron-tests--section-has-invisible-overlay-p
+          section))))))
 
 (ert-deftest difftron-inherits-magit-all-level-bindings ()
   (should
@@ -1648,6 +1681,84 @@
       (should-error
        (difftron-next-commit)
        :type 'user-error))))
+
+(ert-deftest difftron-next-commit-resets-default-hierarchy-visibility ()
+  (let*
+      (
+       (difftron-default-hierarchy '(kind file))
+       (initial-payload (copy-tree difftron-tests--multi-file-payload))
+       (next-payload (copy-tree difftron-tests--multi-file-payload)))
+    (plist-put
+     initial-payload
+     :lhs (difftron-tests--git-revision "repo@commit-a" "commit-a"))
+    (plist-put
+     initial-payload
+     :rhs (difftron-tests--git-revision "repo@commit-b" "commit-b"))
+    (plist-put
+     next-payload
+     :lhs (difftron-tests--git-revision "repo@commit-b" "commit-b"))
+    (plist-put
+     next-payload
+     :rhs (difftron-tests--git-revision "repo@commit-c" "commit-c"))
+    (cl-letf
+        (
+         ((symbol-function 'magit-git-lines)
+          (lambda (&rest args)
+            (pcase args
+              (
+               `
+               ("rev-list"
+                "--first-parent"
+                "--reverse"
+                "commit-b..HEAD")
+               '("commit-c"))
+              (`("rev-list" "-1" "--parents" "commit-c")
+               '("commit-c commit-b"))
+              (_ (error "Unexpected git args: %S" args)))))
+         ((symbol-function 'difftron--run-command)
+          (lambda (_default-directory _args)
+            next-payload))
+         ((symbol-function 'pop-to-buffer)
+          (lambda (&rest _) nil)))
+      (with-temp-buffer
+        (rename-buffer difftron-buffer-name t)
+        (difftron-mode)
+        (setq difftron--default-directory "/tmp/repo/")
+        (setq difftron--command-args
+              '("diff" "commit-a" "commit-b" "--format" "json"))
+        (setq difftron--payload
+              (difftron-tests--diff-payload
+               :lhs-rev "commit-a"
+               :rhs-rev "commit-b"))
+        (difftron--display-buffer
+         "/tmp/repo/"
+         difftron--command-args
+         initial-payload)
+        (with-current-buffer difftron-buffer-name
+          (magit-section-hide
+           (cadr
+            (difftron-tests--sections-of-type 'difftron-kind)))
+          (setq difftron--temporary-expanded-entity
+                (cons
+                 (car
+                  (difftron-tests--sections-of-type 'difftron-entity))
+                 nil))
+          (difftron-next-commit)
+          (dolist (section
+                   (append
+                    (difftron-tests--sections-of-type 'difftron-kind)
+                    (difftron-tests--sections-of-type 'difftron-file)))
+            (should-not (oref section hidden))
+            (should-not
+             (difftron-tests--section-has-invisible-overlay-p
+              section)))
+          (dolist (section
+                   (difftron-tests--sections-of-type 'difftron-entity))
+            (should (oref section hidden))
+            (should
+             (difftron-tests--section-has-invisible-overlay-p
+              section)))
+          (should-not difftron--temporary-expanded-entity))))))
 
 (ert-deftest difftron-refresh-preserves-magit-display-state ()
   (let ((difftron-default-hierarchy '(file)))
