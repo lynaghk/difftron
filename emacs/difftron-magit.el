@@ -26,6 +26,8 @@
 (require 'subr-x)
 (require 'transient)
 
+(defvar magit-revision-headers-format)
+
 (defgroup difftron-magit nil
   "Emacs integration for the difftron CLI."
   :group 'tools)
@@ -59,8 +61,23 @@
    (const :tag "File then entity" file))
   :group 'difftron-magit)
 
+(defcustom difftron-magit-use-magit-paths t
+  "Whether Difftron commands launched from Magit use Magit's path filters."
+  :type 'boolean
+  :group 'difftron-magit)
+
+(defcustom difftron-magit-snapshot-commit-limit 100
+  "Maximum number of recent commits to offer in snapshot prompts."
+  :type 'integer
+  :group 'difftron-magit)
+
 (defconst difftron-magit--magit-diff-suffix
   '("D" "Difftron" difftron-magit-diff-dwim))
+
+(defconst difftron-magit--browse-path-choice "Browse path...")
+
+(defvar difftron-magit--snapshot-history nil
+  "Minibuffer history for Difftron snapshot prompts.")
 
 (defvar difftron-magit-mode-map
   (let ((map (make-sparse-keymap)))
@@ -92,8 +109,6 @@
 (defvar-local difftron-magit--entity-kinds nil)
 (defvar-local difftron-magit--grouping nil
   "Current grouping mode for the difftron buffer.")
-(defvar-local difftron-magit--commit-message-regions nil
-  "Alist of expanded commit message regions by side.")
 
 (define-derived-mode
   difftron-magit-mode
@@ -111,11 +126,11 @@
     ("g" "Refresh" difftron-magit-refresh)
     ("f" "Cycle grouping" difftron-magit-cycle-grouping)
     ("l" "Select left" difftron-magit-select-left)
-    ("m" "Toggle messages" difftron-magit-toggle-commit-messages)
+    ("m" "Toggle details" difftron-magit-toggle-commit-messages)
     ("r" "Select right" difftron-magit-select-right)
     ("q" "Quit buffer" quit-window)
     ("TAB"
-     "Toggle section/message"
+     "Toggle section/details"
      difftron-magit-toggle-section-or-message)
     ("RET" "Visit thing" difftron-magit-visit-thing)]
    ["Visibility"
@@ -149,7 +164,10 @@
          (ignore-errors
            (magit-diff--dwim))
          default-directory)))
-    (difftron-magit-diff lhs rhs paths)))
+    (difftron-magit-diff
+     lhs
+     rhs
+     (and difftron-magit-use-magit-paths paths))))
 
 (defun difftron-magit-diff-at-point ()
   "Run difftron for the current Magit diff and entity at point."
@@ -166,7 +184,9 @@
          (ignore-errors
            (magit-diff--dwim))
          default-directory))
-       (selected-paths (or (and path (list path)) paths))
+       (selected-paths
+        (and difftron-magit-use-magit-paths
+             (or (and path (list path)) paths)))
        (args
         (append
          (list "diff" lhs rhs "--format" "json")
@@ -189,11 +209,17 @@ working tree rooted at the current repository."
         (repo-root (difftron-magit--repo-root))
         (default-lhs "HEAD")
         (default-rhs repo-root)
-        (lhs (read-string "Left snapshot/rev: " default-lhs))
-        (rhs (read-string "Right snapshot/rev: " default-rhs))
-        (path-input
-         (read-string "Filter paths (comma-separated, optional): ")))
-     (list lhs rhs (difftron-magit--split-paths path-input))))
+        (lhs
+         (difftron-magit--read-snapshot-arg
+          'lhs
+          repo-root
+          default-lhs))
+        (rhs
+         (difftron-magit--read-snapshot-arg
+          'rhs
+          repo-root
+          default-rhs)))
+     (list lhs rhs)))
   (let*
       (
        (default-directory (difftron-magit--repo-root))
@@ -230,7 +256,7 @@ working tree rooted at the current repository."
    difftron-magit--command-args
    difftron-magit--payload)
   (with-current-buffer difftron-magit-buffer-name
-    (magit-section-show-level-3)))
+    (difftron-magit--show-entity-tree-level-3)))
 
 (defun difftron-magit-select-left ()
   "Select a new left-hand snapshot and refresh the diff."
@@ -255,11 +281,13 @@ working tree rooted at the current repository."
        (lhs-snapshot (plist-get difftron-magit--payload :lhs))
        (rhs-snapshot (plist-get difftron-magit--payload :rhs))
        (new-arg
-        (difftron-magit--read-snapshot-like
+        (difftron-magit--read-snapshot-arg
          side
-         (pcase side
-           ('lhs lhs-snapshot)
-           (_ rhs-snapshot))))
+         difftron-magit--default-directory
+         (difftron-magit--snapshot-arg
+          (pcase side
+            ('lhs lhs-snapshot)
+            (_ rhs-snapshot)))))
        (lhs
         (if (eq side 'lhs)
             new-arg
@@ -270,38 +298,258 @@ working tree rooted at the current repository."
           (difftron-magit--snapshot-arg rhs-snapshot))))
     (difftron-magit--run-and-display-diff lhs rhs)))
 
-(defun difftron-magit--read-snapshot-like (side snapshot)
-  "Read a replacement for SNAPSHOT on SIDE."
-  (let
+(defun difftron-magit--read-snapshot-arg
+    (side repo-root &optional default-arg)
+  "Read a snapshot argument for SIDE in REPO-ROOT.
+DEFAULT-ARG is used when the minibuffer input is empty."
+  (let*
       (
-       (label (difftron-magit--side-label side))
-       (root (plist-get snapshot :root)))
-    (pcase (plist-get snapshot :kind)
-      ("git_revision"
+       (repo-root (file-name-as-directory (expand-file-name repo-root)))
+       (default-directory repo-root)
+       (candidates (difftron-magit--snapshot-candidates repo-root))
+       (completion-table
+        (difftron-magit--snapshot-completion-table candidates))
+       (input
+        (completing-read
+         (format "%s snapshot: " (difftron-magit--side-label side))
+         completion-table
+         nil
+         nil
+         nil
+         'difftron-magit--snapshot-history
+         default-arg))
+       (input
+        (if (and (string-empty-p input) default-arg)
+            default-arg
+          input))
+       (candidate
+        (difftron-magit--snapshot-candidate-by-label
+         input
+         candidates)))
+    (cond
+     ((equal (plist-get candidate :value) 'browse-path)
+      (difftron-magit--read-snapshot-path side repo-root default-arg))
+     (candidate (plist-get candidate :value))
+     ((difftron-magit--snapshot-existing-path input repo-root))
+     (t input))))
+
+(defun difftron-magit--snapshot-candidates (repo-root)
+  "Return snapshot completion candidates rooted at REPO-ROOT."
+  (difftron-magit--uniquify-snapshot-candidate-labels
+   (append
+    (difftron-magit--snapshot-branch-candidates)
+    (difftron-magit--snapshot-commit-candidates)
+    (difftron-magit--snapshot-path-candidates repo-root)
+    (list
+     (list
+      :label difftron-magit--browse-path-choice
+      :value 'browse-path
+      :group "Repo Paths"
+      :kind 'browse)))))
+
+(defun difftron-magit--snapshot-branch-candidates ()
+  "Return branch candidates for snapshot completion."
+  (mapcar
+   (lambda (branch)
+     (list
+      :label branch
+      :value branch
+      :group "Branches"
+      :kind 'branch))
+   (delete-dups
+    (seq-filter
+     #'stringp
+     (append '("HEAD") (or (magit-list-branch-names) nil))))))
+
+(defun difftron-magit--snapshot-commit-candidates ()
+  "Return recent commit candidates for snapshot completion."
+  (seq-keep
+   (lambda (line)
+     (when
+         (string-match
+          "^\\([^\t]+\\)\t\\([^\t]+\\)\t\\([^\t]*\\)\t\\([^\t]*\\)\t\\(.*\\)$"
+          line)
        (let
            (
-            (default-directory (or root default-directory))
-            (rev
-             (or (plist-get snapshot :rev)
-                 (user-error
-                  "Git revision snapshot has no revision"))))
-         (magit-read-branch-or-commit (format "%s ref" label) rev)))
-      ("directory"
-       (file-name-as-directory
-        (expand-file-name
-         (read-directory-name (format "%s folder: " label)
-                              root
-                              root
-                              t))))
-      ("file"
-       (expand-file-name
-        (read-file-name (format "%s file: " label)
-                        (and root (file-name-directory root))
-                        root
-                        t)))
-      (_
-       (user-error "Don't know how to select %s snapshots"
-                   (plist-get snapshot :kind))))))
+            (short (match-string 1 line))
+            (full (match-string 2 line))
+            (author (match-string 3 line))
+            (date (match-string 4 line))
+            (subject (match-string 5 line)))
+         (list
+          :label (format "%s %s" short subject)
+          :value full
+          :group "Current Branch Commits"
+          :author author
+          :date date
+          :kind 'commit))))
+   (magit-git-lines
+    "log"
+    (format "--max-count=%d" difftron-magit-snapshot-commit-limit)
+    "--date=short"
+    "--format=%h%x09%H%x09%an%x09%ad%x09%s")))
+
+(defun difftron-magit--snapshot-commit-annotation
+    (author date column)
+  "Return aligned completion metadata for commit AUTHOR and DATE at COLUMN."
+  (concat
+   (propertize
+    " "
+    'display
+    `(space :align-to ,column))
+   (format "%-24s %s" author date)))
+
+(defun difftron-magit--snapshot-path-candidates (repo-root)
+  "Return tracked path candidates rooted at REPO-ROOT."
+  (mapcar
+   (lambda (path)
+     (list
+      :label path
+      :value
+      (difftron-magit--format-snapshot-path
+       (expand-file-name path repo-root))
+      :group "Repo Paths"
+      :kind 'path))
+   (difftron-magit--snapshot-repo-paths)))
+
+(defun difftron-magit--snapshot-repo-paths ()
+  "Return tracked file and directory paths in the current repository."
+  (let (paths)
+    (dolist (file (magit-git-lines "ls-files"))
+      (when (and (stringp file) (not (string-empty-p file)))
+        (push file paths)
+        (let ((dir (file-name-directory file)))
+          (while (and dir (not (string-empty-p dir)))
+            (push (file-name-as-directory dir) paths)
+            (setq dir
+                  (file-name-directory
+                   (directory-file-name dir)))))))
+    (sort (delete-dups paths) #'string<)))
+
+(defun difftron-magit--uniquify-snapshot-candidate-labels
+    (candidates)
+  "Return CANDIDATES with duplicate labels disambiguated."
+  (let
+      (
+       (seen (make-hash-table :test #'equal))
+       unique)
+    (dolist (candidate candidates (nreverse unique))
+      (let ((label (plist-get candidate :label)))
+        (if (gethash label seen)
+            (push
+             (plist-put
+              (copy-sequence candidate)
+              :label
+              (format
+               "%s  [%s]"
+               label
+               (plist-get candidate :kind)))
+             unique)
+          (puthash label t seen)
+          (push candidate unique))))))
+
+(defun difftron-magit--snapshot-completion-table
+    (candidates)
+  "Return a completion table for snapshot CANDIDATES."
+  (let*
+      (
+       (labels (mapcar
+                (lambda (candidate)
+                  (plist-get candidate :label))
+                candidates))
+       (annotation-column
+        (difftron-magit--snapshot-annotation-column labels)))
+    (lambda (string pred action)
+      (if (eq action 'metadata)
+          `(metadata
+            (category . difftron-snapshot)
+            (group-function
+             .
+             ,(lambda (candidate &optional transform)
+                (if transform
+                    candidate
+                  (or
+                   (plist-get
+                    (difftron-magit--snapshot-candidate-by-label
+                     candidate
+                     candidates)
+                    :group)
+                   ""))))
+            (affixation-function
+             .
+             ,(lambda (strings)
+                (mapcar
+                 (lambda (candidate)
+                   (list
+                    candidate
+                    ""
+                    (let
+                        (
+                         (snapshot-candidate
+                          (difftron-magit--snapshot-candidate-by-label
+                           candidate
+                           candidates)))
+                      (if (eq
+                           (plist-get snapshot-candidate :kind)
+                           'commit)
+                          (difftron-magit--snapshot-commit-annotation
+                           (plist-get snapshot-candidate :author)
+                           (plist-get snapshot-candidate :date)
+                           annotation-column)
+                        ""))))
+                 strings)))
+            (display-sort-function . identity)
+            (cycle-sort-function . identity))
+	(complete-with-action action labels string pred)))))
+
+(defun difftron-magit--snapshot-annotation-column (labels)
+  "Return the metadata column for completion LABELS."
+  (+ 2 (apply #'max 0 (mapcar #'length labels))))
+
+(defun difftron-magit--snapshot-candidate-by-label
+    (label candidates)
+  "Return the candidate with LABEL from CANDIDATES."
+  (seq-find
+   (lambda (candidate)
+     (equal (plist-get candidate :label) label))
+   candidates))
+
+(defun difftron-magit--read-snapshot-path
+    (side repo-root default-arg)
+  "Read a filesystem snapshot path for SIDE in REPO-ROOT.
+DEFAULT-ARG provides the initial path when it names a path."
+  (difftron-magit--format-snapshot-path
+   (read-file-name
+    (format "%s path: " (difftron-magit--side-label side))
+    repo-root
+    (difftron-magit--snapshot-path-default default-arg repo-root)
+    t)))
+
+(defun difftron-magit--snapshot-path-default
+    (default-arg repo-root)
+  "Return a path default from DEFAULT-ARG rooted at REPO-ROOT."
+  (cond
+   ((not default-arg) repo-root)
+   ((file-name-absolute-p default-arg) default-arg)
+   (t
+    (let ((path (expand-file-name default-arg repo-root)))
+      (if (file-exists-p path)
+          path
+        repo-root)))))
+
+(defun difftron-magit--snapshot-existing-path
+    (input repo-root)
+  "Return normalized INPUT as a path under REPO-ROOT if it exists."
+  (let ((path (expand-file-name input repo-root)))
+    (and (file-exists-p path)
+         (difftron-magit--format-snapshot-path path))))
+
+(defun difftron-magit--format-snapshot-path (path)
+  "Normalize PATH as a Difftron snapshot argument."
+  (let ((path (expand-file-name path)))
+    (if (file-directory-p path)
+        (file-name-as-directory path)
+      path)))
 
 (defun difftron-magit--snapshot-arg (snapshot)
   "Return the command argument for SNAPSHOT."
@@ -323,158 +571,72 @@ working tree rooted at the current repository."
     (_ "Right")))
 
 (defun difftron-magit-toggle-section-or-message ()
-  "Toggle the commit message at point or the current Magit section."
+  "Toggle revision details at point or the current Magit section."
   (interactive)
-  (if-let ((side (difftron-magit--snapshot-side-at-point)))
-      (difftron-magit--toggle-commit-message side)
-    (magit-section-toggle (magit-current-section))))
+  (magit-section-toggle
+   (or (difftron-magit--snapshot-section-at-point)
+       (magit-current-section))))
 
 (defun difftron-magit-toggle-commit-messages ()
-  "Toggle commit messages for both Git revision snapshots."
+  "Toggle revision details for both Git revision snapshots."
   (interactive)
-  (let ((sides (difftron-magit--commit-message-sides)))
-    (unless sides
-      (user-error "No Git revision snapshots in this buffer"))
+  (let ((sections (difftron-magit--snapshot-sections)))
+    (unless sections
+      (user-error "No expandable Git revision snapshots in this buffer"))
     (if
         (seq-some
-         (lambda (side)
-           (not (difftron-magit--commit-message-expanded-p side)))
-         sides)
-        (dolist (side sides)
-          (unless (difftron-magit--commit-message-expanded-p side)
-            (difftron-magit--show-commit-message side)))
-      (dolist (side sides)
-        (difftron-magit--hide-commit-message side)))))
+         (lambda (section)
+           (oref section hidden))
+         sections)
+        (dolist (section sections)
+          (when (oref section hidden)
+            (magit-section-show section)))
+      (dolist (section sections)
+        (magit-section-hide section)))))
 
-(defun difftron-magit--snapshot-side-at-point ()
-  "Return the snapshot side at point, if point is on one."
-  (or (get-text-property (point) 'difftron-magit-snapshot-side)
-      (and (> (point) (point-min))
-           (get-text-property (1- (point)) 'difftron-magit-snapshot-side))
-      (get-text-property
-       (line-beginning-position)
-       'difftron-magit-snapshot-side)))
+(defun difftron-magit--snapshot-section-at-point ()
+  "Return the snapshot section at point, if point is inside one."
+  (let ((section (magit-current-section)))
+    (while
+        (and section (not (eq (oref section type) 'difftron-snapshot)))
+      (setq section (oref section parent)))
+    section))
 
-(defun difftron-magit--commit-message-sides ()
-  "Return sides that currently show Git revisions."
-  (seq-filter
-   (lambda (side)
-     (equal
-      (plist-get (difftron-magit--snapshot-for-side side) :kind)
-      "git_revision"))
-   '(lhs rhs)))
+(defun difftron-magit--snapshot-sections ()
+  "Return expandable Git snapshot sections in the current buffer."
+  (and
+   magit-root-section
+   (seq-filter
+    (lambda (section)
+      (eq (oref section type) 'difftron-snapshot))
+    (oref magit-root-section children))))
 
-(defun difftron-magit--snapshot-for-side (side)
-  "Return the payload snapshot for SIDE."
-  (or
-   (and difftron-magit--payload
-        (plist-get
-         difftron-magit--payload
-         (pcase side
-           ('lhs :lhs)
-           (_ :rhs))))
-   (when-let
-       (
-        (pos
-         (text-property-any
-          (point-min)
-          (point-max)
-          'difftron-magit-snapshot-side
-          side)))
-     (get-text-property pos 'difftron-magit-snapshot))))
+(defun difftron-magit--show-entity-tree-level-3 ()
+  "Show the entity tree to level 3 while leaving snapshots collapsed."
+  (when-let ((section (difftron-magit--first-entity-tree-section)))
+    (goto-char (oref section start))
+    (magit-section-show-level-3))
+  (difftron-magit--hide-snapshot-sections))
 
-(defun difftron-magit--toggle-commit-message (side)
-  "Toggle the commit message for SIDE."
-  (if (difftron-magit--commit-message-expanded-p side)
-      (difftron-magit--hide-commit-message side)
-    (difftron-magit--show-commit-message side)))
+(defun difftron-magit--first-entity-tree-section ()
+  "Return the first root child that belongs to the entity tree."
+  (seq-find
+   (lambda (section)
+     (not (eq (oref section type) 'difftron-snapshot)))
+   (oref magit-root-section children)))
 
-(defun difftron-magit--commit-message-expanded-p (side)
-  "Return non-nil if SIDE's commit message is expanded."
-  (assq side difftron-magit--commit-message-regions))
+(defun difftron-magit--hide-snapshot-sections ()
+  "Collapse all expandable Git snapshot sections."
+  (dolist (section (difftron-magit--snapshot-sections))
+    (if (oref section hidden)
+        (magit-section-maybe-update-visibility-indicator section)
+      (magit-section-hide section))))
 
-(defun difftron-magit--show-commit-message (side)
-  "Insert SIDE's commit message below its snapshot line."
-  (let*
-      (
-       (snapshot (difftron-magit--snapshot-for-side side))
-       (message (difftron-magit--commit-message snapshot))
-       (insert-at (difftron-magit--snapshot-line-end side)))
-    (let ((inhibit-read-only t))
-      (save-excursion
-        (goto-char insert-at)
-        (forward-line 1)
-        (let ((start (point)))
-          (insert (difftron-magit--format-commit-message message))
-          (add-text-properties
-           start (point)
-           (list
-            'difftron-magit-snapshot-side
-            side
-            'font-lock-face
-            'magit-section-secondary-heading))
-          (push
-           (cons
-            side
-            (cons (copy-marker start) (copy-marker (point))))
-           difftron-magit--commit-message-regions))))))
-
-(defun difftron-magit--hide-commit-message (side)
-  "Remove SIDE's expanded commit message."
-  (when-let
-      ((region (assq side difftron-magit--commit-message-regions)))
-    (let
-        (
-         (start (cadr region))
-         (end (cddr region))
-         (inhibit-read-only t))
-      (delete-region start end)
-      (set-marker start nil)
-      (set-marker end nil)
-      (setq difftron-magit--commit-message-regions
-            (assq-delete-all
-             side
-             difftron-magit--commit-message-regions)))))
-
-(defun difftron-magit--snapshot-line-end (side)
-  "Return the line end position for SIDE's snapshot line."
-  (or
-   (when-let
-       (
-        (pos
-         (text-property-any
-          (point-min)
-          (point-max)
-          'difftron-magit-snapshot-side
-          side)))
-     (save-excursion
-       (goto-char pos)
-       (line-end-position)))
-   (user-error "No snapshot line for %s" side)))
-
-(defun difftron-magit--commit-message (snapshot)
-  "Return the full commit message for SNAPSHOT."
-  (let
-      (
-       (rev
-        (or (plist-get snapshot :rev)
-            (user-error "Git revision snapshot has no revision")))
-       (default-directory
-        (or (plist-get snapshot :root) default-directory)))
-    (or (magit-git-string "log" "-1" "--format=%B" rev) "")))
-
-(defun difftron-magit--format-commit-message (message)
-  "Format commit MESSAGE for display under a snapshot line."
-  (let ((message (string-trim-right message)))
-    (if (string-empty-p message)
-        "  No commit message.\n"
-      (mapconcat
-       (lambda (line)
-         (if (string-empty-p line)
-             "\n"
-           (format "  %s\n" line)))
-       (split-string message "\n")
-       ""))))
+(defun difftron-magit--paint-section-visibility ()
+  "Apply Magit's visibility overlays from the root section."
+  (when magit-root-section
+    (let ((magit-section-cache-visibility nil))
+      (magit-section-show magit-root-section))))
 
 (defun difftron-magit-next-commit ()
   "Show the next commit on HEAD's first-parent history."
@@ -599,7 +761,8 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         (setq difftron-magit--payload payload)
         (erase-buffer)
         (difftron-magit--insert-payload payload)
-        (magit-section-show-level-3)
+        (difftron-magit--show-entity-tree-level-3)
+        (difftron-magit--paint-section-visibility)
         (goto-char (point-min))))
     (pop-to-buffer buffer)))
 
@@ -613,7 +776,6 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
 
 (defun difftron-magit--insert-payload (payload)
   "Insert PAYLOAD into the current buffer."
-  (setq difftron-magit--commit-message-regions nil)
   (setq difftron-magit--entity-kind-order
         (plist-get payload :entity_kind_order))
   (setq difftron-magit--entity-kinds
@@ -651,40 +813,83 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
 
 (defun difftron-magit--insert-snapshot-line (name snapshot)
   "Insert one clickable diff endpoint NAME for SNAPSHOT."
-  (let ((start (point)))
-    (insert
-     (propertize (format "%s: " name)
-                 'font-lock-face
-                 'magit-section-heading))
-    (insert-text-button
-     (difftron-magit--display-label (plist-get snapshot :label))
-     'action
-     (lambda (_button) (difftron-magit--visit-snapshot snapshot))
-     'follow-link
-     t
-     'help-echo
-     "RET visits snapshot"
-     'font-lock-face
-     'magit-section-heading)
-    (when-let ((summary (plist-get snapshot :summary)))
-      (unless (string-empty-p summary)
-        (insert
-         (propertize (format "  %s" summary)
-                     'font-lock-face
-                     'magit-section-secondary-heading))))
-    (insert "\n")
-    (when (equal (plist-get snapshot :kind) "git_revision")
-      (add-text-properties
-       start (point)
-       (list
-        'difftron-magit-snapshot-side
-        (intern name)
-        'difftron-magit-snapshot
-        snapshot
-        'mouse-face
-        'highlight
-        'help-echo
-        "TAB toggles commit message, RET visits snapshot")))))
+  (if (equal (plist-get snapshot :kind) "git_revision")
+      (let ((side (intern name)))
+        (magit-insert-section
+            (difftron-snapshot side t)
+          (difftron-magit--insert-snapshot-heading name snapshot)
+          (magit-insert-heading)
+          (difftron-magit--add-snapshot-heading-properties
+           side
+           snapshot
+           (oref magit-insert-section--current start)
+           (oref magit-insert-section--current content))
+          (magit-insert-section-body
+            (difftron-magit--insert-revision-details snapshot))))
+    (difftron-magit--insert-snapshot-heading name snapshot)
+    (insert "\n")))
+
+(defun difftron-magit--insert-snapshot-heading (name snapshot)
+  "Insert the snapshot heading for endpoint NAME and SNAPSHOT."
+  (insert
+   (propertize (format "%s: " name)
+               'font-lock-face
+               'magit-section-heading))
+  (insert-text-button
+   (difftron-magit--display-label (plist-get snapshot :label))
+   'action
+   (lambda (_button) (difftron-magit--visit-snapshot snapshot))
+   'follow-link
+   t
+   'help-echo
+   "RET visits snapshot"
+   'font-lock-face
+   'magit-section-heading)
+  (when-let ((summary (plist-get snapshot :summary)))
+    (unless (string-empty-p summary)
+      (insert
+       (propertize (format "  %s" summary)
+                   'font-lock-face
+                   'magit-section-secondary-heading)))))
+
+(defun difftron-magit--add-snapshot-heading-properties
+    (side snapshot start end)
+  "Mark the Git snapshot heading from START to END for SIDE and SNAPSHOT."
+  (add-text-properties
+   start end
+   (list
+    'difftron-magit-snapshot-side
+    side
+    'difftron-magit-snapshot
+    snapshot
+    'mouse-face
+    'highlight
+    'help-echo
+    "TAB toggles revision details, RET visits snapshot")))
+
+(defun difftron-magit--insert-revision-details (snapshot)
+  "Insert Magit-style revision details for SNAPSHOT."
+  (condition-case err
+      (let
+          (
+           (rev
+            (or (plist-get snapshot :rev)
+                (user-error "Git revision snapshot has no revision")))
+           (default-directory
+            (or (plist-get snapshot :root) default-directory)))
+        (require 'magit-log)
+        (require 'magit-diff)
+        (let ((magit-buffer-revision rev))
+          (magit-insert-revision-headers)
+          (magit-insert-revision-message)))
+    (error
+     (insert
+      (propertize
+       (format
+        "Revision details unavailable: %s\n"
+        (error-message-string err))
+       'font-lock-face
+       'magit-section-secondary-heading)))))
 
 (defun difftron-magit--visit-snapshot (snapshot)
   "Visit SNAPSHOT using the best available Magit action."
@@ -1169,14 +1374,6 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
     (1 'difftron-magit-level-1-heading)
     (_ 'difftron-magit-level-2-heading)))
 
-(defun difftron-magit--split-paths (input)
-  "Split comma-separated INPUT into normalized path filters."
-  (if (string-empty-p input)
-      nil
-    (seq-filter
-     (lambda (item) (not (string-empty-p item)))
-     (mapcar #'string-trim (split-string input "," t)))))
-
 (defun difftron-magit--current-display-width ()
   "Return the current window body width in character columns."
   (max 20
@@ -1319,15 +1516,17 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
 
 (defun difftron-magit-register-magit-diff-suffix ()
   "Register difftron in the `magit-diff' transient."
-  (when
-      (and (featurep 'magit-diff)
-           (not
-            (ignore-errors
-              (transient-get-suffix 'magit-diff "D"))))
-    (transient-append-suffix
-      'magit-diff
-      "d"
-      difftron-magit--magit-diff-suffix)))
+  (when (featurep 'magit-diff)
+    (unless (difftron-magit--magit-diff-suffix-p "D")
+      (transient-append-suffix
+        'magit-diff
+        "d"
+        difftron-magit--magit-diff-suffix))))
+
+(defun difftron-magit--magit-diff-suffix-p (key)
+  "Return non-nil if KEY is registered in the `magit-diff' transient."
+  (ignore-errors
+    (transient-get-suffix 'magit-diff key)))
 
 (defun difftron-magit-register-magit-diff-bindings ()
   "Register difftron bindings in Magit diff buffers."
@@ -1344,11 +1543,9 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
 
 (defun difftron-magit-unregister-magit-diff-suffix ()
   "Remove difftron from the `magit-diff' transient."
-  (when
-      (and (featurep 'magit-diff)
-           (ignore-errors
-             (transient-get-suffix 'magit-diff "D")))
-    (transient-remove-suffix 'magit-diff "D")))
+  (when (featurep 'magit-diff)
+    (when (difftron-magit--magit-diff-suffix-p "D")
+      (transient-remove-suffix 'magit-diff "D"))))
 
 (defun difftron-magit-unregister-magit-diff-bindings ()
   "Remove difftron bindings from Magit diff buffers."

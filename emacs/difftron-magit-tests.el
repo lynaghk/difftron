@@ -10,6 +10,8 @@
  (file-name-directory (or load-file-name buffer-file-name)))
 (require 'difftron-magit)
 
+(defvar difftron-magit-tests--sample-payload)
+
 (defconst difftron-magit-tests--entity-kind-order
   '
   ("struct"
@@ -56,11 +58,166 @@
    :rev rev
    :summary (format "Commit %s" rev)))
 
+(defun difftron-magit-tests--git-revision-in-repo
+    (repo label rev summary)
+  (list
+   :label label
+   :kind "git_revision"
+   :root repo
+   :rev rev
+   :summary summary))
+
 (defun difftron-magit-tests--directory-snapshot (path)
   (list :label path :kind "directory" :root path))
 
 (defun difftron-magit-tests--file-snapshot (path)
   (list :label path :kind "file" :root path))
+
+(defun difftron-magit-tests--snapshot-section (side)
+  (seq-find
+   (lambda (section)
+     (and
+      (eq (oref section type) 'difftron-snapshot)
+      (eq (oref section value) side)))
+   (oref magit-root-section children)))
+
+(defun difftron-magit-tests--first-child-section (parent type)
+  (seq-find
+   (lambda (section)
+     (eq (oref section type) type))
+   (oref parent children)))
+
+(defun difftron-magit-tests--section-has-invisible-overlay-p
+    (section)
+  "Return non-nil when SECTION's body has a hiding overlay."
+  (when-let ((content (oref section content)))
+    (seq-some
+     (lambda (overlay)
+       (overlay-get overlay 'invisible))
+     (overlays-at content))))
+
+(defconst difftron-magit-tests--repo-git-env-regexp
+  "\\`GIT_\\(DIR\\|WORK_TREE\\|INDEX_FILE\\|OBJECT_DIRECTORY\\|ALTERNATE_OBJECT_DIRECTORIES\\|CEILING_DIRECTORIES\\|PREFIX\\)=")
+
+(defun difftron-magit-tests--git (repo &rest args)
+  "Run Git with ARGS in REPO and return stdout."
+  (with-temp-buffer
+    (let
+        (
+         (process-environment
+          (seq-remove
+           (lambda (entry)
+             (string-match-p
+              difftron-magit-tests--repo-git-env-regexp
+              entry))
+           process-environment))
+         (exit-code
+          (apply
+           #'process-file
+           "git"
+           nil
+           t
+           nil
+           (append (list "-C" repo) args))))
+      (unless (zerop exit-code)
+        (error
+         "Git failed with exit code %s: git %s\n%s"
+         exit-code
+         (string-join (append (list "-C" repo) args) " ")
+         (buffer-string)))
+      (string-trim-right (buffer-string)))))
+
+(defun difftron-magit-tests--write-file (repo path contents)
+  "Write CONTENTS to PATH under REPO."
+  (let ((file (expand-file-name path repo)))
+    (make-directory (file-name-directory file) t)
+    (with-temp-file file
+      (insert contents))))
+
+(defun difftron-magit-tests--commit
+    (repo path contents subject body date)
+  "Create a commit in REPO and return its full hash."
+  (difftron-magit-tests--write-file repo path contents)
+  (difftron-magit-tests--git repo "add" path)
+  (let
+      (
+       (process-environment
+        (append
+         (list
+          "GIT_AUTHOR_NAME=Codex"
+          "GIT_AUTHOR_EMAIL="
+          "GIT_COMMITTER_NAME=Codex"
+          "GIT_COMMITTER_EMAIL="
+          (format "GIT_AUTHOR_DATE=%s" date)
+          (format "GIT_COMMITTER_DATE=%s" date))
+         process-environment)))
+    (difftron-magit-tests--git
+     repo
+     "commit"
+     "--no-verify"
+     "-m"
+     subject
+     "-m"
+     body))
+  (difftron-magit-tests--git repo "rev-parse" "HEAD"))
+
+(defun difftron-magit-tests--with-revision-repo (fn)
+  "Call FN with a temporary Git repo and two deterministic revisions."
+  (let ((repo (file-name-as-directory
+               (make-temp-file "difftron-magit-repo-" t))))
+    (unwind-protect
+        (progn
+          (difftron-magit-tests--git repo "init" "-q")
+          (difftron-magit-tests--git
+           repo
+           "symbolic-ref"
+           "HEAD"
+           "refs/heads/master")
+          (let*
+              (
+               (parent-subject "Move entity kind labels into JSON")
+               (child-subject "Add Clojure entity kind metadata")
+               (parent
+                (difftron-magit-tests--commit
+                 repo
+                 "README.md"
+                 "parent\n"
+                 parent-subject
+                 "Parent body."
+                 "Tue Apr 28 16:50:00 2026 +0000"))
+               (child
+                (difftron-magit-tests--commit
+                 repo
+                 "README.md"
+                 "child\n"
+                 child-subject
+                 "Expose Clojure namespaces vars and related forms through the normalized kind table."
+                 "Tue Apr 28 16:51:46 2026 +0000")))
+            (funcall fn repo parent child parent-subject child-subject)))
+      (delete-directory repo t))))
+
+(defun difftron-magit-tests--payload-with-revisions
+    (repo lhs-rev rhs-rev lhs-summary rhs-summary)
+  "Return the sample payload with Git revisions from REPO."
+  (let ((payload (copy-sequence difftron-magit-tests--sample-payload)))
+    (setq
+     payload
+     (plist-put
+      payload
+      :lhs
+      (difftron-magit-tests--git-revision-in-repo
+       repo
+       (format "repo@%s" (substring lhs-rev 0 7))
+       lhs-rev
+       lhs-summary)))
+    (plist-put
+     payload
+     :rhs
+     (difftron-magit-tests--git-revision-in-repo
+      repo
+      (format "repo@%s" (substring rhs-rev 0 7))
+      rhs-rev
+      rhs-summary))))
 
 (cl-defun
     difftron-magit-tests--entity
@@ -462,10 +619,13 @@
       (difftron-magit--insert-payload
        difftron-magit-tests--sample-payload))
     (let*
-	(
+        (
          (text (buffer-string))
          (root magit-root-section)
-         (kind-section (car (oref root children)))
+         (kind-section
+          (difftron-magit-tests--first-child-section
+           root
+           'difftron-kind))
          (file-section (car (oref kind-section children)))
          (entity-section (car (oref file-section children))))
       (should
@@ -504,9 +664,12 @@
       (difftron-magit--insert-payload
        difftron-magit-tests--multi-file-payload))
     (let*
-	(
+        (
          (root magit-root-section)
-         (kind-section (car (oref root children)))
+         (kind-section
+          (difftron-magit-tests--first-child-section
+           root
+           'difftron-kind))
          (file-section (car (oref kind-section children)))
          (entity-section (car (oref file-section children))))
       (should (equal (oref kind-section type) 'difftron-kind))
@@ -528,9 +691,12 @@
       (difftron-magit--insert-payload
        difftron-magit-tests--multi-file-payload))
     (let*
-	(
+        (
          (root magit-root-section)
-         (file-section (car (oref root children)))
+         (file-section
+          (difftron-magit-tests--first-child-section
+           root
+           'difftron-file))
          (kind-section (car (oref file-section children)))
          (entity-section (car (oref kind-section children))))
       (should (equal (oref file-section type) 'difftron-file))
@@ -584,14 +750,30 @@
       (let*
           (
            (root magit-root-section)
-           (file-section (car (oref root children)))
+           (file-section
+            (difftron-magit-tests--first-child-section
+             root
+             'difftron-file))
+           (sibling-file-section
+            (cadr
+             (seq-filter
+              (lambda (section)
+                (eq (oref section type) 'difftron-file))
+              (oref root children))))
            (kind-section (car (oref file-section children)))
            (entity-section (car (oref kind-section children))))
         (should (eq difftron-magit--grouping 'file))
         (should-not (string-match-p "Grouping:" (buffer-string)))
         (should-not (oref file-section hidden))
         (should-not (oref kind-section hidden))
-        (should (oref entity-section hidden))))))
+        (should (oref entity-section hidden))
+        (should
+         (difftron-magit-tests--section-has-invisible-overlay-p
+          entity-section))
+        (should (oref sibling-file-section hidden))
+        (should
+         (difftron-magit-tests--section-has-invisible-overlay-p
+          sibling-file-section))))))
 
 (ert-deftest difftron-magit-inherits-magit-all-level-bindings ()
   (should
@@ -649,18 +831,325 @@
     (lookup-key difftron-magit-mode-map (kbd "TAB"))
     #'difftron-magit-toggle-section-or-message)))
 
+(ert-deftest difftron-magit-read-snapshot-arg-completes-ref ()
+  (let (read-prompt read-default read-collection)
+    (cl-letf
+        (
+         ((symbol-function 'magit-list-branch-names)
+          (lambda () '("main" "feature")))
+         ((symbol-function 'magit-git-lines)
+          (lambda (&rest args)
+            (pcase args
+              (`("log" "--max-count=100" "--date=short" "--format=%h%x09%H%x09%an%x09%ad%x09%s")
+               nil)
+              (`("ls-files") nil)
+              (_ (error "Unexpected git args: %S" args)))))
+         ((symbol-function 'completing-read)
+          (lambda (prompt collection &rest args)
+            (setq read-prompt prompt)
+            (setq read-collection collection)
+            (setq read-default (nth 4 args))
+            "feature")))
+      (should
+       (equal
+        (difftron-magit--read-snapshot-arg
+         'lhs
+         "/tmp/repo/"
+         "HEAD")
+        "feature")))
+    (should (equal read-prompt "Left snapshot: "))
+    (should (equal read-default "HEAD"))
+    (should (functionp read-collection))
+    (should
+     (member
+      "feature"
+      (all-completions "" read-collection)))))
+
+(ert-deftest difftron-magit-read-snapshot-arg-groups-candidates ()
+  (let (read-collection)
+    (cl-letf
+        (
+         ((symbol-function 'magit-list-branch-names)
+          (lambda () '("main")))
+         ((symbol-function 'magit-git-lines)
+          (lambda (&rest args)
+            (pcase args
+              (`("log" "--max-count=100" "--date=short" "--format=%h%x09%H%x09%an%x09%ad%x09%s")
+               '("abc1234\tabc1234full\tAda Dev\t2026-05-04\tAdd thing"
+                 "def5678\tdef5678full\tBea Dev\t2026-05-03\tAdd a much longer thing"))
+              (`("ls-files") '("src/lib.rs"))
+              (_ (error "Unexpected git args: %S" args)))))
+         ((symbol-function 'completing-read)
+          (lambda (_prompt collection &rest _)
+            (setq read-collection collection)
+            "main")))
+      (difftron-magit--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD"))
+    (let*
+        (
+         (metadata (funcall read-collection "" nil 'metadata))
+         (metadata-items (cdr metadata))
+         (group-function (cdr (assq 'group-function metadata-items)))
+         (affixation-function
+          (cdr (assq 'affixation-function metadata-items)))
+         (completions (all-completions "" read-collection)))
+      (should (member "main" completions))
+      (should (member "abc1234 Add thing" completions))
+      (should (member "def5678 Add a much longer thing" completions))
+      (should (member "src/lib.rs" completions))
+      (should
+       (equal
+        (funcall group-function "main" nil)
+        "Branches"))
+      (should
+       (equal
+        (funcall group-function "abc1234 Add thing" nil)
+        "Current Branch Commits"))
+      (should
+       (equal
+        (funcall group-function "src/lib.rs" nil)
+        "Repo Paths"))
+      (let*
+          (
+           (commit-affix
+            (car
+             (funcall affixation-function
+                      '("abc1234 Add thing"))))
+           (commit-suffix (nth 2 commit-affix)))
+        (should (equal (car commit-affix) "abc1234 Add thing"))
+        (should
+         (equal
+          (substring-no-properties commit-suffix)
+          " Ada Dev                  2026-05-04"))
+        (should
+         (equal
+          (get-text-property 0 'display commit-suffix)
+          `(space :align-to
+                  ,(+ (length "def5678 Add a much longer thing") 2)))))
+      (should
+       (member
+        '("main" "" "")
+        (funcall affixation-function '("main"))))
+      (should
+       (member
+        '("src/lib.rs" "" "")
+        (funcall affixation-function '("src/lib.rs")))))))
+
+(ert-deftest difftron-magit-read-snapshot-arg-selects-full-commit-hash ()
+  (cl-letf
+      (
+       ((symbol-function 'magit-list-branch-names)
+        (lambda () '("main")))
+       ((symbol-function 'magit-git-lines)
+        (lambda (&rest args)
+          (pcase args
+            (`("log" "--max-count=100" "--date=short" "--format=%h%x09%H%x09%an%x09%ad%x09%s")
+             '("abc1234\tabc1234full\tAda Dev\t2026-05-04\tAdd thing"))
+            (`("ls-files") nil)
+            (_ (error "Unexpected git args: %S" args)))))
+       ((symbol-function 'completing-read)
+        (lambda (&rest _) "abc1234 Add thing")))
+    (should
+     (equal
+      (difftron-magit--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD")
+      "abc1234full"))))
+
+(ert-deftest difftron-magit-read-snapshot-arg-selects-repo-path ()
+  (cl-letf
+      (
+       ((symbol-function 'magit-list-branch-names)
+        (lambda () '("main")))
+       ((symbol-function 'magit-git-lines)
+        (lambda (&rest args)
+          (pcase args
+            (`("log" "--max-count=100" "--date=short" "--format=%h%x09%H%x09%an%x09%ad%x09%s")
+             nil)
+            (`("ls-files") '("src/lib.rs"))
+            (_ (error "Unexpected git args: %S" args)))))
+       ((symbol-function 'completing-read)
+        (lambda (&rest _) "src/lib.rs")))
+    (should
+     (equal
+      (difftron-magit--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD")
+      "/tmp/repo/src/lib.rs"))))
+
+(ert-deftest difftron-magit-read-snapshot-arg-allows-typed-revision ()
+  (cl-letf
+      (
+       ((symbol-function 'magit-list-branch-names)
+        (lambda () '("main")))
+       ((symbol-function 'magit-git-lines)
+        (lambda (&rest args)
+          (pcase args
+            (`("log" "--max-count=100" "--date=short" "--format=%h%x09%H%x09%an%x09%ad%x09%s")
+             nil)
+            (`("ls-files") nil)
+            (_ (error "Unexpected git args: %S" args)))))
+       ((symbol-function 'completing-read)
+        (lambda (&rest _) "abc1234")))
+    (should
+     (equal
+      (difftron-magit--read-snapshot-arg 'rhs "/tmp/repo/" "HEAD")
+      "abc1234"))))
+
+(ert-deftest difftron-magit-read-snapshot-arg-uses-default-on-empty-input ()
+  (cl-letf
+      (
+       ((symbol-function 'magit-list-branch-names)
+        (lambda () '("main")))
+       ((symbol-function 'magit-git-lines)
+        (lambda (&rest args)
+          (pcase args
+            (`("log" "--max-count=100" "--date=short" "--format=%h%x09%H%x09%an%x09%ad%x09%s")
+             nil)
+            (`("ls-files") nil)
+            (_ (error "Unexpected git args: %S" args)))))
+       ((symbol-function 'completing-read)
+        (lambda (&rest _) "")))
+    (should
+     (equal
+      (difftron-magit--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD")
+      "HEAD"))))
+
+(ert-deftest difftron-magit-read-snapshot-arg-browses-file-path ()
+  (let (read-file-prompt read-file-dir read-file-default)
+    (cl-letf
+        (
+         ((symbol-function 'magit-list-branch-names)
+          (lambda () '("main")))
+         ((symbol-function 'magit-git-lines)
+          (lambda (&rest args)
+            (pcase args
+              (`("log" "--max-count=100" "--date=short" "--format=%h%x09%H%x09%an%x09%ad%x09%s")
+               nil)
+              (`("ls-files") nil)
+              (_ (error "Unexpected git args: %S" args)))))
+         ((symbol-function 'completing-read)
+          (lambda (&rest _) difftron-magit--browse-path-choice))
+         ((symbol-function 'read-file-name)
+          (lambda (prompt dir default-filename &rest _)
+            (setq read-file-prompt prompt)
+            (setq read-file-dir dir)
+            (setq read-file-default default-filename)
+            "/tmp/repo/src/lib.rs"))
+         ((symbol-function 'file-directory-p)
+          (lambda (path) (equal path "/tmp/repo/src/"))))
+      (should
+       (equal
+        (difftron-magit--read-snapshot-arg
+         'rhs
+         "/tmp/repo/"
+         "/tmp/repo/src/")
+        "/tmp/repo/src/lib.rs")))
+    (should (equal read-file-prompt "Right path: "))
+    (should (equal read-file-dir "/tmp/repo/"))
+    (should (equal read-file-default "/tmp/repo/src/"))))
+
+(ert-deftest difftron-magit-read-snapshot-arg-browses-directory-path ()
+  (cl-letf
+      (
+       ((symbol-function 'magit-list-branch-names)
+        (lambda () '("main")))
+       ((symbol-function 'magit-git-lines)
+        (lambda (&rest args)
+          (pcase args
+            (`("log" "--max-count=100" "--date=short" "--format=%h%x09%H%x09%an%x09%ad%x09%s")
+             nil)
+            (`("ls-files") nil)
+            (_ (error "Unexpected git args: %S" args)))))
+       ((symbol-function 'completing-read)
+        (lambda (&rest _) difftron-magit--browse-path-choice))
+       ((symbol-function 'read-file-name)
+        (lambda (&rest _) "/tmp/repo/src"))
+       ((symbol-function 'file-directory-p)
+        (lambda (path) (equal path "/tmp/repo/src"))))
+    (should
+     (equal
+      (difftron-magit--read-snapshot-arg 'lhs "/tmp/repo/" "HEAD")
+      "/tmp/repo/src/"))))
+
+(ert-deftest difftron-magit-read-snapshot-arg-expands-typed-repo-path ()
+  (let ((repo (file-name-as-directory
+               (make-temp-file "difftron-magit-path-" t))))
+    (unwind-protect
+        (let ((file (expand-file-name "src/lib.rs" repo)))
+          (make-directory (file-name-directory file) t)
+          (with-temp-file file
+            (insert "fn main() {}\n"))
+          (cl-letf
+              (
+               ((symbol-function 'magit-list-branch-names)
+                (lambda () '("main")))
+               ((symbol-function 'magit-git-lines)
+                (lambda (&rest args)
+                  (pcase args
+                    (`("log" "--max-count=100" "--date=short" "--format=%h%x09%H%x09%an%x09%ad%x09%s")
+                     nil)
+                    (`("ls-files") nil)
+                    (_ (error "Unexpected git args: %S" args)))))
+               ((symbol-function 'completing-read)
+                (lambda (&rest _) "src/lib.rs")))
+            (should
+             (equal
+              (difftron-magit--read-snapshot-arg
+               'lhs
+               repo
+               "HEAD")
+              file))))
+      (delete-directory repo t))))
+
+(ert-deftest difftron-magit-read-snapshot-arg-prefers-ref-over-path ()
+  (let ((repo (file-name-as-directory
+               (make-temp-file "difftron-magit-path-" t))))
+    (unwind-protect
+        (let ((file (expand-file-name "src/lib.rs" repo)))
+          (make-directory (file-name-directory file) t)
+          (with-temp-file file
+            (insert "fn main() {}\n"))
+          (cl-letf
+              (
+               ((symbol-function 'magit-list-branch-names)
+                (lambda () '("src/lib.rs")))
+               ((symbol-function 'magit-git-lines)
+                (lambda (&rest args)
+                  (pcase args
+                    (`("log" "--max-count=100" "--date=short" "--format=%h%x09%H%x09%an%x09%ad%x09%s")
+                     nil)
+                    (`("ls-files") '("src/lib.rs"))
+                    (_ (error "Unexpected git args: %S" args)))))
+               ((symbol-function 'completing-read)
+                (lambda (&rest _) "src/lib.rs")))
+            (should
+             (equal
+              (difftron-magit--read-snapshot-arg
+               'lhs
+               repo
+               "HEAD")
+              "src/lib.rs"))))
+      (delete-directory repo t))))
+
 (ert-deftest difftron-magit-selects-left-git-revision ()
   (let
       (
        displayed-args
        read-prompt
-       read-default)
+       read-default
+       read-collection)
     (cl-letf
 	(
-         ((symbol-function 'magit-read-branch-or-commit)
-          (lambda (prompt &optional secondary-default _exclude)
+         ((symbol-function 'magit-list-branch-names)
+          (lambda () '("feature")))
+         ((symbol-function 'magit-git-lines)
+          (lambda (&rest args)
+            (pcase args
+              (`("log" "--max-count=100" "--date=short" "--format=%h%x09%H%x09%an%x09%ad%x09%s")
+               nil)
+              (`("ls-files") nil)
+              (_ (error "Unexpected git args: %S" args)))))
+         ((symbol-function 'completing-read)
+          (lambda (prompt collection &rest args)
             (setq read-prompt prompt)
-            (setq read-default secondary-default)
+            (setq read-collection collection)
+            (setq read-default (nth 4 args))
             "feature"))
          ((symbol-function 'difftron-magit--run-command)
           (lambda (_default-directory _args)
@@ -683,8 +1172,13 @@
         (setq difftron-magit--payload
               (copy-tree difftron-magit-tests--sample-payload))
         (difftron-magit-select-left)))
-    (should (equal read-prompt "Left ref"))
+    (should (equal read-prompt "Left snapshot: "))
     (should (equal read-default "HEAD~1"))
+    (should (member "feature" (all-completions "" read-collection)))
+    (should
+     (member
+      difftron-magit--browse-path-choice
+      (all-completions "" read-collection)))
     (should
      (equal
       displayed-args
@@ -701,15 +1195,31 @@
   (let
       (
        displayed-args
-       read-prompt
-       read-default)
+       snapshot-prompt
+       path-prompt
+       path-default)
     (cl-letf
 	(
-         ((symbol-function 'read-directory-name)
-          (lambda (prompt _dir default-directory &rest _)
-            (setq read-prompt prompt)
-            (setq read-default default-directory)
+         ((symbol-function 'magit-list-branch-names)
+          (lambda () '("main")))
+         ((symbol-function 'magit-git-lines)
+          (lambda (&rest args)
+            (pcase args
+              (`("log" "--max-count=100" "--date=short" "--format=%h%x09%H%x09%an%x09%ad%x09%s")
+               nil)
+              (`("ls-files") nil)
+              (_ (error "Unexpected git args: %S" args)))))
+         ((symbol-function 'completing-read)
+          (lambda (prompt &rest _)
+            (setq snapshot-prompt prompt)
+            difftron-magit--browse-path-choice))
+         ((symbol-function 'read-file-name)
+          (lambda (prompt _dir default-filename &rest _)
+            (setq path-prompt prompt)
+            (setq path-default default-filename)
             "/tmp/new-root"))
+         ((symbol-function 'file-directory-p)
+          (lambda (path) (equal path "/tmp/new-root")))
          ((symbol-function 'difftron-magit--run-command)
           (lambda (_default-directory _args)
             difftron-magit-tests--sample-payload))
@@ -727,8 +1237,9 @@
          difftron-magit--payload
          :rhs (difftron-magit-tests--directory-snapshot "/tmp/old-root"))
         (difftron-magit-select-right)))
-    (should (equal read-prompt "Right folder: "))
-    (should (equal read-default "/tmp/old-root"))
+    (should (equal snapshot-prompt "Right snapshot: "))
+    (should (equal path-prompt "Right path: "))
+    (should (equal path-default "/tmp/old-root"))
     (should
      (equal
       displayed-args
@@ -738,15 +1249,31 @@
   (let
       (
        displayed-args
-       read-prompt
-       read-default)
+       snapshot-prompt
+       path-prompt
+       path-default)
     (cl-letf
 	(
+         ((symbol-function 'magit-list-branch-names)
+          (lambda () '("main")))
+         ((symbol-function 'magit-git-lines)
+          (lambda (&rest args)
+            (pcase args
+              (`("log" "--max-count=100" "--date=short" "--format=%h%x09%H%x09%an%x09%ad%x09%s")
+               nil)
+              (`("ls-files") nil)
+              (_ (error "Unexpected git args: %S" args)))))
+         ((symbol-function 'completing-read)
+          (lambda (prompt &rest _)
+            (setq snapshot-prompt prompt)
+            difftron-magit--browse-path-choice))
          ((symbol-function 'read-file-name)
           (lambda (prompt _dir default-filename &rest _)
-            (setq read-prompt prompt)
-            (setq read-default default-filename)
+            (setq path-prompt prompt)
+            (setq path-default default-filename)
             "/tmp/next.rs"))
+         ((symbol-function 'file-directory-p)
+          (lambda (_path) nil))
          ((symbol-function 'difftron-magit--run-command)
           (lambda (_default-directory _args)
             difftron-magit-tests--sample-payload))
@@ -764,8 +1291,9 @@
          difftron-magit--payload
          :lhs (difftron-magit-tests--file-snapshot "/tmp/old.rs"))
         (difftron-magit-select-left)))
-    (should (equal read-prompt "Left file: "))
-    (should (equal read-default "/tmp/old.rs"))
+    (should (equal snapshot-prompt "Left snapshot: "))
+    (should (equal path-prompt "Left path: "))
+    (should (equal path-default "/tmp/old.rs"))
     (should
      (equal
       displayed-args
@@ -953,7 +1481,10 @@
       (let*
           (
            (root magit-root-section)
-           (kind-section (car (oref root children)))
+           (kind-section
+            (difftron-magit-tests--first-child-section
+             root
+             'difftron-kind))
            (file-section-b (nth 1 (oref kind-section children)))
            (file-section-c (nth 2 (oref kind-section children)))
            (entity-section-b (car (oref file-section-b children)))
@@ -981,7 +1512,10 @@
           (let*
               (
                (new-root magit-root-section)
-               (new-kind-section (car (oref new-root children)))
+               (new-kind-section
+                (difftron-magit-tests--first-child-section
+                 new-root
+                 'difftron-kind))
                (new-file-section-a
                 (nth 0 (oref new-kind-section children)))
                (new-file-section-b
@@ -1024,53 +1558,113 @@
             (should
              (eq (magit-current-section) new-entity-section-c))))))))
 
-(ert-deftest difftron-magit-tab-toggles-commit-message-at-point ()
+(ert-deftest difftron-magit-git-snapshots-are-expandable-sections ()
   (cl-letf
-      (
-       ((symbol-function 'magit-git-string)
-        (lambda (&rest args)
-          (pcase args
-            (`("log" "-1" "--format=%B" "HEAD~1")
-             "Subject line\n\nBody line")
-            (_ (error "Unexpected git args: %S" args))))))
-    (with-temp-buffer
-      (difftron-magit-mode)
-      (setq difftron-magit--default-directory "/tmp/repo/")
-      (let ((inhibit-read-only t))
-        (difftron-magit--insert-payload
-         difftron-magit-tests--sample-payload))
-      (should-not (string-match-p "Body line" (buffer-string)))
-      (goto-char (point-min))
-      (search-forward "lhs: ")
-      (difftron-magit-toggle-section-or-message)
+      (((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
+    (difftron-magit--display-buffer
+     "/tmp/repo/"
+     '("diff" "HEAD~1" "HEAD")
+     difftron-magit-tests--sample-payload))
+  (with-current-buffer difftron-magit-buffer-name
+    (let ((lhs-section (difftron-magit-tests--snapshot-section 'lhs)))
+      (should lhs-section)
+      (should (oref lhs-section hidden))
       (should
-       (string-match-p
-        "  Subject line\n\n  Body line\n"
-        (buffer-string)))
-      (difftron-magit-toggle-section-or-message)
-      (should-not (string-match-p "Body line" (buffer-string))))))
+       (seq-some
+        (lambda (overlay)
+          (overlay-get overlay 'magit-vis-indicator))
+        (overlays-in
+         (oref lhs-section start)
+         (oref lhs-section content)))))))
 
-(ert-deftest difftron-magit-m-toggles-both-commit-messages ()
-  (cl-letf
-      (
-       ((symbol-function 'magit-git-string)
-        (lambda (&rest args)
-          (pcase args
-            (`("log" "-1" "--format=%B" "HEAD~1") "Left subject")
-            (`("log" "-1" "--format=%B" "HEAD") "Right subject")
-            (_ (error "Unexpected git args: %S" args))))))
-    (with-temp-buffer
-      (difftron-magit-mode)
-      (setq difftron-magit--default-directory "/tmp/repo/")
-      (let ((inhibit-read-only t))
-        (difftron-magit--insert-payload
-         difftron-magit-tests--sample-payload))
-      (difftron-magit-toggle-commit-messages)
-      (should (string-match-p "  Left subject\n" (buffer-string)))
-      (should (string-match-p "  Right subject\n" (buffer-string)))
-      (difftron-magit-toggle-commit-messages)
-      (should-not (string-match-p "Left subject" (buffer-string)))
-      (should-not (string-match-p "Right subject" (buffer-string))))))
+(ert-deftest difftron-magit-tab-toggles-revision-details-at-point ()
+  (difftron-magit-tests--with-revision-repo
+   (lambda (repo parent child parent-subject child-subject)
+     (let
+         (
+          (payload
+           (difftron-magit-tests--payload-with-revisions
+            repo
+            child
+            child
+            child-subject
+            child-subject)))
+       (with-temp-buffer
+         (difftron-magit-mode)
+         (setq difftron-magit--default-directory repo)
+         (let ((inhibit-read-only t))
+           (difftron-magit--insert-payload payload))
+         (should-not (string-match-p "AuthorDate:" (buffer-string)))
+         (goto-char (point-min))
+         (search-forward "lhs: ")
+         (difftron-magit-toggle-section-or-message)
+         (should-not
+          (oref (difftron-magit-tests--snapshot-section 'lhs) hidden))
+         (should (string-match-p child (buffer-string)))
+         (should (string-match-p "Author:     Codex <>" (buffer-string)))
+         (should
+          (string-match-p
+           "AuthorDate: Tue Apr 28 16:51:46 2026 [+]0000"
+           (buffer-string)))
+         (should (string-match-p "Commit:     Codex <>" (buffer-string)))
+         (should
+          (string-match-p
+           "CommitDate: Tue Apr 28 16:51:46 2026 [+]0000"
+           (buffer-string)))
+         (should
+          (string-match-p
+           (format
+            "Parent:     %s %s"
+            (substring parent 0 7)
+            (regexp-quote parent-subject))
+           (buffer-string)))
+         (should (string-match-p "Contained:  master" (buffer-string)))
+         (should (string-match-p child-subject (buffer-string)))
+         (should
+          (string-match-p
+           "Expose Clojure namespaces vars and related forms"
+           (buffer-string)))
+         (difftron-magit-toggle-section-or-message)
+         (should
+          (oref (difftron-magit-tests--snapshot-section 'lhs) hidden)))))))
+
+(ert-deftest difftron-magit-m-toggles-all-revision-details ()
+  (difftron-magit-tests--with-revision-repo
+   (lambda (repo parent child parent-subject child-subject)
+     (let
+         (
+          (payload
+           (difftron-magit-tests--payload-with-revisions
+            repo
+            parent
+            child
+            parent-subject
+            child-subject)))
+       (with-temp-buffer
+         (difftron-magit-mode)
+         (setq difftron-magit--default-directory repo)
+         (let ((inhibit-read-only t))
+           (difftron-magit--insert-payload payload))
+         (difftron-magit-toggle-commit-messages)
+         (should-not
+          (oref (difftron-magit-tests--snapshot-section 'lhs) hidden))
+         (should-not
+          (oref (difftron-magit-tests--snapshot-section 'rhs) hidden))
+         (should (string-match-p parent-subject (buffer-string)))
+         (should (string-match-p child-subject (buffer-string)))
+         (should
+          (string-match-p
+           "AuthorDate: Tue Apr 28 16:50:00 2026 [+]0000"
+           (buffer-string)))
+         (should
+          (string-match-p
+           "CommitDate: Tue Apr 28 16:51:46 2026 [+]0000"
+           (buffer-string)))
+         (difftron-magit-toggle-commit-messages)
+         (should
+          (oref (difftron-magit-tests--snapshot-section 'lhs) hidden))
+         (should
+          (oref (difftron-magit-tests--snapshot-section 'rhs) hidden)))))))
 
 (ert-deftest difftron-magit-faces-added-and-deleted-entities ()
   (let*
@@ -1166,13 +1760,6 @@
       (get-text-property (match-beginning 0) 'font-lock-face)
       'magit-diff-context))))
 
-(ert-deftest difftron-magit-splits-path-input ()
-  (should
-   (equal
-    (difftron-magit--split-paths "src/lib.rs, src/main.rs ,")
-    '("src/lib.rs" "src/main.rs")))
-  (should-not (difftron-magit--split-paths "")))
-
 (ert-deftest difftron-magit-diff-omits-width-for-json-output ()
   (cl-letf
       (
@@ -1196,6 +1783,44 @@
         (lambda (_default-directory _args _payload) nil)))
     (difftron-magit-diff "HEAD~1" "HEAD" '("src/lib.rs"))))
 
+(ert-deftest difftron-magit-diff-interactive-does-not-read-paths ()
+  (let (prompts defaults ran-args)
+    (cl-letf
+        (
+         ((symbol-function 'difftron-magit--repo-root)
+          (lambda () "/tmp/repo/"))
+         ((symbol-function 'magit-list-branch-names)
+          (lambda () '("main")))
+         ((symbol-function 'magit-git-lines)
+          (lambda (&rest args)
+            (pcase args
+              (`("log" "--max-count=100" "--date=short" "--format=%h%x09%H%x09%an%x09%ad%x09%s")
+               nil)
+              (`("ls-files") nil)
+              (_ (error "Unexpected git args: %S" args)))))
+         ((symbol-function 'completing-read)
+          (lambda (prompt _collection &rest args)
+            (push prompt prompts)
+            (push (nth 4 args) defaults)
+            ""))
+         ((symbol-function 'difftron-magit--run-command)
+          (lambda (_default-directory args)
+            (setq ran-args args)
+            difftron-magit-tests--sample-payload))
+         ((symbol-function 'difftron-magit--display-buffer)
+          (lambda (_default-directory _args _payload) nil)))
+      (call-interactively #'difftron-magit-diff))
+    (should
+     (equal
+      (nreverse prompts)
+      '("Left snapshot: " "Right snapshot: ")))
+    (should
+     (equal
+      (nreverse defaults)
+      '("HEAD" "/tmp/repo/")))
+    (should
+     (equal ran-args '("diff" "HEAD" "/tmp/repo/" "--format" "json")))))
+
 (ert-deftest difftron-magit-cycle-grouping-redraws-buffer ()
   (with-temp-buffer
     (difftron-magit-mode)
@@ -1213,7 +1838,10 @@
       (let*
           (
            (root magit-root-section)
-           (file-section (car (oref root children)))
+           (file-section
+            (difftron-magit-tests--first-child-section
+             root
+             'difftron-file))
            (kind-section (car (oref file-section children)))
            (entity-section (car (oref kind-section children)))
            (text (buffer-string)))
@@ -1373,6 +2001,54 @@
           "+ demo::added"))
         (should-not (oref section hidden))))))
 
+(ert-deftest difftron-magit-diff-dwim-obeys-magit-path-toggle ()
+  (let (selected-paths)
+    (cl-letf
+        (
+         ((symbol-function 'difftron-magit--repo-root)
+          (lambda () "/tmp/repo/"))
+         ((symbol-function 'magit-diff-arguments)
+          (lambda (&rest _) (list nil '("src/lib.rs"))))
+         ((symbol-function 'magit-diff--dwim)
+          (lambda () "HEAD~1..HEAD"))
+         ((symbol-function 'difftron-magit-diff)
+          (lambda (_lhs _rhs paths)
+            (setq selected-paths paths))))
+      (let ((difftron-magit-use-magit-paths t))
+        (difftron-magit-diff-dwim))
+      (should (equal selected-paths '("src/lib.rs")))
+      (let ((difftron-magit-use-magit-paths nil))
+        (difftron-magit-diff-dwim))
+      (should-not selected-paths))))
+
+(ert-deftest difftron-magit-diff-at-point-omits-path-when-toggle-off ()
+  (let (ran-args)
+    (cl-letf
+        (
+         ((symbol-function 'difftron-magit--repo-root)
+          (lambda () "/tmp/repo/"))
+         ((symbol-function 'magit-diff-arguments)
+          (lambda (&rest _) (list nil '("src/other.rs"))))
+         ((symbol-function 'magit-diff--dwim)
+          (lambda () "HEAD~1..HEAD"))
+         ((symbol-function 'difftron-magit--magit-diff-path-at-point)
+          (lambda () "src/lib.rs"))
+         ((symbol-function 'difftron-magit--magit-diff-line-at-point)
+          (lambda () 10))
+         ((symbol-function 'difftron-magit--run-command)
+          (lambda (_default-directory args)
+            (setq ran-args args)
+            difftron-magit-tests--sample-payload))
+         ((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
+      (let ((difftron-magit-use-magit-paths nil))
+        (difftron-magit-diff-at-point)))
+    (should
+     (equal ran-args '("diff" "HEAD~1" "HEAD" "--format" "json")))
+    (with-current-buffer difftron-magit-buffer-name
+      (let ((section (magit-current-section)))
+        (should (equal (oref section type) 'difftron-entity))
+        (should-not (oref section hidden))))))
+
 (ert-deftest difftron-magit-bindings-mode-registers-after-magit-load
     ()
   (when (featurep 'magit-diff)
@@ -1391,7 +2067,8 @@
   (difftron-magit-bindings-mode -1)
   (should-not
    (ignore-errors
-     (transient-get-suffix 'magit-diff "D"))))
+     (transient-get-suffix 'magit-diff "D")))
+  (should-not (difftron-magit--magit-diff-suffix-p "D")))
 
 (ert-deftest difftron-magit-bindings-mode-unregisters-magit-diff-key
     ()
