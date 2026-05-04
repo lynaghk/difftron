@@ -154,7 +154,7 @@
              'transient-value
            'transient-inactive-value)))
       difftron--hierarchy-choices
-      (propertize "|" 'face 'transient-delimiter)))))
+      (propertize " | " 'face 'transient-delimiter)))))
 
 (transient-define-infix difftron--hierarchy-choice-infix ()
   "Cycle Difftron hierarchy."
@@ -162,7 +162,7 @@
   :variable 'difftron--hierarchy
   :format " %k %d %v"
   :key "y"
-  :description "Hierarchy")
+  :description "Cycle hierarchy")
 
 (define-derived-mode
   difftron-mode
@@ -178,19 +178,17 @@
   ()
   "Show commands for `difftron-mode'."
   [
-   ["difftron"
+   ["Difftron"
     ("g" "Refresh" difftron-refresh)
+    ("m" "Toggle commit messages" difftron-toggle-commit-messages)
     ("l" "Select left" difftron-select-left)
-    ("m" "Toggle details" difftron-toggle-commit-messages)
     ("r" "Select right" difftron-select-right)
     ("q" "Quit buffer" quit-window)
-    ("TAB"
-     "Toggle section/details"
-     difftron-toggle-section-or-message)
+    ("TAB" "Toggle section/details" difftron-toggle-section-or-message)
     ("RET" "Visit thing" difftron-visit-thing)]
-   ["Hierarchy"
-    (difftron--hierarchy-choice-infix)]
+   
    ["Visibility"
+    (difftron--hierarchy-choice-infix)
     ("<backtab>" "Cycle all" magit-section-cycle-global)
     ("1" "Level 1" magit-section-show-level-1)
     ("2" "Level 2" magit-section-show-level-2)
@@ -200,6 +198,7 @@
     ("M-2" "All level 2" magit-section-show-level-2-all)
     ("M-3" "All level 3" magit-section-show-level-3-all)
     ("M-4" "All level 4" magit-section-show-level-4-all)]
+   
    ["Movement"
     ("N" "Next commit" difftron-next-commit)
     ("P" "Previous commit" difftron-previous-commit)
