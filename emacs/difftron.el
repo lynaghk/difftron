@@ -880,8 +880,13 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
         (require 'magit-log)
         (require 'magit-diff)
         (let ((magit-buffer-revision rev))
-          (magit-insert-revision-headers)
-          (magit-insert-revision-message)))
+          (save-restriction
+            ;; Magit's revision message inserter moves to `point-max';
+            ;; during lazy section washing that must mean the end of this
+            ;; insertion, not the end of the Difftron buffer.
+            (narrow-to-region (point-min) (point))
+            (magit-insert-revision-headers)
+            (magit-insert-revision-message))))
     (error
      (insert
       (propertize

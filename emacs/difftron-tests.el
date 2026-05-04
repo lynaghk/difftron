@@ -1628,6 +1628,46 @@
          (should
           (oref (difftron-tests--snapshot-section 'lhs) hidden)))))))
 
+(ert-deftest difftron-commit-message-fold-does-not-hide-entity-area ()
+  (difftron-tests--with-revision-repo
+   (lambda (repo parent child parent-subject child-subject)
+     (let
+         (
+          (payload
+           (difftron-tests--payload-with-revisions
+            repo
+            parent
+            child
+            parent-subject
+            child-subject)))
+       (with-temp-buffer
+         (difftron-mode)
+         (setq difftron--default-directory repo)
+         (let ((inhibit-read-only t))
+           (difftron--insert-payload payload))
+         (goto-char (point-min))
+         (search-forward "lhs: ")
+         (difftron-toggle-section-or-message)
+         (let*
+             (
+              (lhs-section (difftron-tests--snapshot-section 'lhs))
+              (message-section
+               (difftron-tests--first-child-section
+                lhs-section
+                'commit-message))
+              (entity-point
+               (save-excursion
+                 (goto-char (point-min))
+                 (search-forward "+ demo::added")
+                 (point))))
+           (should message-section)
+           (magit-section-hide message-section)
+           (should-not
+            (seq-some
+             (lambda (overlay)
+               (overlay-get overlay 'invisible))
+             (overlays-at entity-point)))))))))
+
 (ert-deftest difftron-m-toggles-all-revision-details ()
   (difftron-tests--with-revision-repo
    (lambda (repo parent child parent-subject child-subject)
