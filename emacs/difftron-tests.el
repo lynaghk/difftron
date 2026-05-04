@@ -544,7 +544,7 @@
          :moved (list (difftron-tests--moved-change lhs rhs)))))
     (with-temp-buffer
       (difftron-mode)
-      (setq difftron--grouping 'file)
+      (setq difftron--hierarchy '(file kind))
       (let ((inhibit-read-only t))
         (difftron--insert-payload payload))
       (let*
@@ -595,7 +595,7 @@
           (difftron-tests--moved-modified-change lhs rhs)))))
     (with-temp-buffer
       (difftron-mode)
-      (setq difftron--grouping 'file)
+      (setq difftron--hierarchy '(file kind))
       (let ((inhibit-read-only t))
         (difftron--insert-payload payload))
       (let*
@@ -632,11 +632,10 @@
         (
          (text (buffer-string))
          (root magit-root-section)
-         (kind-section
+         (file-section
           (difftron-tests--first-child-section
            root
-           'difftron-kind))
-         (file-section (car (oref kind-section children)))
+           'difftron-file))
          (entity-section (car (oref file-section children))))
       (should
        (string-match-p
@@ -647,15 +646,12 @@
       (should-not (string-match-p "difftron diff" text))
       (should-not (string-match-p "Grouping:" text))
       (should (derived-mode-p 'magit-section-mode))
-      (should (equal (oref kind-section type) 'difftron-kind))
       (should (equal (oref file-section type) 'difftron-file))
       (should (equal (oref entity-section type) 'difftron-entity))
-      (should (oref kind-section hidden))
       (should (oref file-section hidden))
       (should (oref entity-section hidden))
-      (should (string-match-p "Functions (2)" text))
-      (should (string-match-p "^  src/lib\\.rs (2)$" text))
-      (should (string-match-p "^    M demo::meaning$" text))
+      (should (string-match-p "^src/lib\\.rs (2)$" text))
+      (should (string-match-p "^  M demo::meaning$" text))
       (should (string-match-p "M demo::meaning" text))
       (should (string-match-p "\\+ demo::added" text))
       (should (string-match-p "fn meaning() -> u32" text))
@@ -666,10 +662,10 @@
         "function demo::added() @ /tmp/repo/src/lib.rs:10:1-12:2"
         text)))))
 
-(ert-deftest difftron-renders-kind-grouping-with-files ()
+(ert-deftest difftron-renders-kind-file-hierarchy ()
   (with-temp-buffer
     (difftron-mode)
-    (setq difftron--grouping 'kind)
+    (setq difftron--hierarchy '(kind file))
     (let ((inhibit-read-only t))
       (difftron--insert-payload
        difftron-tests--multi-file-payload))
@@ -693,10 +689,10 @@
         'difftron-level-1-heading))
       (should-not (string-match-p "Grouping:" (buffer-string))))))
 
-(ert-deftest difftron-renders-file-grouping ()
+(ert-deftest difftron-renders-file-kind-hierarchy ()
   (with-temp-buffer
     (difftron-mode)
-    (setq difftron--grouping 'file)
+    (setq difftron--hierarchy '(file kind))
     (let ((inhibit-read-only t))
       (difftron--insert-payload
        difftron-tests--multi-file-payload))
@@ -724,9 +720,57 @@
        (string-match-p "^    \\+ demo::added$" (buffer-string)))
       (should-not (string-match-p "Grouping:" (buffer-string))))))
 
+(ert-deftest difftron-renders-file-only-hierarchy ()
+  (with-temp-buffer
+    (difftron-mode)
+    (setq difftron--hierarchy '(file))
+    (let ((inhibit-read-only t))
+      (difftron--insert-payload
+       difftron-tests--multi-file-payload))
+    (let*
+        (
+         (root magit-root-section)
+         (file-section
+          (difftron-tests--first-child-section
+           root
+           'difftron-file))
+         (entity-section (car (oref file-section children))))
+      (should (equal (oref file-section type) 'difftron-file))
+      (should (equal (oref entity-section type) 'difftron-entity))
+      (should-not
+       (difftron-tests--first-child-section file-section 'difftron-kind))
+      (should (string-match-p "^src/a\\.rs (1)$" (buffer-string)))
+      (should
+       (string-match-p "^  \\+ demo::added$" (buffer-string))))))
+
+(ert-deftest difftron-renders-kind-only-hierarchy ()
+  (with-temp-buffer
+    (difftron-mode)
+    (setq difftron--hierarchy '(kind))
+    (let ((inhibit-read-only t))
+      (difftron--insert-payload
+       difftron-tests--multi-file-payload))
+    (let*
+        (
+         (root magit-root-section)
+         (kind-section
+          (difftron-tests--first-child-section
+           root
+           'difftron-kind))
+         (entity-section (car (oref kind-section children))))
+      (should (equal (oref kind-section type) 'difftron-kind))
+      (should (equal (oref entity-section type) 'difftron-entity))
+      (should-not
+       (difftron-tests--first-child-section root 'difftron-file))
+      (should
+       (string-match-p "^Functions (2)$" (buffer-string)))
+      (should
+       (string-match-p "^  \\+ demo::added$" (buffer-string))))))
+
 (ert-deftest difftron-renders-kind-labels-from-payload ()
   (with-temp-buffer
     (difftron-mode)
+    (setq difftron--hierarchy '(kind))
     (let ((inhibit-read-only t))
       (difftron--insert-payload
        (difftron-tests--diff-payload
@@ -740,13 +784,13 @@
           "(def message \"hello\")")))))
     (should (string-match-p "^Vars (1)$" (buffer-string)))))
 
-(ert-deftest difftron-default-grouping-is-file ()
+(ert-deftest difftron-default-hierarchy-is-file ()
   (should
-   (eq
+   (equal
     (eval
-     (car (get 'difftron-default-grouping 'standard-value))
+     (car (get 'difftron-default-hierarchy 'standard-value))
      t)
-    'file)))
+    '(file))))
 
 (ert-deftest difftron-scroll-section-after-navigation-defaults-to-true ()
   (should
@@ -759,8 +803,8 @@
      t)
     t)))
 
-(ert-deftest difftron-display-buffer-uses-default-grouping ()
-  (let ((difftron-default-grouping 'file))
+(ert-deftest difftron-display-buffer-uses-default-hierarchy ()
+  (let ((difftron-default-hierarchy '(file)))
     (cl-letf
 	(((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
       (difftron--display-buffer
@@ -779,14 +823,12 @@
             (cadr
              (seq-filter
               (lambda (section)
-                (eq (oref section type) 'difftron-file))
+		(eq (oref section type) 'difftron-file))
               (oref root children))))
-           (kind-section (car (oref file-section children)))
-           (entity-section (car (oref kind-section children))))
-        (should (eq difftron--grouping 'file))
+           (entity-section (car (oref file-section children))))
+        (should (equal difftron--hierarchy '(file)))
         (should-not (string-match-p "Grouping:" (buffer-string)))
         (should-not (oref file-section hidden))
-        (should-not (oref kind-section hidden))
         (should (oref entity-section hidden))
         (should
          (difftron-tests--section-has-invisible-overlay-p
@@ -831,6 +873,24 @@
    (eq
     (lookup-key difftron-mode-map (kbd "p"))
     #'difftron-previous-section)))
+
+(ert-deftest difftron-binds-hierarchy-cycle ()
+  (should
+   (eq
+    (lookup-key difftron-mode-map (kbd "y"))
+    #'difftron-cycle-hierarchy))
+  (should-not
+   (lookup-key difftron-mode-map (kbd "t")))
+  (should-not
+   (lookup-key difftron-mode-map (kbd "s")))
+  (should
+   (eq
+    (lookup-key difftron-mode-map (kbd "h"))
+    #'difftron-dispatch))
+  (should
+   (eq
+    (lookup-key difftron-mode-map (kbd "?"))
+    #'difftron-dispatch)))
 
 (ert-deftest difftron-next-section-scrolls-to-top-when-enabled ()
   (let ((difftron-scroll-section-after-navigation t)
@@ -1590,7 +1650,7 @@
        :type 'user-error))))
 
 (ert-deftest difftron-refresh-preserves-magit-display-state ()
-  (let ((difftron-default-grouping 'file))
+  (let ((difftron-default-hierarchy '(file)))
     (with-temp-buffer
       (rename-buffer difftron-buffer-name t)
       (difftron-mode)
@@ -1598,7 +1658,7 @@
       (setq difftron--command-args '("diff" "HEAD~1" "HEAD"))
       (setq difftron--payload
             difftron-tests--refresh-payload)
-      (setq difftron--grouping 'kind)
+      (setq difftron--hierarchy '(kind file))
       (let ((inhibit-read-only t))
         (difftron--insert-payload
          difftron-tests--refresh-payload))
@@ -1666,7 +1726,7 @@
                   new-entity-section-b
                   new-file-section-c
                   new-entity-section-c))))
-            (should (eq difftron--grouping 'kind))
+            (should (equal difftron--hierarchy '(kind file)))
             (should
              (equal
               (car actual-visibility)
@@ -1869,7 +1929,7 @@
       (should
        (eq
         (get-text-property (match-beginning 0) 'font-lock-face)
-        'difftron-level-2-heading))
+        'difftron-level-1-heading))
       (search-forward "fn added() {}")
       (should
        (eq
@@ -1880,7 +1940,7 @@
       (should
        (eq
         (get-text-property (match-beginning 0) 'font-lock-face)
-        'difftron-level-2-heading))
+        'difftron-level-1-heading))
       (search-forward "fn deleted() {}")
       (should
        (eq
@@ -1985,34 +2045,99 @@
     (should
      (equal ran-args '("diff" "HEAD" "/tmp/repo/" "--format" "json")))))
 
-(ert-deftest difftron-cycle-grouping-redraws-buffer ()
+(ert-deftest difftron-cycle-hierarchy-order ()
+  (let ((difftron-default-hierarchy '(file)))
+    (with-temp-buffer
+      (difftron-mode)
+      (setq difftron--default-directory "/tmp/repo/")
+      (setq difftron--command-args '("diff" "HEAD~1" "HEAD"))
+      (setq difftron--payload
+	    difftron-tests--multi-file-payload)
+      (setq difftron--hierarchy '(file))
+      (cl-letf
+	  (((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
+	(difftron-cycle-hierarchy)
+	(should (equal difftron-default-hierarchy '(kind)))
+	(should (equal difftron--hierarchy '(kind)))
+	(difftron-cycle-hierarchy)
+	(should (equal difftron-default-hierarchy '(file kind)))
+	(should (equal difftron--hierarchy '(file kind)))
+	(difftron-cycle-hierarchy)
+	(should (equal difftron-default-hierarchy '(kind file)))
+	(should (equal difftron--hierarchy '(kind file)))
+	(difftron-cycle-hierarchy)
+	(should (equal difftron-default-hierarchy '(file)))
+	(should (equal difftron--hierarchy '(file)))))))
+
+(ert-deftest difftron-cycle-hierarchy-redraws-buffer ()
+  (let ((difftron-default-hierarchy '(file)))
+    (with-temp-buffer
+      (difftron-mode)
+      (setq difftron--default-directory "/tmp/repo/")
+      (setq difftron--command-args '("diff" "HEAD~1" "HEAD"))
+      (setq difftron--payload
+	    difftron-tests--multi-file-payload)
+      (setq difftron--hierarchy '(file))
+      (cl-letf
+	  (((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
+	(difftron-cycle-hierarchy)
+	(difftron-cycle-hierarchy))
+      (with-current-buffer difftron-buffer-name
+	(let*
+            (
+             (root magit-root-section)
+             (file-section
+              (difftron-tests--first-child-section
+               root
+               'difftron-file))
+             (kind-section (car (oref file-section children)))
+             (entity-section (car (oref kind-section children)))
+             (text (buffer-string)))
+          (should (equal difftron--hierarchy '(file kind)))
+          (should-not (string-match-p "Grouping:" text))
+          (should-not (oref file-section hidden))
+          (should-not (oref kind-section hidden))
+          (should (oref entity-section hidden)))))))
+
+(ert-deftest difftron-dispatch-has-hierarchy-section ()
+  (should (transient-get-suffix 'difftron-dispatch "y"))
+  (should-not
+   (ignore-errors
+     (transient-get-suffix 'difftron-dispatch "t")))
+  (should-not
+   (ignore-errors
+     (transient-get-suffix 'difftron-dispatch "s"))))
+
+(ert-deftest difftron-hierarchy-infix-highlights-current-choice ()
   (with-temp-buffer
     (difftron-mode)
-    (setq difftron--default-directory "/tmp/repo/")
-    (setq difftron--command-args '("diff" "HEAD~1" "HEAD"))
-    (setq difftron--payload
-	  difftron-tests--multi-file-payload)
-    (setq difftron--grouping 'kind)
-    (cl-letf
-	(((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
-      (difftron-cycle-grouping))
-    (should (eq difftron-default-grouping 'file))
-    (should (eq difftron--grouping 'file))
-    (with-current-buffer difftron-buffer-name
-      (let*
-          (
-           (root magit-root-section)
-           (file-section
-            (difftron-tests--first-child-section
-             root
-             'difftron-file))
-           (kind-section (car (oref file-section children)))
-           (entity-section (car (oref kind-section children)))
-           (text (buffer-string)))
-        (should-not (string-match-p "Grouping:" text))
-        (should-not (oref file-section hidden))
-        (should-not (oref kind-section hidden))
-        (should (oref entity-section hidden))))))
+    (setq difftron--hierarchy '(file kind))
+    (let*
+        (
+         (obj
+          (difftron--hierarchy-infix
+           :variable 'difftron--hierarchy))
+         (value (transient-format-value obj)))
+      (should (string-match-p "file > type" value))
+      (should
+       (eq
+        (get-text-property
+         (string-match "file > type" value)
+         'face
+         value)
+        'transient-value))
+      (should
+       (eq
+        (get-text-property
+         (string-match "type > file" value)
+         'face
+         value)
+        'transient-inactive-value)))))
+
+(ert-deftest difftron-dispatch-transient-setup-succeeds ()
+  (with-temp-buffer
+    (difftron-mode)
+    (transient-setup 'difftron-dispatch)))
 
 (ert-deftest difftron-shortens-path-backed-diff-labels ()
   (with-temp-buffer
@@ -2089,21 +2214,21 @@
           (with-current-buffer target-buffer
             (insert
              (mapconcat
-              (lambda (_line)
+	      (lambda (_line)
                 "abcdefghijklmnopqrstuvwxyz0123456789")
-              (number-sequence 1 80)
-              "\n")))
+	      (number-sequence 1 80)
+	      "\n")))
           (cl-letf
-              (
-               ((symbol-function 'magit-find-file-noselect)
+	      (
+	       ((symbol-function 'magit-find-file-noselect)
                 (lambda (rev file)
                   (setq visited-rev rev)
                   (setq visited-file file)
                   target-buffer))
-               ((symbol-function 'pop-to-buffer-same-window)
+	       ((symbol-function 'pop-to-buffer-same-window)
                 (lambda (buffer &rest _)
                   (setq shown-buffer buffer)))
-               ((symbol-function 'magit-diff-visit-file--setup)
+	       ((symbol-function 'magit-diff-visit-file--setup)
                 (lambda (buffer pos)
                   (with-current-buffer buffer
                     (goto-char pos)
@@ -2153,7 +2278,7 @@
            (with-temp-buffer
              (difftron-mode)
              (let ((inhibit-read-only t))
-               (difftron--insert-payload payload))
+	       (difftron--insert-payload payload))
              (goto-char (point-min))
              (search-forward "41")
              (goto-char (match-beginning 0))
@@ -2199,7 +2324,7 @@
            (with-temp-buffer
              (difftron-mode)
              (let ((inhibit-read-only t))
-               (difftron--insert-payload payload))
+	       (difftron--insert-payload payload))
              (goto-char (point-min))
              (search-forward "42")
              (goto-char (match-beginning 0))
@@ -2262,7 +2387,7 @@
            (with-temp-buffer
              (difftron-mode)
              (let ((inhibit-read-only t))
-               (difftron--insert-payload payload))
+	       (difftron--insert-payload payload))
              (goto-char (point-min))
              (search-forward "new line")
              (difftron-visit-thing))))))
@@ -2303,7 +2428,7 @@
            (with-temp-buffer
              (difftron-mode)
              (let ((inhibit-read-only t))
-               (difftron--insert-payload payload))
+	       (difftron--insert-payload payload))
              (goto-char (point-min))
              (search-forward "M demo::meaning")
              (goto-char (match-beginning 0))

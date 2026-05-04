@@ -52,13 +52,15 @@
   :type 'string
   :group 'difftron)
 
-(defcustom difftron-default-grouping 'file
-  "Default top-level grouping for difftron buffers."
+(defcustom difftron-default-hierarchy '(file)
+  "Default hierarchy grouping for difftron buffers."
   :type
   '
   (choice
-   (const :tag "Entity then file" kind)
-   (const :tag "File then entity" file))
+   (const :tag "File" (file))
+   (const :tag "Type" (kind))
+   (const :tag "File then type" (file kind))
+   (const :tag "Type then file" (kind file)))
   :group 'difftron)
 
 (defcustom difftron-use-magit-paths t
@@ -88,7 +90,6 @@
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map magit-section-mode-map)
     (define-key map (kbd "g") #'difftron-refresh)
-    (define-key map (kbd "f") #'difftron-cycle-grouping)
     (define-key map (kbd "h") #'difftron-dispatch)
     (define-key map (kbd "?") #'difftron-dispatch)
     (define-key map (kbd "l") #'difftron-select-left)
@@ -97,6 +98,7 @@
      (kbd "m")
      #'difftron-toggle-commit-messages)
     (define-key map (kbd "r") #'difftron-select-right)
+    (define-key map (kbd "y") #'difftron-cycle-hierarchy)
     (define-key map (kbd "n") #'difftron-next-section)
     (define-key map (kbd "p") #'difftron-previous-section)
     (define-key map (kbd "N") #'difftron-next-commit)
@@ -114,17 +116,62 @@
 (defvar-local difftron--payload nil)
 (defvar-local difftron--entity-kind-order nil)
 (defvar-local difftron--entity-kinds nil)
-(defvar-local difftron--grouping nil
-  "Current grouping mode for the difftron buffer.")
+(defvar-local difftron--hierarchy nil
+  "Current hierarchy grouping for the difftron buffer.")
 (defvar-local difftron--temporary-expanded-entity nil
   "Temporarily expanded entity section and its previous visibility state.")
+
+(defconst difftron--hierarchy-choices
+  '((file) (kind) (file kind) (kind file)))
+
+(defclass difftron--hierarchy-infix (transient-lisp-variable)
+  ()
+  "Transient infix for cycling the Difftron hierarchy.")
+
+(cl-defmethod transient-infix-read ((obj difftron--hierarchy-infix))
+  "Return the next valid hierarchy value for OBJ."
+  (difftron--next-hierarchy))
+
+(cl-defmethod transient-infix-set
+  ((obj difftron--hierarchy-infix) value)
+  "Set OBJ's hierarchy to VALUE."
+  (difftron--set-hierarchy value)
+  (oset obj value value))
+
+(cl-defmethod transient-format-value ((obj difftron--hierarchy-infix))
+  "Format OBJ's hierarchy choices."
+  (let*
+      (
+       (value difftron--hierarchy))
+    (format
+     (propertize "(%s)" 'face 'transient-delimiter)
+     (mapconcat
+      (lambda (choice)
+        (propertize
+         (difftron--hierarchy-label choice)
+         'face
+         (if (equal choice value)
+             'transient-value
+           'transient-inactive-value)))
+      difftron--hierarchy-choices
+      (propertize "|" 'face 'transient-delimiter)))))
+
+(transient-define-infix difftron--hierarchy-choice-infix ()
+  "Cycle Difftron hierarchy."
+  :class 'difftron--hierarchy-infix
+  :variable 'difftron--hierarchy
+  :format " %k %d %v"
+  :key "y"
+  :description "Hierarchy")
 
 (define-derived-mode
   difftron-mode
   magit-section-mode
   "difftron"
   "Major mode for difftron results."
-  (setq-local truncate-lines t))
+  (setq-local truncate-lines t)
+  (setq-local difftron--hierarchy
+              difftron-default-hierarchy))
 
 (transient-define-prefix
   difftron-dispatch
@@ -133,7 +180,6 @@
   [
    ["difftron"
     ("g" "Refresh" difftron-refresh)
-    ("f" "Cycle grouping" difftron-cycle-grouping)
     ("l" "Select left" difftron-select-left)
     ("m" "Toggle details" difftron-toggle-commit-messages)
     ("r" "Select right" difftron-select-right)
@@ -142,6 +188,8 @@
      "Toggle section/details"
      difftron-toggle-section-or-message)
     ("RET" "Visit thing" difftron-visit-thing)]
+   ["Hierarchy"
+    (difftron--hierarchy-choice-infix)]
    ["Visibility"
     ("<backtab>" "Cycle all" magit-section-cycle-global)
     ("1" "Level 1" magit-section-show-level-1)
@@ -249,23 +297,50 @@ working tree rooted at the current repository."
      "No difftron command is associated with this buffer"))
   (magit-refresh-buffer))
 
-(defun difftron-cycle-grouping ()
-  "Cycle the difftron grouping mode for the current buffer."
+(defun difftron-cycle-hierarchy ()
+  "Cycle the difftron hierarchy grouping."
   (interactive)
   (unless difftron--payload
     (user-error
      "No difftron payload is associated with this buffer"))
-  (setq difftron-default-grouping
-        (pcase difftron--grouping
-          ('kind 'file)
-          (_ 'kind)))
-  (setq difftron--grouping difftron-default-grouping)
-  (difftron--display-buffer
-   difftron--default-directory
-   difftron--command-args
-   difftron--payload)
-  (with-current-buffer difftron-buffer-name
-    (difftron--show-entity-tree-level-3)))
+  (difftron--set-hierarchy (difftron--next-hierarchy)))
+
+(defun difftron--set-hierarchy (hierarchy)
+  "Set HIERARCHY and redraw the current difftron buffer."
+  (setq difftron-default-hierarchy hierarchy)
+  (setq difftron--hierarchy hierarchy)
+  (when difftron--payload
+    (difftron--display-buffer
+     difftron--default-directory
+     difftron--command-args
+     difftron--payload)
+    (with-current-buffer difftron-buffer-name
+      (difftron--show-entity-tree-level-3))))
+
+(defun difftron--next-hierarchy ()
+  "Return the next hierarchy choice."
+  (let*
+      (
+       (index
+        (cl-position
+         difftron--hierarchy
+         difftron--hierarchy-choices
+         :test #'equal)))
+    (nth
+     (mod
+      (1+ (or index -1))
+      (length difftron--hierarchy-choices))
+     difftron--hierarchy-choices)))
+
+(defun difftron--hierarchy-label (hierarchy)
+  "Return the transient display label for HIERARCHY."
+  (mapconcat
+   (lambda (grouping)
+     (pcase grouping
+       ('file "file")
+       ('kind "type")))
+   hierarchy
+   " > "))
 
 (defun difftron-select-left ()
   "Select a new left-hand snapshot and refresh the diff."
@@ -621,10 +696,11 @@ DEFAULT-ARG provides the initial path when it names a path."
     (oref magit-root-section children))))
 
 (defun difftron--show-entity-tree-level-3 ()
-  "Show the entity tree to level 3 while leaving snapshots collapsed."
+  "Show grouping levels while leaving snapshots and entity bodies collapsed."
   (when-let ((section (difftron--first-entity-tree-section)))
     (goto-char (oref section start))
-    (magit-section-show-level-3))
+    (magit-section-show-level
+     (1+ (length (difftron--effective-hierarchy)))))
   (difftron--hide-snapshot-sections))
 
 (defun difftron--first-entity-tree-section ()
@@ -838,8 +914,8 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
         (difftron-mode)
-        (setq difftron--grouping
-              difftron-default-grouping)
+        (setq difftron--hierarchy
+              difftron-default-hierarchy)
         (setq difftron--default-directory
               repo-default-directory)
         (setq difftron--command-args args)
@@ -1017,73 +1093,59 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
   (insert (propertize title 'font-lock-face 'magit-section-heading))
   (insert "\n\n"))
 
-(defun difftron--insert-kind-groups (items)
-  "Insert ITEMS grouped by entity kind."
-  (let ((groups (difftron--group-items-by-kind items)))
-    (if groups
-        (dolist (group groups)
-          (difftron--insert-kind-file-group
-           (car group)
-           (cdr group)
-           0))
-      (insert "No entities\n"))))
-
-(defun difftron--insert-file-groups (items)
-  "Insert ITEMS grouped by file."
-  (let ((groups (difftron--group-items-by-file items)))
-    (if groups
-        (dolist (group groups)
-          (difftron--insert-file-kind-group
-           (car group)
-           (cdr group)
-           0))
-      (insert "No entities\n"))))
-
-(defun difftron--insert-kind-file-group (kind items depth)
-  "Insert a kind heading for KIND and file groups for ITEMS at DEPTH."
+(defun difftron--insert-kind-group
+    (kind items depth remaining-hierarchy)
+  "Insert a kind heading for KIND and ITEMS at DEPTH.
+REMAINING-HIERARCHY describes nested grouping below this section."
   (magit-insert-section
       (difftron-kind kind t)
     (magit-insert-heading
       (difftron--kind-heading kind items depth))
-    (dolist (group (difftron--group-items-by-file items))
-      (difftron--insert-file-entity-group
-       (car group)
-       (cdr group)
-       (1+ depth)))
+    (difftron--insert-hierarchy
+     items
+     remaining-hierarchy
+     (1+ depth))
     (insert "\n")))
 
-(defun difftron--insert-file-kind-group (file items depth)
-  "Insert a file heading for FILE and kind groups for ITEMS at DEPTH."
+(defun difftron--insert-file-group
+    (file items depth remaining-hierarchy)
+  "Insert a file heading for FILE and ITEMS at DEPTH.
+REMAINING-HIERARCHY describes nested grouping below this section."
   (magit-insert-section
       (difftron-file file t)
     (magit-insert-heading
       (difftron--file-heading file items depth))
-    (dolist (group (difftron--group-items-by-kind items))
-      (difftron--insert-kind-entity-group
-       (car group)
-       (cdr group)
-       (1+ depth)))
+    (difftron--insert-hierarchy
+     items
+     remaining-hierarchy
+     (1+ depth))
     (insert "\n")))
 
-(defun difftron--insert-kind-entity-group (kind items depth)
-  "Insert a kind heading for KIND and entity ITEMS at DEPTH."
-  (magit-insert-section
-      (difftron-kind kind t)
-    (magit-insert-heading
-      (difftron--kind-heading kind items depth))
-    (dolist (item items)
-      (difftron--insert-item item (1+ depth)))
-    (insert "\n")))
+(defun difftron--insert-hierarchy
+    (items hierarchy depth)
+  "Insert ITEMS under HIERARCHY starting at DEPTH."
+  (pcase (car hierarchy)
+    ('file
+     (dolist (group (difftron--group-items-by-file items))
+       (difftron--insert-file-group
+        (car group)
+        (cdr group)
+        depth
+        (cdr hierarchy))))
+    ('kind
+     (dolist (group (difftron--group-items-by-kind items))
+       (difftron--insert-kind-group
+        (car group)
+        (cdr group)
+        depth
+        (cdr hierarchy))))
+    (_
+     (dolist (item items)
+       (difftron--insert-item item depth)))))
 
-(defun difftron--insert-file-entity-group (file items depth)
-  "Insert a file heading for FILE and entity ITEMS at DEPTH."
-  (magit-insert-section
-      (difftron-file file t)
-    (magit-insert-heading
-      (difftron--file-heading file items depth))
-    (dolist (item items)
-      (difftron--insert-item item (1+ depth)))
-    (insert "\n")))
+(defun difftron--effective-hierarchy ()
+  "Return the active hierarchy."
+  difftron--hierarchy)
 
 (defun difftron--kind-heading (kind items depth)
   "Return the heading text for KIND containing ITEMS at DEPTH."
@@ -1660,10 +1722,13 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
     (_ nil)))
 
 (defun difftron--insert-items (items)
-  "Insert ITEMS using the current grouping mode."
-  (pcase difftron--grouping
-    ('file (difftron--insert-file-groups items))
-    (_ (difftron--insert-kind-groups items))))
+  "Insert ITEMS using the current hierarchy."
+  (if items
+      (difftron--insert-hierarchy
+       items
+       (difftron--effective-hierarchy)
+       0)
+    (insert "No entities\n")))
 
 (defun difftron--indent (depth)
   "Return indentation for section DEPTH."
