@@ -3,9 +3,9 @@
 Difftron is a code diff tool that matches semantic entities (structs, functions, etc.) before doing a line-based diff.
 See [this newsletter](https://kevinlynagh.com/newsletter/2026_04_overthinking/#structural-diffing) for motivation and a survey of prior art.
 
-Difftron has CLI for listing entities and diffing snapshots, but the primary UI is an Emacs [Magit](https://magit.vc/)-style interface:
+Difftron has CLI for listing entities and diffing snapshots, but the primary UI is an Emacs [Magit](https://magit.vc/)-style interface.
 
-![](TODO screenshot)
+[Check out the demo video](https://kevinlynagh.com/misc/2026_05_04_difftron_demo.mp4)
 
 Difftron diffs "snapshots", which can be refs in a git repository, folders, or individual files.
 
