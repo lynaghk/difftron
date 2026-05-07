@@ -2548,6 +2548,301 @@
     (should (equal (plist-get visit :file) "src/lib.rs"))
     (should (equal (plist-get visit :line) 20))))
 
+(ert-deftest difftron-checkout-visit-bindings-match-magit ()
+  (should
+   (eq
+    (lookup-key difftron-mode-map (kbd "C-<return>"))
+    #'difftron-visit-thing-in-checkout))
+  (should
+   (eq
+    (lookup-key difftron-mode-map (kbd "C-j"))
+    #'difftron-visit-thing-in-checkout)))
+
+(defun difftron-tests--with-checkout-visit-capture
+    (diff-payload list-payload fn)
+  "Call FN while capturing checkout file visits."
+  (let
+      (
+       run-args
+       visited-file
+       shown-buffer
+       (target-buffer (generate-new-buffer " *difftron-checkout-visited*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer target-buffer
+            (insert
+             (mapconcat
+	      (lambda (_line)
+                "abcdefghijklmnopqrstuvwxyz0123456789")
+	      (number-sequence 1 80)
+	      "\n")))
+          (cl-letf
+	      (
+	       ((symbol-function 'difftron--run-command)
+                (lambda (_default-directory args)
+                  (push args run-args)
+                  (pcase (car args)
+                    ("diff" diff-payload)
+                    ("list" list-payload)
+                    (_ (error "Unexpected difftron command: %S" args)))))
+	       ((symbol-function 'find-file-noselect)
+                (lambda (file &rest _)
+                  (setq visited-file file)
+                  target-buffer))
+	       ((symbol-function 'pop-to-buffer-same-window)
+                (lambda (buffer &rest _)
+                  (setq shown-buffer buffer))))
+            (funcall fn)
+            (with-current-buffer target-buffer
+              (list
+               :run-args (nreverse run-args)
+               :file visited-file
+               :line (line-number-at-pos)
+               :column (current-column)
+               :shown-buffer-name (buffer-name shown-buffer)))))
+      (kill-buffer target-buffer))))
+
+(ert-deftest difftron-control-enter-visits-current-checkout-entity-line ()
+  (let*
+      (
+       (base
+        (difftron-tests--entity
+         "demo::meaning"
+         "function"
+         "/tmp/repo/src/lib.rs"
+         "src/lib.rs"
+         "line 1\nold line\nline 3"
+         :start-line 10))
+       (topic
+        (difftron-tests--entity
+         "demo::meaning"
+         "function"
+         "/tmp/repo/src/lib.rs"
+         "src/lib.rs"
+         "line 1\nright line\nline 3"
+         :start-line 20))
+       (current
+        (difftron-tests--entity
+         "demo::meaning"
+         "function"
+         "/tmp/repo/src/lib.rs"
+         "src/lib.rs"
+         "line 1\ncurrent line\npadding\nline 3"
+         :start-line 30))
+       (display-change
+        (difftron-tests--modified-change
+         "src/lib.rs"
+         base
+         topic
+         "old"
+         "right"))
+       (checkout-change
+        (list
+         :path "src/lib.rs"
+         :lhs base
+         :rhs current
+         :diff
+         (list
+          :rows
+          (list
+           (list
+            :kind "replaced_code"
+            :left
+            (list
+             :line_number 2
+             :text "old line"
+             :segments
+             (list (list :text "old line" :kind "novel")))
+            :right
+            (list
+             :line_number 4
+             :text "line 3"
+             :segments
+             (list (list :text "line 3" :kind "context"))))))))
+       (display-payload
+	(difftron-tests--diff-payload
+	 :lhs-rev "base-rev"
+	 :rhs-rev "topic-rev"
+	 :modified (list display-change)))
+       (checkout-payload
+	(difftron-tests--diff-payload
+	 :lhs-rev "base-rev"
+	 :rhs-label "/tmp/repo"
+	 :rhs-rev nil
+	 :modified (list checkout-change)))
+       (visit
+	(difftron-tests--with-checkout-visit-capture
+	 checkout-payload
+	 nil
+	 (lambda ()
+           (with-temp-buffer
+             (difftron-mode)
+             (setq difftron--default-directory "/tmp/repo/")
+             (setq difftron--payload display-payload)
+             (let ((inhibit-read-only t))
+	       (difftron--insert-payload display-payload))
+             (goto-char (point-min))
+             (search-forward "old line")
+             (goto-char (match-beginning 0))
+             (difftron-visit-thing-in-checkout))))))
+    (should
+     (equal
+      (car (plist-get visit :run-args))
+      '("diff" "base-rev" "." "--format" "json")))
+    (should (equal (plist-get visit :file) "/tmp/repo/src/lib.rs"))
+    (should (equal (plist-get visit :line) 33))
+    (should (equal (plist-get visit :shown-buffer-name)
+		   " *difftron-checkout-visited*"))))
+
+(ert-deftest difftron-control-enter-follows-moved-entity-to-checkout ()
+  (let*
+      (
+       (old
+        (difftron-tests--entity
+         "demo::meaning"
+         "function"
+         "/tmp/repo/src/old.rs"
+         "src/old.rs"
+         "fn meaning() {}"
+         :start-line 5))
+       (historical-new
+        (difftron-tests--entity
+         "demo::meaning"
+         "function"
+         "/tmp/repo/src/new.rs"
+         "src/new.rs"
+         "fn meaning() {}"
+         :start-line 9))
+       (current
+        (difftron-tests--entity
+         "demo::meaning"
+         "function"
+         "/tmp/repo/src/current.rs"
+         "src/current.rs"
+         "fn meaning() {}"
+         :start-line 12))
+       (display-payload
+        (difftron-tests--diff-payload
+         :lhs-rev "base-rev"
+         :rhs-rev "topic-rev"
+         :moved
+         (list (difftron-tests--moved-change old historical-new))))
+       (checkout-payload
+        (difftron-tests--diff-payload
+         :lhs-rev "base-rev"
+         :moved
+         (list (difftron-tests--moved-change old current))))
+       (visit
+        (difftron-tests--with-checkout-visit-capture
+         checkout-payload
+         nil
+         (lambda ()
+           (with-temp-buffer
+             (difftron-mode)
+             (setq difftron--default-directory "/tmp/repo/")
+             (setq difftron--payload display-payload)
+             (let ((inhibit-read-only t))
+	       (difftron--insert-payload display-payload))
+             (goto-char (point-min))
+             (search-forward "moved to")
+             (goto-char (line-beginning-position))
+             (difftron-visit-thing-in-checkout))))))
+    (should (equal (plist-get visit :file) "/tmp/repo/src/current.rs"))
+    (should (equal (plist-get visit :line) 12))))
+
+(ert-deftest difftron-control-enter-errors-when-entity-is-deleted-in-checkout ()
+  (let*
+      (
+       (entity
+        (difftron-tests--entity
+         "demo::meaning"
+         "function"
+         "/tmp/repo/src/lib.rs"
+         "src/lib.rs"
+         "fn meaning() {}"))
+       (display-payload
+        (difftron-tests--diff-payload
+         :lhs-rev "base-rev"
+         :rhs-rev "topic-rev"
+         :deleted (list entity)))
+       (checkout-payload
+        (difftron-tests--diff-payload
+         :lhs-rev "base-rev"
+         :deleted (list entity))))
+    (difftron-tests--with-checkout-visit-capture
+     checkout-payload
+     nil
+     (lambda ()
+       (with-temp-buffer
+         (difftron-mode)
+         (setq difftron--default-directory "/tmp/repo/")
+         (setq difftron--payload display-payload)
+         (let ((inhibit-read-only t))
+	   (difftron--insert-payload display-payload))
+         (goto-char (point-min))
+         (search-forward "- demo::meaning")
+         (goto-char (match-beginning 0))
+         (should-error
+          (difftron-visit-thing-in-checkout)
+          :type 'user-error))))))
+
+(ert-deftest difftron-control-enter-falls-back-to-list-for-unchanged-entity ()
+  (let*
+      (
+       (historical
+        (difftron-tests--entity
+         "demo::meaning"
+         "function"
+         "/tmp/repo/src/lib.rs"
+         "src/lib.rs"
+         "fn meaning() {}"
+         :start-line 8))
+       (current
+        (difftron-tests--entity
+         "demo::meaning"
+         "function"
+         "/tmp/repo/src/lib.rs"
+         "src/lib.rs"
+         "fn meaning() {}"
+         :start-line 18))
+       (display-payload
+        (difftron-tests--diff-payload
+         :lhs-rev "base-rev"
+         :rhs-rev "topic-rev"
+         :added (list historical)))
+       (checkout-payload
+        (difftron-tests--diff-payload
+         :lhs-rev "topic-rev"))
+       (list-payload
+        (list
+         :command "list"
+         :entity_kind_order difftron-tests--entity-kind-order
+         :entity_kinds difftron-tests--entity-kinds
+         :snapshot (difftron-tests--directory-snapshot "/tmp/repo")
+         :entities (list current)))
+       (visit
+        (difftron-tests--with-checkout-visit-capture
+         checkout-payload
+         list-payload
+         (lambda ()
+           (with-temp-buffer
+             (difftron-mode)
+             (setq difftron--default-directory "/tmp/repo/")
+             (setq difftron--payload display-payload)
+             (let ((inhibit-read-only t))
+	       (difftron--insert-payload display-payload))
+             (goto-char (point-min))
+             (search-forward "+ demo::meaning")
+             (goto-char (match-beginning 0))
+             (difftron-visit-thing-in-checkout))))))
+    (should
+     (equal
+      (plist-get visit :run-args)
+      '(("diff" "topic-rev" "." "--format" "json")
+	("list" "." "--format" "json"))))
+    (should (equal (plist-get visit :file) "/tmp/repo/src/lib.rs"))
+    (should (equal (plist-get visit :line) 18))))
+
 (ert-deftest difftron-dwim-endpoints-from-commit ()
   (should
    (equal

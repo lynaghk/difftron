@@ -108,6 +108,11 @@
      (kbd "TAB")
      #'difftron-toggle-section-or-message)
     (define-key map (kbd "RET") #'difftron-visit-thing)
+    (define-key
+     map
+     (kbd "C-<return>")
+     #'difftron-visit-thing-in-checkout)
+    (define-key map (kbd "C-j") #'difftron-visit-thing-in-checkout)
     map)
   "Keymap for `difftron-mode'.")
 
@@ -185,7 +190,8 @@
     ("r" "Select right" difftron-select-right)
     ("q" "Quit buffer" quit-window)
     ("TAB" "Toggle section/details" difftron-toggle-section-or-message)
-    ("RET" "Visit thing" difftron-visit-thing)]
+    ("RET" "Visit thing" difftron-visit-thing)
+    ("C-<return>" "Visit checkout" difftron-visit-thing-in-checkout)]
    
    ["Visibility"
     (difftron--hierarchy-choice-infix)
@@ -899,6 +905,299 @@ DEFAULT-ARG provides the initial path when it names a path."
 	   (item (oref section value)))
           (difftron--visit-item item)
         (magit-section-toggle (magit-current-section))))))
+
+(defun difftron-visit-thing-in-checkout ()
+  "Visit the entity at point in the current checkout."
+  (interactive)
+  (if-let ((context (difftron--checkout-context-at-point)))
+      (difftron--visit-checkout-context context)
+    (user-error
+     "No Difftron entity at point to visit in current checkout")))
+
+(defun difftron--checkout-context-at-point ()
+  "Return checkout visit context for point, if any."
+  (or
+   (difftron--checkout-context-for-source-at-point)
+   (difftron--checkout-context-for-section-at-point)))
+
+(defun difftron--checkout-context-for-source-at-point ()
+  "Return checkout context for source text at point, if any."
+  (when-let
+      (
+       (source (difftron--source-location-at-point))
+       (snapshot (plist-get source :snapshot))
+       (entity (plist-get source :entity))
+       (line (plist-get source :line)))
+    (list
+     :snapshot snapshot
+     :entity entity
+     :line line
+     :column (plist-get source :column)
+     :row (difftron--entity-relative-row entity line))))
+
+(defun difftron--checkout-context-for-section-at-point ()
+  "Return checkout context for the entity section at point, if any."
+  (when-let*
+      (
+       (section (difftron--entity-section-at-point))
+       (item (oref section value))
+       (side (difftron--default-side-for-item item))
+       (entity (difftron--entity-for-item-side item side))
+       (snapshot (difftron--snapshot-for-side side)))
+    (let
+        (
+         (line (or (plist-get entity :start_line) 1))
+         (column (max 0 (1- (or (plist-get entity :start_col) 1)))))
+      (list
+       :snapshot snapshot
+       :entity entity
+       :line line
+       :column column
+       :row 1))))
+
+(defun difftron--entity-relative-row (entity line)
+  "Return LINE as a one-based row relative to ENTITY."
+  (max 1
+       (1+
+        (- line
+           (or (plist-get entity :start_line) 1)))))
+
+(defun difftron--visit-checkout-context (context)
+  "Visit CONTEXT in the current checkout."
+  (pcase-let*
+      (
+       (`(,entity ,line ,column)
+        (difftron--checkout-target context))
+       (buffer (find-file-noselect (plist-get entity :file_path)))
+       (pos (difftron--buffer-position buffer line column)))
+    (pop-to-buffer-same-window buffer)
+    (with-current-buffer buffer
+      (goto-char pos))
+    buffer))
+
+(defun difftron--checkout-target (context)
+  "Return checkout entity, line, and column for CONTEXT."
+  (let*
+      (
+       (snapshot (plist-get context :snapshot))
+       (entity (plist-get context :entity))
+       (payload
+        (difftron--checkout-diff-payload snapshot))
+       (target
+        (or
+         (difftron--checkout-target-from-diff context payload)
+         (difftron--checkout-target-from-list context))))
+    (unless target
+      (user-error
+       "Entity is not available or cannot be found in the current checkout"))
+    (when (eq (plist-get target :status) 'deleted)
+      (user-error
+       "Entity is not available in the current checkout"))
+    (let*
+        (
+         (checkout-entity (plist-get target :entity))
+         (row
+          (or
+           (plist-get target :row)
+           (plist-get context :row)
+           1))
+         (line
+          (+ (or (plist-get checkout-entity :start_line) 1)
+             row
+             -1))
+         (column
+          (or (plist-get context :column)
+              (max 0
+                   (1-
+                    (or (plist-get checkout-entity :start_col) 1))))))
+      (list checkout-entity line column))))
+
+(defun difftron--checkout-diff-payload (snapshot)
+  "Return a diff payload from SNAPSHOT to the current checkout."
+  (difftron--run-command
+   (or difftron--default-directory default-directory)
+   (list
+    "diff"
+    (difftron--snapshot-arg snapshot)
+    "."
+    "--format"
+    "json")))
+
+(defun difftron--checkout-list-payload ()
+  "Return a list payload for the current checkout."
+  (difftron--run-command
+   (or difftron--default-directory default-directory)
+   '("list" "." "--format" "json")))
+
+(defun difftron--checkout-target-from-diff (context payload)
+  "Return a checkout target for CONTEXT from diff PAYLOAD."
+  (let ((source (plist-get context :entity)))
+    (or
+     (difftron--checkout-target-from-changes
+      context
+      (plist-get payload :modified))
+     (difftron--checkout-target-from-changes
+      context
+      (plist-get payload :moved_modified))
+     (difftron--checkout-target-from-moves
+      source
+      (plist-get payload :moved))
+     (difftron--checkout-deleted-target
+      source
+      (plist-get payload :deleted)))))
+
+(defun difftron--checkout-target-from-changes (context change-list)
+  "Use CHANGE-LIST to find checkout target for CONTEXT."
+  (let ((source (plist-get context :entity)))
+    (seq-some
+     (lambda (change)
+       (when (difftron--same-entity-p
+              source
+              (plist-get change :lhs))
+         (list
+          :status 'present
+          :entity (plist-get change :rhs)
+          :row
+          (difftron--checkout-row-for-change
+           change
+           (plist-get context :row)))))
+     change-list)))
+
+(defun difftron--checkout-target-from-moves (source move-list)
+  "Use MOVE-LIST to find checkout target for SOURCE."
+  (seq-some
+   (lambda (change)
+     (when (difftron--same-entity-p
+            source
+            (plist-get change :lhs))
+       (list
+        :status 'present
+        :entity (plist-get change :rhs))))
+   move-list))
+
+(defun difftron--checkout-deleted-target (source deleted-list)
+  "Use DELETED-LIST to find deleted checkout target for SOURCE."
+  (seq-some
+   (lambda (entity)
+     (when (difftron--same-entity-p source entity)
+       (list :status 'deleted)))
+   deleted-list))
+
+(defun difftron--checkout-target-from-list (context)
+  "Return a checkout target for CONTEXT from `difftron list'."
+  (when-let
+      (
+       (entity
+        (difftron--unique-checkout-list-entity
+         (plist-get context :entity)
+         (plist-get
+          (difftron--checkout-list-payload)
+          :entities))))
+    (list
+     :status 'present
+     :entity entity
+     :row (plist-get context :row))))
+
+(defun difftron--unique-checkout-list-entity (source entities)
+  "Return the unique checkout entity matching SOURCE from ENTITIES."
+  (let*
+      (
+       (by-identity
+        (seq-filter
+         (lambda (entity)
+           (difftron--same-entity-identity-p source entity))
+         entities))
+       (by-source
+        (seq-filter
+         (lambda (entity)
+           (equal
+            (plist-get source :source_text)
+            (plist-get entity :source_text)))
+         by-identity))
+       (by-path
+        (seq-filter
+         (lambda (entity)
+           (equal
+            (plist-get source :snapshot_path)
+            (plist-get entity :snapshot_path)))
+         by-identity)))
+    (or
+     (difftron--only by-source)
+     (difftron--only by-path)
+     (difftron--only by-identity))))
+
+(defun difftron--checkout-row-for-change (change source-row)
+  "Return the checkout row in CHANGE closest to SOURCE-ROW."
+  (or
+   (difftron--checkout-row-exact change source-row)
+   (difftron--checkout-row-nearest change source-row)
+   source-row))
+
+(defun difftron--checkout-row-exact (change source-row)
+  "Return the exact checkout row in CHANGE for SOURCE-ROW."
+  (seq-some
+   (lambda (row)
+     (let
+         (
+          (left (plist-get row :left))
+          (right (plist-get row :right)))
+       (and
+        right
+        left
+        (equal (plist-get left :line_number) source-row)
+        (plist-get right :line_number))))
+   (plist-get (plist-get change :diff) :rows)))
+
+(defun difftron--checkout-row-nearest (change source-row)
+  "Return the nearest checkout row in CHANGE for SOURCE-ROW."
+  (let
+      (
+       best-distance
+       best-row)
+    (dolist (row (plist-get (plist-get change :diff) :rows))
+      (let
+          (
+           (left (plist-get row :left))
+           (right (plist-get row :right)))
+        (when (and left right)
+          (let
+              (
+               (row-distance
+                (abs
+                 (- (plist-get left :line_number)
+                    source-row))))
+            (when (or (null best-distance)
+                      (< row-distance best-distance))
+              (setq best-distance row-distance)
+              (setq best-row (plist-get right :line_number)))))))
+    best-row))
+
+(defun difftron--same-entity-p (lhs rhs)
+  "Return non-nil when LHS and RHS describe the same source entity."
+  (and
+   (difftron--same-entity-identity-p lhs rhs)
+   (or
+    (equal (plist-get lhs :source_text)
+           (plist-get rhs :source_text))
+    (equal (plist-get lhs :snapshot_path)
+           (plist-get rhs :snapshot_path)))))
+
+(defun difftron--same-entity-identity-p (lhs rhs)
+  "Return non-nil when LHS and RHS share name and kind."
+  (and
+   lhs
+   rhs
+   (equal (plist-get lhs :name)
+          (plist-get rhs :name))
+   (equal (plist-get lhs :kind)
+          (plist-get rhs :kind))))
+
+(defun difftron--only (items)
+  "Return the only item in ITEMS, or nil."
+  (and
+   (consp items)
+   (null (cdr items))
+   (car items)))
 
 (defun difftron--button-at-point ()
   "Return the button at point, accepting point just after button text."
