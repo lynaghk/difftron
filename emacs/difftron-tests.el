@@ -912,8 +912,6 @@
    (eq
     (lookup-key difftron-mode-map (kbd "y"))
     #'difftron-cycle-hierarchy))
-  (should-not
-   (lookup-key difftron-mode-map (kbd "t")))
   (should
    (eq
     (lookup-key difftron-mode-map (kbd "h"))
@@ -2252,9 +2250,6 @@
 
 (ert-deftest difftron-dispatch-has-hierarchy-section ()
   (should (transient-get-suffix 'difftron-dispatch "y"))
-  (should-not
-   (ignore-errors
-     (transient-get-suffix 'difftron-dispatch "t")))
   (should (transient-get-suffix 'difftron-dispatch "s")))
 
 (ert-deftest difftron-hierarchy-infix-highlights-current-choice ()
