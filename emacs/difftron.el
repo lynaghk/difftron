@@ -98,6 +98,7 @@
      (kbd "m")
      #'difftron-toggle-commit-messages)
     (define-key map (kbd "r") #'difftron-select-right)
+    (define-key map (kbd "s") #'difftron-swap-sides)
     (define-key map (kbd "y") #'difftron-cycle-hierarchy)
     (define-key map (kbd "n") #'difftron-next-section)
     (define-key map (kbd "p") #'difftron-previous-section)
@@ -188,6 +189,7 @@
     ("m" "Toggle commit messages" difftron-toggle-commit-messages)
     ("l" "Select left" difftron-select-left)
     ("r" "Select right" difftron-select-right)
+    ("s" "Swap sides" difftron-swap-sides)
     ("q" "Quit buffer" quit-window)
     ("TAB" "Toggle section/details" difftron-toggle-section-or-message)
     ("RET" "Visit thing" difftron-visit-thing)
@@ -356,6 +358,22 @@ working tree rooted at the current repository."
   "Select a new right-hand snapshot and refresh the diff."
   (interactive)
   (difftron--select-side 'rhs))
+
+(defun difftron-swap-sides ()
+  "Swap the left- and right-hand snapshots and refresh the diff."
+  (interactive)
+  (unless difftron--payload
+    (user-error
+     "No difftron payload is associated with this buffer"))
+  (let
+      (
+       (lhs
+        (difftron--snapshot-arg
+         (plist-get difftron--payload :lhs)))
+       (rhs
+        (difftron--snapshot-arg
+         (plist-get difftron--payload :rhs))))
+    (difftron--run-and-display-diff rhs lhs)))
 
 (defun difftron--select-side (side)
   "Select a new snapshot for SIDE and refresh the current diff."

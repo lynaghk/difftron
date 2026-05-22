@@ -914,8 +914,6 @@
     #'difftron-cycle-hierarchy))
   (should-not
    (lookup-key difftron-mode-map (kbd "t")))
-  (should-not
-   (lookup-key difftron-mode-map (kbd "s")))
   (should
    (eq
     (lookup-key difftron-mode-map (kbd "h"))
@@ -1036,7 +1034,11 @@
   (should
    (eq
     (lookup-key difftron-mode-map (kbd "r"))
-    #'difftron-select-right)))
+    #'difftron-select-right))
+  (should
+   (eq
+    (lookup-key difftron-mode-map (kbd "s"))
+    #'difftron-swap-sides)))
 
 (ert-deftest difftron-binds-commit-message-toggle ()
   (should
@@ -1516,11 +1518,49 @@
       displayed-args
       '("diff" "/tmp/next.rs" "HEAD" "--format" "json")))))
 
+(ert-deftest difftron-swaps-sides-preserving-path-filters ()
+  (let (displayed-args)
+    (cl-letf
+        (
+         ((symbol-function 'difftron--run-command)
+          (lambda (_default-directory _args)
+            difftron-tests--sample-payload))
+         ((symbol-function 'difftron--display-buffer)
+          (lambda (_default-directory args _payload)
+            (setq displayed-args args))))
+      (with-temp-buffer
+        (difftron-mode)
+        (setq difftron--default-directory "/tmp/repo/")
+        (setq difftron--command-args
+              '
+              ("diff"
+               "HEAD~1"
+               "HEAD"
+               "--format"
+               "json"
+               "--path"
+               "src/lib.rs"))
+        (setq difftron--payload
+              (copy-tree difftron-tests--sample-payload))
+        (difftron-swap-sides)))
+    (should
+     (equal
+      displayed-args
+      '
+      ("diff"
+       "HEAD"
+       "HEAD~1"
+       "--format"
+       "json"
+       "--path"
+       "src/lib.rs")))))
+
 (ert-deftest difftron-side-selection-requires-payload ()
   (with-temp-buffer
     (difftron-mode)
     (should-error (difftron-select-left) :type 'user-error)
-    (should-error (difftron-select-right) :type 'user-error)))
+    (should-error (difftron-select-right) :type 'user-error)
+    (should-error (difftron-swap-sides) :type 'user-error)))
 
 (ert-deftest difftron-previous-commit-preserves-path-filters ()
   (let
@@ -2215,9 +2255,7 @@
   (should-not
    (ignore-errors
      (transient-get-suffix 'difftron-dispatch "t")))
-  (should-not
-   (ignore-errors
-     (transient-get-suffix 'difftron-dispatch "s"))))
+  (should (transient-get-suffix 'difftron-dispatch "s")))
 
 (ert-deftest difftron-hierarchy-infix-highlights-current-choice ()
   (with-temp-buffer
