@@ -14,7 +14,7 @@
 (difftron-test-config-bootstrap)
 
 (defconst difftron-dev-wrapper
-  (expand-file-name "../../script/difftron_dev"
+  (expand-file-name "../../scripts/difftron_dev"
 		    difftron-test-config-root))
 
 (use-package
