@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_common.sh"
 
 usage() {
   echo "usage: ./script/test.sh [rust|emacs]" >&2
@@ -10,8 +9,8 @@ usage() {
 
 run_rust() {
   difftron_prepare_repo
-  cargo fmt --all --check --manifest-path "${WORKSPACE_MANIFEST}"
-  cargo clippy --manifest-path "${WORKSPACE_MANIFEST}" \
+  cargo fmt --all --check --manifest-path "$WORKSPACE_MANIFEST"
+  cargo clippy --manifest-path "$WORKSPACE_MANIFEST" \
     --workspace \
     --all-targets \
     -- -D warnings
@@ -20,14 +19,14 @@ run_rust() {
 
 run_emacs() {
   difftron_prepare_emacs
-  "${EMACS_BIN}" -Q --batch \
-    -l "${REPO_ROOT}/emacs/test-config/lint-init.el" \
-    -L "${REPO_ROOT}/emacs" \
+  "$EMACS_BIN" -Q --batch \
+    -l "$REPO_ROOT/emacs/test-config/lint-init.el" \
+    -L "$REPO_ROOT/emacs" \
     -l difftron-lint.el \
     -f difftron-lint-batch-and-exit
-  "${EMACS_BIN}" -Q --batch \
-    -l "${REPO_ROOT}/emacs/test-config/init.el" \
-    -L "${REPO_ROOT}/emacs" \
+  "$EMACS_BIN" -Q --batch \
+    -l "$REPO_ROOT/emacs/test-config/init.el" \
+    -L "$REPO_ROOT/emacs" \
     -l difftron-lint-tests.el \
     -l difftron-tests.el \
     -f ert-run-tests-batch-and-exit

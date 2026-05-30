@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_common.sh"
 
 usage() {
   echo "usage: ./script/format.sh [rust|emacs]" >&2

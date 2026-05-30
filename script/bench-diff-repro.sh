@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_common.sh"
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-REPO_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 
 RUNS=${RUNS:-5}
 WARMUP=${WARMUP:-1}
