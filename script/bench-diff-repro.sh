@@ -2,7 +2,6 @@
 set -euo pipefail
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_common.sh"
 
-
 RUNS=${RUNS:-5}
 WARMUP=${WARMUP:-1}
 
@@ -20,8 +19,6 @@ LHS=$(normalize_snapshot_arg "${1:-${REPO_ROOT}@89e41ef}")
 RHS=$(normalize_snapshot_arg "${2:-${REPO_ROOT}@d1818bf}")
 
 COMMAND=("${SCRIPT_DIR}/difftron_dev" "diff" "${LHS}" "${RHS}")
-
-cd "${REPO_ROOT}"
 
 echo "Benchmarking: ${COMMAND[*]}"
 echo "Warmup runs: ${WARMUP}"

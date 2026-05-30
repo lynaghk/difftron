@@ -3,22 +3,26 @@ set -euo pipefail
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_common.sh"
 
 usage() {
-  echo "usage: ./script/format.sh [rust|emacs]" >&2
+  echo "usage: ./script/format.sh [rust|emacs|shell]" >&2
   exit 64
 }
 
 run_rust() {
-  difftron_prepare_repo
   cargo fmt
+}
+
+run_shell() {
+  mapfile -t shell_scripts < <(difftron_shell_scripts)
+  shfmt --indent 2 --write "${shell_scripts[@]}"
 }
 
 run_emacs() {
   difftron_prepare_emacs
-  "${EMACS_BIN}" -Q --batch \
-    -l "${REPO_ROOT}/emacs/test-config/lint-init.el" \
-    -L "${REPO_ROOT}/emacs" \
-    -l difftron-lint.el \
-    -f difftron-format-batch-and-exit
+  "${EMACS_BIN}" --quick --batch \
+    --load "${REPO_ROOT}/emacs/test-config/lint-init.el" \
+    --directory "${REPO_ROOT}/emacs" \
+    --load difftron-lint.el \
+    --funcall difftron-format-batch-and-exit
 }
 
 if [[ $# -gt 1 ]]; then
@@ -26,17 +30,21 @@ if [[ $# -gt 1 ]]; then
 fi
 
 case "${1:-all}" in
-  all)
-    run_rust
-    run_emacs
-    ;;
-  rust)
-    run_rust
-    ;;
-  emacs)
-    run_emacs
-    ;;
-  *)
-    usage
-    ;;
+all)
+  run_rust
+  run_shell
+  run_emacs
+  ;;
+rust)
+  run_rust
+  ;;
+shell)
+  run_shell
+  ;;
+emacs)
+  run_emacs
+  ;;
+*)
+  usage
+  ;;
 esac

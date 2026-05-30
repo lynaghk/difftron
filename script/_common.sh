@@ -3,15 +3,15 @@
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 
-difftron_prepare_repo() {
-  cd "${REPO_ROOT}"
+cd "${REPO_ROOT}"
+
+difftron_shell_scripts() {
+  shfmt --find "${SCRIPT_DIR}"
 }
 
 difftron_prepare_emacs() {
-  difftron_prepare_repo
-
-  if ! command -v emacs >/dev/null 2>&1 \
-    && ! command -v emacs-nox >/dev/null 2>&1; then
+  if ! command -v emacs >/dev/null 2>&1 &&
+    ! command -v emacs-nox >/dev/null 2>&1; then
     apt-get update >/dev/null
     apt-get install -y emacs-nox >/dev/null
   fi
