@@ -9,11 +9,8 @@ usage() {
 
 run_rust() {
   difftron_prepare_repo
-  cargo fmt --all --check --manifest-path "$WORKSPACE_MANIFEST"
-  cargo clippy --manifest-path "$WORKSPACE_MANIFEST" \
-    --workspace \
-    --all-targets \
-    -- -D warnings
+  cargo fmt --check
+  cargo clippy -- -D warnings
   cargo test
 }
 

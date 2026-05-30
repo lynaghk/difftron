@@ -240,8 +240,8 @@ pub fn diff_snapshots(lhs: &Snapshot, rhs: &Snapshot, path_filters: &[PathBuf]) 
 
     added.sort_by(|lhs, rhs| lhs.entity.cmp(&rhs.entity));
     deleted.sort_by(|lhs, rhs| lhs.entity.cmp(&rhs.entity));
-    moved.sort_by(|lhs, rhs| lhs.rhs.name.cmp(&rhs.rhs.name));
-    moved_modified.sort_by(|lhs, rhs| lhs.rhs.name.cmp(&rhs.rhs.name));
+    moved.sort_by(|lhs, rhs| lhs.rhs.name.as_str().cmp(rhs.rhs.name.as_str()));
+    moved_modified.sort_by(|lhs, rhs| lhs.rhs.name.as_str().cmp(rhs.rhs.name.as_str()));
     modified.sort_by(|lhs, rhs| lhs.lhs.name.cmp(&rhs.lhs.name));
 
     DiffResult {

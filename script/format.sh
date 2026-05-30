@@ -9,7 +9,7 @@ usage() {
 
 run_rust() {
   difftron_prepare_repo
-  cargo fmt --all --manifest-path "${WORKSPACE_MANIFEST}"
+  cargo fmt
 }
 
 run_emacs() {

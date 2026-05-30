@@ -2,7 +2,6 @@
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
-WORKSPACE_MANIFEST="${REPO_ROOT}/Cargo.toml"
 
 difftron_prepare_repo() {
   cd "${REPO_ROOT}"
