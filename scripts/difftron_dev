@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+CALLER_PWD=$PWD
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_common.sh"
 
-exec cargo run --release -- "$@"
+cd "${CALLER_PWD}"
+exec cargo run --manifest-path "${REPO_ROOT}/Cargo.toml" --release -- "$@"
