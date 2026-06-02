@@ -132,38 +132,59 @@ fn build_rows(lhs: &ParsedDocument, rhs: &ParsedDocument) -> Vec<DiffRow> {
 }
 
 fn flush_changed_block(lhs: &[DisplayLine], rhs: &[DisplayLine], rows: &mut Vec<DiffRow>) {
+    let lhs_text = lhs
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+    let rhs_text = rhs
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+    let inline = crate::inline::emphasize_block(&lhs_text, &rhs_text);
+
     let paired = lhs.len().min(rhs.len());
     for index in 0..paired {
         let left = lhs[index].clone();
         let right = rhs[index].clone();
         let kind = classify_replacement(&left, &right);
-        let inline = matches!(
+        let row_inline = matches!(
             kind,
             ChangeKind::ReplacedCode | ChangeKind::ReplacedComment | ChangeKind::ReplacedString
         )
-        .then(|| crate::inline::emphasize(&left.text, &right.text));
+        .then(|| InlineSegments {
+            left: inline.left[index].clone(),
+            right: inline.right[index].clone(),
+        });
         rows.push(DiffRow {
             kind,
             left: Some(left),
             right: Some(right),
-            inline,
+            inline: row_inline,
         });
     }
 
-    for line in &lhs[paired..] {
+    for (offset, line) in lhs[paired..].iter().enumerate() {
+        let index = paired + offset;
         rows.push(DiffRow {
             kind: ChangeKind::Novel(ChangeSide::Left),
             left: Some(line.clone()),
             right: None,
-            inline: None,
+            inline: Some(InlineSegments {
+                left: inline.left[index].clone(),
+                right: Vec::new(),
+            }),
         });
     }
-    for line in &rhs[paired..] {
+    for (offset, line) in rhs[paired..].iter().enumerate() {
+        let index = paired + offset;
         rows.push(DiffRow {
             kind: ChangeKind::Novel(ChangeSide::Right),
             left: None,
             right: Some(line.clone()),
-            inline: None,
+            inline: Some(InlineSegments {
+                left: Vec::new(),
+                right: inline.right[index].clone(),
+            }),
         });
     }
 }

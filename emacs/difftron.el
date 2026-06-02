@@ -73,6 +73,11 @@
   :type 'boolean
   :group 'difftron)
 
+(defcustom difftron-fill-multiline-change-whitespace t
+  "Whether multiline structured diff blocks fill trailing whitespace."
+  :type 'boolean
+  :group 'difftron)
+
 (defcustom difftron-snapshot-commit-limit 100
   "Maximum number of recent commits to offer in snapshot prompts."
   :type 'integer
@@ -190,6 +195,7 @@
     ("l" "Select left" difftron-select-left)
     ("r" "Select right" difftron-select-right)
     ("s" "Swap sides" difftron-swap-sides)
+    ("w" "Toggle block fill" difftron-toggle-multiline-change-whitespace)
     ("q" "Quit buffer" quit-window)
     ("TAB" "Toggle section/details" difftron-toggle-section-or-message)
     ("RET" "Visit thing" difftron-visit-thing)
@@ -311,6 +317,19 @@ working tree rooted at the current repository."
     (user-error
      "No difftron payload is associated with this buffer"))
   (difftron--set-hierarchy (difftron--next-hierarchy)))
+
+(defun difftron-toggle-multiline-change-whitespace ()
+  "Toggle multiline structured diff trailing whitespace fill."
+  (interactive)
+  (setq difftron-fill-multiline-change-whitespace
+        (not difftron-fill-multiline-change-whitespace))
+  (when difftron--payload
+    (difftron--display-buffer
+     difftron--default-directory
+     difftron--command-args
+     difftron--payload)
+    (with-current-buffer difftron-buffer-name
+      (difftron--show-entity-tree-level-3))))
 
 (defun difftron--set-hierarchy (hierarchy)
   "Set HIERARCHY and redraw the current difftron buffer."
@@ -1520,68 +1539,162 @@ REMAINING-HIERARCHY describes nested grouping below this section."
   "Insert structured diff for ITEM using Emacs layout and faces."
   (let ((rows (plist-get (plist-get item :diff) :rows)))
     (if rows
-        (let ((column-width (difftron--modified-column-width)))
-          (dolist (row rows)
-            (difftron--insert-structured-diff-row
-             item
-             row
-             column-width)))
+        (let
+            (
+             (column-width (difftron--modified-column-width))
+             (fill-flags (difftron--structured-fill-flags rows)))
+          (cl-mapc
+           (lambda (row fill)
+             (difftron--insert-structured-diff-row
+              item
+              row
+              column-width
+              fill))
+           rows
+           fill-flags))
       (insert "No diff output.\n"))))
 
 (defun difftron--insert-structured-diff-row
-    (item row column-width)
+    (item row column-width fill)
   "Insert one structured diff ROW for ITEM using COLUMN-WIDTH per side."
   (difftron--insert-structured-side
    (plist-get row :left)
    'left
    column-width
-   (difftron--structured-side-source item 'lhs))
+   (difftron--structured-side-source item 'lhs)
+   (plist-get fill :left))
   (insert " | ")
   (difftron--insert-structured-side
    (plist-get row :right)
    'right
    column-width
-   (difftron--structured-side-source item 'rhs))
+   (difftron--structured-side-source item 'rhs)
+   (plist-get fill :right))
   (insert "\n"))
 
 (defun difftron--insert-structured-side
-    (side side-name column-width source)
-  "Insert SIDE for SIDE-NAME using SOURCE, truncated to COLUMN-WIDTH."
+    (side side-name column-width source fill)
+  "Insert SIDE for SIDE-NAME using SOURCE, truncated to COLUMN-WIDTH.
+FILL controls whether optional trailing padding uses the side's refine face."
   (if side
-      (let
+      (let*
           (
-           (start (point))
            (side-column (current-column))
-           (face (difftron--side-face side-name)))
+           (face (difftron--side-face side-name))
+           (side-source
+            (plist-put
+             (copy-sequence source)
+             :row-line
+             (plist-get side :line_number))))
         (difftron--insert-structured-segments
          (plist-get side :segments)
          side-name
          face
          column-width
-         (plist-put
-          (copy-sequence source)
-          :row-line
-          (plist-get side :line_number))
+         side-source
          side-column)
-        (when (eq side-name 'left)
-          (let
-              (
-               (padding-start (point))
-               (padding
-                (make-string
-                 (max 0 (- column-width (- (point) start)))
-                 ?\s)))
-            (difftron--insert-diff-text padding face)
-            (difftron--add-source-properties
-             padding-start
-             (point)
-             (plist-put
-              (copy-sequence source)
-              :row-line
-              (plist-get side :line_number))
-             side-column))))
+        (when
+            (or (eq side-name 'left)
+                fill)
+          (difftron--insert-structured-padding
+           (max
+            0
+            (- column-width
+               (- (current-column) side-column)))
+           face
+           (and fill
+                (difftron--side-refine-face side-name))
+           side-source
+           side-column)))
     (when (eq side-name 'left)
       (insert (make-string column-width ?\s)))))
+
+(defun difftron--structured-fill-flags (rows)
+  "Return per-side trailing fill flags for structured diff ROWS."
+  (let
+      (
+       block
+       result)
+    (cl-labels
+        (
+         (flush-block
+           ()
+           (when block
+             (setq result
+                   (nconc
+                    result
+                    (difftron--structured-block-fill-flags
+                     (nreverse block))))
+             (setq block nil))))
+      (dolist (row rows)
+        (if (difftron--structured-row-changed-p row)
+            (push row block)
+          (flush-block)
+          (setq result
+                (nconc result (list (list :left nil :right nil))))))
+      (flush-block))
+    result))
+
+(defun difftron--structured-block-fill-flags (rows)
+  "Return per-side trailing fill flags for one changed block ROWS."
+  (let
+      (
+       (fill-block
+        (and difftron-fill-multiline-change-whitespace
+             (> (length rows) 1)
+             (difftron--structured-block-structural-p rows))))
+    (mapcar
+     (lambda (row)
+       (if fill-block
+           (list
+            :left
+            (difftron--structured-side-fill-p row 'left)
+            :right
+            (difftron--structured-side-fill-p row 'right))
+         (list :left nil :right nil)))
+     rows)))
+
+(defun difftron--structured-row-changed-p (row)
+  "Return non-nil when ROW is not unchanged."
+  (not (equal (plist-get row :kind) "unchanged")))
+
+(defun difftron--structured-block-structural-p (rows)
+  "Return non-nil when changed ROWS contain block-style edits."
+  (cl-some
+   (lambda (row)
+     (or
+      (member (plist-get row :kind) '("novel_left" "novel_right"))
+      (difftron--structured-side-all-novel-p (plist-get row :left))
+      (difftron--structured-side-all-novel-p (plist-get row :right))))
+   rows))
+
+(defun difftron--structured-side-fill-p (row side-name)
+  "Return non-nil when SIDE-NAME of ROW should fill trailing whitespace."
+  (pcase (plist-get row :kind)
+    ("novel_left"
+     (and
+      (eq side-name 'left)
+      (difftron--structured-side-all-novel-p (plist-get row :left))))
+    ("novel_right"
+     (and
+      (eq side-name 'right)
+      (difftron--structured-side-all-novel-p (plist-get row :right))))
+    ((or "replaced_code" "replaced_comment" "replaced_string")
+     (difftron--structured-side-all-novel-p
+      (plist-get
+       row
+       (pcase side-name
+         ('left :left)
+         (_ :right)))))
+    (_ nil)))
+
+(defun difftron--structured-side-all-novel-p (side)
+  "Return non-nil when every segment in SIDE is novel."
+  (when-let ((segments (plist-get side :segments)))
+    (cl-every
+     (lambda (segment)
+       (equal (plist-get segment :kind) "novel"))
+     segments)))
 
 (defun difftron--structured-side-source (item side)
   "Return source metadata for SIDE of structured diff ITEM."
@@ -1628,6 +1741,19 @@ Insert at most REMAINING-WIDTH columns, starting at SIDE-COLUMN."
                refine-face))
             (setq remaining (- remaining (string-width text)))))))))
 
+(defun difftron--insert-structured-padding
+    (width face refine-face source side-column)
+  "Insert WIDTH spaces with FACE, REFINE-FACE, SOURCE, and SIDE-COLUMN metadata."
+  (when (> width 0)
+    (let
+        (
+         (start (point))
+         (padding (make-string width ?\s)))
+      (difftron--insert-diff-text padding face)
+      (difftron--add-source-properties start (point) source side-column)
+      (when refine-face
+        (difftron--add-refine-overlay start (point) refine-face)))))
+
 (defun difftron--insert-diff-text (text face)
   "Insert TEXT with optional diff FACE."
   (if face
@@ -1642,11 +1768,14 @@ Insert at most REMAINING-WIDTH columns, starting at SIDE-COLUMN."
 (defun difftron--segment-refine-face (side-name kind)
   "Return the refinement face for segment KIND on SIDE-NAME."
   (pcase kind
-    ("novel"
-     (pcase side-name
-       ('left 'diff-refine-removed)
-       (_ 'diff-refine-added)))
+    ("novel" (difftron--side-refine-face side-name))
     (_ nil)))
+
+(defun difftron--side-refine-face (side-name)
+  "Return the refinement face for SIDE-NAME."
+  (pcase side-name
+    ('left 'diff-refine-removed)
+    (_ 'diff-refine-added)))
 
 (defun difftron--add-refine-overlay (start end face)
   "Add a Magit-style fine diff overlay from START to END using FACE."

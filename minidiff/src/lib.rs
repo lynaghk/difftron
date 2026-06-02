@@ -248,6 +248,52 @@ mod tests {
     }
 
     #[test]
+    fn structured_presentation_treats_reflowed_block_tokens_as_context() {
+        let lhs = r#"fn demo(path_str: &str) {
+    let hash = path_str
+        .bytes();
+}
+"#;
+        let rhs = r#"fn demo(path_str: &str) {
+    let hash = path_str.bytes().fold(5381u64, |h, b| h);
+}
+"#;
+
+        let diff_result = diff(Language::Rust, lhs, rhs, DiffOptions::default()).unwrap();
+        let presentation = present_side_by_side(&diff_result, &PresentationOptions);
+
+        let left_bytes = presentation
+            .rows
+            .iter()
+            .find_map(|row| {
+                row.left
+                    .as_ref()
+                    .filter(|side| side.text.contains(".bytes()"))
+            })
+            .expect("expected left .bytes() line");
+        let left_context = segment_text(left_bytes, PresentationSegmentKind::Context);
+        let left_novel = segment_text(left_bytes, PresentationSegmentKind::Novel);
+        assert!(left_context.contains(".bytes()"));
+        assert!(!left_novel.contains("bytes"));
+        assert!(!left_novel.contains('('));
+        assert!(!left_novel.contains(')'));
+
+        let right_reflowed = presentation
+            .rows
+            .iter()
+            .find_map(|row| {
+                row.right
+                    .as_ref()
+                    .filter(|side| side.text.contains("path_str.bytes().fold"))
+            })
+            .expect("expected right reflowed line");
+        let right_context = segment_text(right_reflowed, PresentationSegmentKind::Context);
+        let right_novel = segment_text(right_reflowed, PresentationSegmentKind::Novel);
+        assert!(right_context.contains("path_str.bytes()"));
+        assert!(right_novel.contains(".fold"));
+    }
+
+    #[test]
     fn structured_presentation_marks_parse_fallback_rows() {
         let lhs = "fn meaning( { 41 }\n";
         let rhs = "fn meaning() { 42 }\n";
@@ -268,5 +314,13 @@ mod tests {
             presentation.rows[0].right.as_ref().unwrap().text,
             "fn meaning() { 42 }"
         );
+    }
+
+    fn segment_text(side: &PresentationSide, kind: PresentationSegmentKind) -> String {
+        side.segments
+            .iter()
+            .filter(|segment| segment.kind == kind)
+            .map(|segment| segment.text.as_str())
+            .collect()
     }
 }

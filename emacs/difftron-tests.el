@@ -278,6 +278,28 @@
    :text text
    :segments (difftron-tests--segments text novel)))
 
+(defun difftron-tests--novel-side (text)
+  "Return a structured side where all TEXT is novel."
+  (list
+   :line_number 1
+   :text text
+   :segments (list (list :text text :kind "novel"))))
+
+(defun difftron-tests--refine-overlay-at-point-p (face)
+  "Return non-nil when point has a fine diff overlay with FACE."
+  (cl-some
+   (lambda (overlay)
+     (and (eq (overlay-get overlay 'diff-mode) 'fine)
+          (eq (overlay-get overlay 'face) face)))
+   (overlays-at (point))))
+
+(defun difftron-tests--changed-padding-overlay-p (text face)
+  "Return non-nil when padding after TEXT has a fine diff overlay with FACE."
+  (goto-char (point-min))
+  (search-forward text)
+  (and (eq (char-after) ?\s)
+       (difftron-tests--refine-overlay-at-point-p face)))
+
 (defun difftron-tests--modified-change
     (path lhs rhs lhs-novel rhs-novel)
   (list
@@ -298,6 +320,43 @@
       (difftron-tests--side
        (plist-get rhs :source_text)
        rhs-novel))))))
+
+(defun difftron-tests--multiline-structural-change-payload ()
+  "Return a payload with a multiline structural add/delete block."
+  (let*
+      (
+       (lhs
+        (difftron-tests--entity
+         "demo::meaning"
+         "function"
+         "/tmp/repo/src/lib.rs"
+         "src/lib.rs"
+         "removed line"))
+       (rhs
+        (difftron-tests--entity
+         "demo::meaning"
+         "function"
+         "/tmp/repo/src/lib.rs"
+         "src/lib.rs"
+         "added line"))
+       (change
+        (list
+         :path "src/lib.rs"
+         :lhs lhs
+         :rhs rhs
+         :diff
+         (list
+          :rows
+          (list
+           (list
+            :kind "novel_left"
+            :left (difftron-tests--novel-side "removed line")
+            :right nil)
+           (list
+            :kind "novel_right"
+            :left nil
+            :right (difftron-tests--novel-side "added line")))))))
+    (difftron-tests--diff-payload :modified (list change))))
 
 (defun difftron-tests--moved-change (lhs rhs)
   (list :lhs lhs :rhs rhs))
@@ -2133,6 +2192,120 @@
       (get-text-property (match-beginning 0) 'font-lock-face)
       'magit-diff-context))))
 
+(ert-deftest difftron-does-not-fill-single-line-inline-replacement-padding ()
+  (let ((difftron-fill-multiline-change-whitespace t))
+    (with-temp-buffer
+      (difftron-mode)
+      (let ((inhibit-read-only t))
+        (difftron--insert-payload
+         difftron-tests--sample-payload))
+      (should-not
+       (difftron-tests--changed-padding-overlay-p
+        "41 }"
+        'diff-refine-removed))
+      (should-not
+       (difftron-tests--changed-padding-overlay-p
+        "42 }"
+        'diff-refine-added)))))
+
+(ert-deftest difftron-fills-multiline-structural-diff-padding-by-default ()
+  (let ((difftron-fill-multiline-change-whitespace t))
+    (with-temp-buffer
+      (difftron-mode)
+      (let ((inhibit-read-only t))
+        (difftron--insert-payload
+         (difftron-tests--multiline-structural-change-payload)))
+      (should
+       (difftron-tests--changed-padding-overlay-p
+        "removed line"
+        'diff-refine-removed))
+      (should
+       (difftron-tests--changed-padding-overlay-p
+        "added line"
+        'diff-refine-added)))))
+
+(ert-deftest difftron-does-not-fill-unchanged-structured-diff-padding ()
+  (let*
+      (
+       (difftron-fill-multiline-change-whitespace t)
+       (lhs
+        (difftron-tests--entity
+         "demo::unchanged"
+         "function"
+         "/tmp/repo/src/lib.rs"
+         "src/lib.rs"
+         "same body"))
+       (rhs
+        (difftron-tests--entity
+         "demo::unchanged"
+         "function"
+         "/tmp/repo/src/lib.rs"
+         "src/lib.rs"
+         "same body"))
+       (side
+        (list
+         :line_number 1
+         :text "same body"
+         :segments (list (list :text "same body" :kind "context"))))
+       (change
+        (list
+         :path "src/lib.rs"
+         :lhs lhs
+         :rhs rhs
+         :diff
+         (list
+          :rows
+          (list
+           (list
+            :kind "unchanged"
+            :left side
+            :right side)))))
+       (payload
+        (difftron-tests--diff-payload :modified (list change))))
+    (with-temp-buffer
+      (difftron-mode)
+      (let ((inhibit-read-only t))
+        (difftron--insert-payload payload))
+      (goto-char (point-min))
+      (search-forward "same body")
+      (should (eq (char-after) ?\s))
+      (should-not
+       (or
+        (difftron-tests--refine-overlay-at-point-p
+         'diff-refine-removed)
+        (difftron-tests--refine-overlay-at-point-p
+         'diff-refine-added))))))
+
+(ert-deftest difftron-toggle-multiline-change-whitespace-redraws-buffer ()
+  (let ((difftron-fill-multiline-change-whitespace t))
+    (unwind-protect
+        (cl-letf
+            (
+             ((symbol-function 'pop-to-buffer) (lambda (&rest _) nil)))
+          (difftron--display-buffer
+           "/tmp/repo/"
+           '("diff" "HEAD~1" "HEAD" "--format" "json")
+           (difftron-tests--multiline-structural-change-payload))
+          (with-current-buffer difftron-buffer-name
+            (should
+             (difftron-tests--changed-padding-overlay-p
+              "added line"
+              'diff-refine-added))
+            (difftron-toggle-multiline-change-whitespace)
+            (should-not difftron-fill-multiline-change-whitespace)
+            (should-not
+             (difftron-tests--changed-padding-overlay-p
+              "added line"
+              'diff-refine-added))
+            (difftron-toggle-multiline-change-whitespace)
+            (should difftron-fill-multiline-change-whitespace)
+            (should
+             (difftron-tests--changed-padding-overlay-p
+              "added line"
+              'diff-refine-added))))
+      (when-let ((buffer (get-buffer difftron-buffer-name)))
+        (kill-buffer buffer)))))
+
 (ert-deftest difftron-diff-omits-width-for-json-output ()
   (cl-letf
       (
@@ -2250,6 +2423,7 @@
 
 (ert-deftest difftron-dispatch-has-hierarchy-section ()
   (should (transient-get-suffix 'difftron-dispatch "y"))
+  (should (transient-get-suffix 'difftron-dispatch "w"))
   (should (transient-get-suffix 'difftron-dispatch "s")))
 
 (ert-deftest difftron-hierarchy-infix-highlights-current-choice ()

@@ -16,14 +16,20 @@ pub struct InlineSegments {
     pub right: Vec<InlineSegment>,
 }
 
-pub fn emphasize(lhs: &str, rhs: &str) -> InlineSegments {
-    let lhs_tokens = tokenize(lhs);
-    let rhs_tokens = tokenize(rhs);
-    let matches = lcs_matches(&lhs_tokens, &rhs_tokens);
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct BlockInlineSegments {
+    pub left: Vec<Vec<InlineSegment>>,
+    pub right: Vec<Vec<InlineSegment>>,
+}
 
-    InlineSegments {
-        left: build_segments(&lhs_tokens, &matches, Side::Left),
-        right: build_segments(&rhs_tokens, &matches, Side::Right),
+pub fn emphasize_block(lhs: &[&str], rhs: &[&str]) -> BlockInlineSegments {
+    let lhs_tokens = tokenize_lines(lhs);
+    let rhs_tokens = tokenize_lines(rhs);
+    let matches = lcs_line_token_matches(&lhs_tokens, &rhs_tokens);
+
+    BlockInlineSegments {
+        left: build_line_segments(&lhs_tokens, lhs.len(), &matches, Side::Left),
+        right: build_line_segments(&rhs_tokens, rhs.len(), &matches, Side::Right),
     }
 }
 
@@ -69,11 +75,29 @@ fn tokenize(text: &str) -> Vec<String> {
     tokens
 }
 
-fn lcs_matches(lhs: &[String], rhs: &[String]) -> Vec<(usize, usize)> {
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct LineToken {
+    text: String,
+    line: usize,
+}
+
+fn tokenize_lines(lines: &[&str]) -> Vec<LineToken> {
+    lines
+        .iter()
+        .enumerate()
+        .flat_map(|(line, text)| {
+            tokenize(text)
+                .into_iter()
+                .map(move |token| LineToken { text: token, line })
+        })
+        .collect()
+}
+
+fn lcs_line_token_matches(lhs: &[LineToken], rhs: &[LineToken]) -> Vec<(usize, usize)> {
     let mut dp = vec![vec![0usize; rhs.len() + 1]; lhs.len() + 1];
     for lhs_index in (0..lhs.len()).rev() {
         for rhs_index in (0..rhs.len()).rev() {
-            dp[lhs_index][rhs_index] = if lhs[lhs_index] == rhs[rhs_index] {
+            dp[lhs_index][rhs_index] = if lhs[lhs_index].text == rhs[rhs_index].text {
                 dp[lhs_index + 1][rhs_index + 1] + 1
             } else {
                 dp[lhs_index + 1][rhs_index].max(dp[lhs_index][rhs_index + 1])
@@ -85,7 +109,7 @@ fn lcs_matches(lhs: &[String], rhs: &[String]) -> Vec<(usize, usize)> {
     let mut lhs_index = 0;
     let mut rhs_index = 0;
     while lhs_index < lhs.len() && rhs_index < rhs.len() {
-        if lhs[lhs_index] == rhs[rhs_index] {
+        if lhs[lhs_index].text == rhs[rhs_index].text {
             matches.push((lhs_index, rhs_index));
             lhs_index += 1;
             rhs_index += 1;
@@ -98,7 +122,12 @@ fn lcs_matches(lhs: &[String], rhs: &[String]) -> Vec<(usize, usize)> {
     matches
 }
 
-fn build_segments(tokens: &[String], matches: &[(usize, usize)], side: Side) -> Vec<InlineSegment> {
+fn build_line_segments(
+    tokens: &[LineToken],
+    line_count: usize,
+    matches: &[(usize, usize)],
+    side: Side,
+) -> Vec<Vec<InlineSegment>> {
     let matched_indices = matches
         .iter()
         .map(|(left, right)| match side {
@@ -107,39 +136,30 @@ fn build_segments(tokens: &[String], matches: &[(usize, usize)], side: Side) -> 
         })
         .collect::<std::collections::BTreeSet<_>>();
 
-    let mut segments = Vec::new();
-    let mut current_text = String::new();
-    let mut current_emphasis = None;
-
+    let mut lines = vec![Vec::new(); line_count];
     for (index, token) in tokens.iter().enumerate() {
         let emphasis = if matched_indices.contains(&index) {
             InlineEmphasis::Context
         } else {
             InlineEmphasis::Novel
         };
-
-        if current_emphasis == Some(emphasis) {
-            current_text.push_str(token);
-        } else {
-            if let Some(previous) = current_emphasis {
-                segments.push(InlineSegment {
-                    text: std::mem::take(&mut current_text),
-                    emphasis: previous,
-                });
-            }
-            current_text.push_str(token);
-            current_emphasis = Some(emphasis);
-        }
+        push_segment(&mut lines[token.line], &token.text, emphasis);
     }
+    lines
+}
 
-    if let Some(emphasis) = current_emphasis {
+fn push_segment(segments: &mut Vec<InlineSegment>, text: &str, emphasis: InlineEmphasis) {
+    if let Some(segment) = segments
+        .last_mut()
+        .filter(|segment| segment.emphasis == emphasis)
+    {
+        segment.text.push_str(text);
+    } else {
         segments.push(InlineSegment {
-            text: current_text,
+            text: text.to_owned(),
             emphasis,
         });
     }
-
-    segments
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
