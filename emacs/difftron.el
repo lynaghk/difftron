@@ -105,8 +105,8 @@
     (define-key map (kbd "r") #'difftron-select-right)
     (define-key map (kbd "s") #'difftron-swap-sides)
     (define-key map (kbd "y") #'difftron-cycle-hierarchy)
-    (define-key map (kbd "n") #'difftron-next-section)
-    (define-key map (kbd "p") #'difftron-previous-section)
+    (define-key map (kbd "n") #'difftron-next-entity-diff)
+    (define-key map (kbd "p") #'difftron-previous-entity-diff)
     (define-key map (kbd "N") #'difftron-next-commit)
     (define-key map (kbd "P") #'difftron-previous-commit)
     (define-key
@@ -216,8 +216,8 @@
    ["Movement"
     ("N" "Next commit" difftron-next-commit)
     ("P" "Previous commit" difftron-previous-commit)
-    ("n" "Next section" difftron-next-section)
-    ("p" "Previous section" difftron-previous-section)
+    ("n" "Next entity diff" difftron-next-entity-diff)
+    ("p" "Previous entity diff" difftron-previous-entity-diff)
     ("M-n" "Next sibling" magit-section-forward-sibling)
     ("M-p" "Previous sibling" magit-section-backward-sibling)]])
 
@@ -765,19 +765,65 @@ DEFAULT-ARG provides the initial path when it names a path."
     (let ((magit-section-cache-visibility nil))
       (magit-section-show magit-root-section))))
 
-(defun difftron-next-section ()
-  "Move to the beginning of the next visible section."
+(defun difftron-next-entity-diff ()
+  "Move to the beginning of the next visible entity diff."
   (interactive)
-  (magit-section-forward)
+  (difftron--goto-next-entity-section)
   (difftron--temporarily-unfold-entity-at-point)
   (difftron--scroll-navigation-destination))
 
-(defun difftron-previous-section ()
-  "Move to the beginning of the current or previous visible section."
+(defun difftron-previous-entity-diff ()
+  "Move to the beginning of the current or previous visible entity diff."
   (interactive)
-  (magit-section-backward)
+  (difftron--goto-previous-entity-section)
   (difftron--temporarily-unfold-entity-at-point)
   (difftron--scroll-navigation-destination))
+
+(defun difftron--goto-next-entity-section ()
+  "Move to the next visible entity section."
+  (if-let ((section
+            (seq-find
+             (lambda (candidate)
+               (> (oref candidate start) (point)))
+             (difftron--visible-entity-sections))))
+      (magit-section-goto section)
+    (user-error "No next entity diff")))
+
+(defun difftron--goto-previous-entity-section ()
+  "Move to the current or previous visible entity section."
+  (let*
+      (
+       (current (magit-current-section))
+       (position
+        (if
+            (and
+             current
+             (eq (oref current type) 'difftron-entity)
+             (> (point) (oref current start)))
+            (1+ (oref current start))
+          (point)))
+       (section
+        (seq-find
+         (lambda (candidate)
+           (< (oref candidate start) position))
+         (reverse (difftron--visible-entity-sections)))))
+    (if section
+        (magit-section-goto section)
+      (user-error "No previous entity diff"))))
+
+(defun difftron--visible-entity-sections ()
+  "Return visible entity sections in display order."
+  (seq-filter
+   #'difftron--section-heading-visible-p
+   (and magit-root-section
+        (difftron--entity-sections magit-root-section))))
+
+(defun difftron--section-heading-visible-p (section)
+  "Return non-nil when SECTION's heading is visible."
+  (not
+   (get-char-property
+    (oref section start)
+    'invisible)))
 
 (defun difftron--scroll-navigation-destination ()
   "Scroll the selected window after section navigation, if configured."
