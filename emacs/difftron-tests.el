@@ -2532,22 +2532,80 @@
     (should (equal visited-rev "HEAD~1"))
     (should (equal visited-directory "/tmp/repo"))))
 
-(ert-deftest difftron-ret-visits-diff-snapshot ()
-  (let (visited-rev)
+(ert-deftest difftron-ret-on-snapshot-ref-selects-side ()
+  (dolist (case '((lhs "repo@HEAD~1") (rhs "repo@HEAD")))
+    (pcase-let ((`(,side ,ref) case))
+      (let (selected-side visited-snapshot)
+        (cl-letf
+	    (
+             ((symbol-function 'difftron--select-side)
+              (lambda (selected) (setq selected-side selected)))
+             ((symbol-function 'difftron--visit-snapshot)
+              (lambda (snapshot) (setq visited-snapshot snapshot))))
+          (with-temp-buffer
+            (difftron-mode)
+            (let ((inhibit-read-only t))
+              (difftron--insert-payload
+               difftron-tests--sample-payload))
+            (goto-char (point-min))
+            (search-forward (format "%s: " side))
+            (search-forward ref)
+            (goto-char (match-beginning 0))
+            (save-window-excursion
+              (switch-to-buffer (current-buffer))
+              (execute-kbd-macro (kbd "RET")))))
+        (should (eq selected-side side))
+        (should-not visited-snapshot)))))
+
+(ert-deftest difftron-ret-on-directory-snapshot-path-selects-side ()
+  (let
+      (
+       selected-side
+       visited-snapshot
+       (payload (copy-tree difftron-tests--sample-payload)))
+    (plist-put
+     payload
+     :rhs
+     (list
+      :label "/Users/dev/work/incubator/difftron"
+      :kind "directory"
+      :root "/Users/dev/work/incubator/difftron"
+      :summary :null))
     (cl-letf
 	(
-         ((symbol-function 'magit-show-commit)
-          (lambda (rev &rest _) (setq visited-rev rev))))
+         ((symbol-function 'difftron--select-side)
+          (lambda (side) (setq selected-side side)))
+         ((symbol-function 'difftron--visit-snapshot)
+          (lambda (snapshot) (setq visited-snapshot snapshot))))
       (with-temp-buffer
         (difftron-mode)
         (let ((inhibit-read-only t))
-          (difftron--insert-payload
-           difftron-tests--sample-payload))
+          (difftron--insert-payload payload))
         (goto-char (point-min))
-        (search-forward "rhs: ")
-        (search-forward "repo@HEAD")
-        (difftron-visit-thing)))
-    (should (equal visited-rev "HEAD"))))
+        (search-forward "/Users/dev/work/incubator/difftron")
+        (goto-char (match-beginning 0))
+        (save-window-excursion
+          (switch-to-buffer (current-buffer))
+          (execute-kbd-macro (kbd "RET")))))
+    (should (eq selected-side 'rhs))
+    (should-not visited-snapshot)))
+
+(ert-deftest difftron-ret-on-snapshot-label-does-not-select-side ()
+  (dolist (side '(lhs rhs))
+    (let (selected-side)
+      (cl-letf
+	  (
+           ((symbol-function 'difftron--select-side)
+            (lambda (selected) (setq selected-side selected))))
+        (with-temp-buffer
+          (difftron-mode)
+          (let ((inhibit-read-only t))
+            (difftron--insert-payload
+             difftron-tests--sample-payload))
+          (goto-char (point-min))
+          (search-forward (symbol-name side))
+          (difftron-visit-thing)))
+      (should-not selected-side))))
 
 (defun difftron-tests--with-visit-capture (fn)
   "Call FN while capturing Magit file visits."

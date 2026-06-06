@@ -122,6 +122,13 @@
     map)
   "Keymap for `difftron-mode'.")
 
+(defvar difftron--snapshot-button-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map button-map)
+    (define-key map (kbd "RET") #'difftron-visit-thing)
+    map)
+  "Keymap for snapshot endpoint buttons.")
+
 (defvar-local difftron--command-args nil)
 (defvar-local difftron--default-directory nil)
 (defvar-local difftron--payload nil)
@@ -976,18 +983,26 @@ DEFAULT-ARG provides the initial path when it names a path."
     (nreverse paths)))
 
 (defun difftron-visit-thing ()
-  "Visit the entity at point or activate a button."
+  "Select a snapshot endpoint, visit an entity, or activate a button."
   (interactive)
-  (if-let ((button (difftron--button-at-point)))
-      (push-button (button-start button))
-    (if-let ((source (difftron--source-location-at-point)))
-        (difftron--visit-source-location source)
-      (if-let*
-	  (
-	   (section (difftron--entity-section-at-point))
-	   (item (oref section value)))
-          (difftron--visit-item item)
-        (magit-section-toggle (magit-current-section))))))
+  (let ((button (difftron--button-at-point)))
+    (if-let
+        (
+         (side
+          (and
+           button
+           (button-get button 'difftron-snapshot-side))))
+        (difftron--select-side side)
+      (if button
+          (push-button (button-start button))
+        (if-let ((source (difftron--source-location-at-point)))
+            (difftron--visit-source-location source)
+          (if-let*
+	      (
+	       (section (difftron--entity-section-at-point))
+	       (item (oref section value)))
+              (difftron--visit-item item)
+            (magit-section-toggle (magit-current-section))))))))
 
 (defun difftron-visit-thing-in-checkout ()
   "Visit the entity at point in the current checkout."
@@ -1376,20 +1391,26 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
 
 (defun difftron--insert-snapshot-heading (name snapshot)
   "Insert the snapshot heading for endpoint NAME and SNAPSHOT."
-  (insert
-   (propertize (format "%s: " name)
-               'font-lock-face
-               'magit-section-heading))
-  (insert-text-button
-   (difftron--display-label (plist-get snapshot :label))
-   'action
-   (lambda (_button) (difftron--visit-snapshot snapshot))
-   'follow-link
-   t
-   'help-echo
-   "RET visits snapshot"
-   'font-lock-face
-   'magit-section-heading)
+  (let ((side (intern name)))
+    (insert
+     (propertize (format "%s: " name)
+                 'font-lock-face
+                 'magit-section-heading))
+    (insert-text-button
+     (difftron--display-label (plist-get snapshot :label))
+     'action
+     (lambda (_button) (difftron--visit-snapshot snapshot))
+     'difftron-snapshot-side
+     side
+     'follow-link
+     t
+     'help-echo
+     (format "RET selects %s snapshot"
+             (downcase (difftron--side-label side)))
+     'keymap
+     difftron--snapshot-button-map
+     'font-lock-face
+     'magit-section-heading))
   (when-let ((summary (plist-get snapshot :summary)))
     (unless (string-empty-p summary)
       (insert
