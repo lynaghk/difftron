@@ -16,7 +16,7 @@ use crate::{
         Entity, EntityDetail, EntityId, SourceLocation, compute_line_starts, format_location,
         insert_entity, source_location_from_offsets,
     },
-    project_discovery::TargetRoot,
+    project_discovery::SourceTarget,
     source_repo::SourceRepo,
 };
 
@@ -50,7 +50,7 @@ struct TraversalContext {
 
 pub fn collect_target_entities(
     repo: &dyn SourceRepo,
-    target: &TargetRoot,
+    target: &SourceTarget,
     arena: &mut Arena<Entity>,
     entities: &mut Vec<EntityId>,
 ) -> Result<()> {
@@ -61,7 +61,7 @@ pub fn collect_target_entities(
         arena,
         entities,
         Entity {
-            name: target.crate_name.clone(),
+            name: target.root_name.clone(),
             parent: None,
             language: target.language,
             location: source_location(&parsed, parsed.source_file.syntax().text_range()),
@@ -168,7 +168,7 @@ fn parse_file(repo: &dyn SourceRepo, snapshot_path: &Path) -> Result<ParsedFile>
 #[allow(clippy::too_many_arguments)]
 fn collect_items(
     repo: &dyn SourceRepo,
-    target: &TargetRoot,
+    target: &SourceTarget,
     parsed: &ParsedFile,
     items: Vec<ast::Item>,
     context: &TraversalContext,
@@ -329,7 +329,7 @@ fn nested_assoc_context(
 }
 
 fn collect_assoc_functions(
-    target: &TargetRoot,
+    target: &SourceTarget,
     parsed: &ParsedFile,
     assoc_items: impl IntoIterator<Item = ast::AssocItem>,
     context: &TraversalContext,
@@ -352,7 +352,7 @@ fn collect_assoc_functions(
 }
 
 fn module_entity(
-    target: &TargetRoot,
+    target: &SourceTarget,
     parsed: &ParsedFile,
     module: &ast::Module,
     context: &TraversalContext,
@@ -370,7 +370,7 @@ fn module_entity(
 }
 
 fn function_entity(
-    target: &TargetRoot,
+    target: &SourceTarget,
     parsed: &ParsedFile,
     function: &ast::Fn,
     context: &TraversalContext,
@@ -394,7 +394,7 @@ fn function_entity(
 }
 
 fn struct_entity(
-    target: &TargetRoot,
+    target: &SourceTarget,
     parsed: &ParsedFile,
     struct_def: &ast::Struct,
     context: &TraversalContext,
@@ -415,7 +415,7 @@ fn struct_entity(
 }
 
 fn enum_entity(
-    target: &TargetRoot,
+    target: &SourceTarget,
     parsed: &ParsedFile,
     enum_def: &ast::Enum,
     context: &TraversalContext,
@@ -446,7 +446,7 @@ fn enum_entity(
 }
 
 fn union_entity(
-    target: &TargetRoot,
+    target: &SourceTarget,
     parsed: &ParsedFile,
     union_def: &ast::Union,
     context: &TraversalContext,
@@ -472,7 +472,7 @@ fn union_entity(
 }
 
 fn trait_entity(
-    target: &TargetRoot,
+    target: &SourceTarget,
     parsed: &ParsedFile,
     trait_def: &ast::Trait,
     context: &TraversalContext,
@@ -498,7 +498,7 @@ fn trait_entity(
 }
 
 fn type_alias_entity(
-    target: &TargetRoot,
+    target: &SourceTarget,
     parsed: &ParsedFile,
     type_alias: &ast::TypeAlias,
     context: &TraversalContext,
@@ -519,7 +519,7 @@ fn type_alias_entity(
 }
 
 fn impl_entity(
-    target: &TargetRoot,
+    target: &SourceTarget,
     parsed: &ParsedFile,
     impl_def: &ast::Impl,
     context: &TraversalContext,
@@ -581,13 +581,13 @@ fn resolve_module_file(
     Ok(None)
 }
 
-fn path_prefix(target: &TargetRoot, context: &TraversalContext) -> Vec<String> {
-    let mut parts = vec![target.crate_name.clone()];
+fn path_prefix(target: &SourceTarget, context: &TraversalContext) -> Vec<String> {
+    let mut parts = vec![target.root_name.clone()];
     parts.extend(context.modules.iter().cloned());
     parts
 }
 
-fn qualified_name(target: &TargetRoot, context: &TraversalContext, name: &str) -> String {
+fn qualified_name(target: &SourceTarget, context: &TraversalContext, name: &str) -> String {
     let mut parts = path_prefix(target, context);
     parts.push(name.to_owned());
     parts.join("::")

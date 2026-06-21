@@ -13,7 +13,7 @@ use crate::{
     entity_collector::{
         Entity, EntityId, SourceLocation, collect_entities, entity_kind_name, render_entity,
     },
-    project_discovery::TargetRoot,
+    project_discovery::SourceTarget,
     project_discovery::discover_targets,
     source_repo::{FsSourceRepo, GitTreeSourceRepo, SingleFileSourceRepo, SourceRepo},
 };
@@ -324,14 +324,14 @@ fn open_source_repo(spec: &SnapshotSpec) -> Result<Box<dyn SourceRepo>> {
 fn discover_snapshot_targets(
     spec: &SnapshotSpec,
     repo: &dyn SourceRepo,
-) -> Result<Vec<TargetRoot>> {
+) -> Result<Vec<SourceTarget>> {
     match spec {
         SnapshotSpec::File { path, .. } => Ok(vec![single_file_target(path)?]),
         SnapshotSpec::Directory { .. } | SnapshotSpec::GitRevision { .. } => discover_targets(repo),
     }
 }
 
-fn single_file_target(path: &Path) -> Result<TargetRoot> {
+fn single_file_target(path: &Path) -> Result<SourceTarget> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -340,8 +340,8 @@ fn single_file_target(path: &Path) -> Result<TargetRoot> {
         .strip_prefix(parent)
         .expect("file should be relative to its parent directory")
         .to_path_buf();
-    Ok(TargetRoot {
-        crate_name: "file".to_owned(),
+    Ok(SourceTarget {
+        root_name: "file".to_owned(),
         root_file: snapshot_path,
         language: language_for_path(path)
             .with_context(|| format!("unsupported source file extension: {}", path.display()))?,

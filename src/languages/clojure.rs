@@ -10,7 +10,7 @@ use crate::{
         Entity, EntityDetail, EntityId, SourceLocation, compute_line_starts, format_location,
         insert_entity, source_location_from_offsets,
     },
-    project_discovery::TargetRoot,
+    project_discovery::SourceTarget,
     source_repo::SourceRepo,
 };
 
@@ -38,7 +38,7 @@ struct ParsedClojureFile {
 
 pub fn collect_target_entities(
     repo: &dyn SourceRepo,
-    target: &TargetRoot,
+    target: &SourceTarget,
     arena: &mut Arena<Entity>,
     entities: &mut Vec<EntityId>,
 ) -> Result<()> {
@@ -58,7 +58,7 @@ pub fn collect_target_entities(
     let namespace = forms
         .iter()
         .find_map(|form| clojure_namespace(&parsed.source_text, *form))
-        .unwrap_or_else(|| target.crate_name.clone());
+        .unwrap_or_else(|| target.root_name.clone());
 
     let root_id = insert_entity(
         arena,

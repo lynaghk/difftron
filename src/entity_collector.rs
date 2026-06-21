@@ -9,7 +9,7 @@ use crate::{
     languages::{
         clojure::ClojureEntityDetail, rust::RustEntityDetail, typescript::TypeScriptEntityDetail,
     },
-    project_discovery::TargetRoot,
+    project_discovery::SourceTarget,
     source_repo::SourceRepo,
 };
 
@@ -48,16 +48,16 @@ pub struct EntityArena {
     pub entities: Vec<EntityId>,
 }
 
-pub fn collect_entities(repo: &dyn SourceRepo, targets: &[TargetRoot]) -> Result<EntityArena> {
+pub fn collect_entities(repo: &dyn SourceRepo, targets: &[SourceTarget]) -> Result<EntityArena> {
     let _span = info_span!("collect_entities", target_count = targets.len()).entered();
     let mut arena = Arena::new();
     let mut entities = Vec::new();
 
-    info!(crate_count = targets.len(), "collecting workspace crates");
+    info!(target_count = targets.len(), "collecting source targets");
 
     for target in targets {
-        let crate_span = info_span!("collect_crate", crate_name = %target.crate_name);
-        let _crate_span = crate_span.entered();
+        let target_span = info_span!("collect_target", root_name = %target.root_name);
+        let _target_span = target_span.entered();
         match target.language {
             Language::Rust => {
                 crate::languages::rust::collect_target_entities(
@@ -84,7 +84,7 @@ pub fn collect_entities(repo: &dyn SourceRepo, targets: &[TargetRoot]) -> Result
                 )?;
             }
         }
-        info!(entity_count = entities.len(), "finished crate");
+        info!(entity_count = entities.len(), "finished target");
     }
 
     entities.sort_by(|lhs, rhs| arena[*lhs].cmp(&arena[*rhs]));

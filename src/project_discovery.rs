@@ -10,8 +10,8 @@ use serde::Deserialize;
 use crate::source_repo::SourceRepo;
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct TargetRoot {
-    pub crate_name: String,
+pub struct SourceTarget {
+    pub root_name: String,
     pub root_file: PathBuf,
     pub language: Language,
 }
@@ -48,42 +48,42 @@ struct TargetManifest {
     path: Option<String>,
 }
 
-pub fn discover_targets(repo: &dyn SourceRepo) -> Result<Vec<TargetRoot>> {
+pub fn discover_targets(repo: &dyn SourceRepo) -> Result<Vec<SourceTarget>> {
+    let mut targets = BTreeSet::new();
+    collect_file_targets(repo, Path::new(""), &mut targets)?;
+    collect_rust_targets(repo, &mut targets)?;
+
+    if targets.is_empty() {
+        bail!(
+            "expected {} to contain supported source files",
+            repo.root().display()
+        );
+    }
+
+    Ok(targets.into_iter().collect())
+}
+
+fn collect_rust_targets(repo: &dyn SourceRepo, targets: &mut BTreeSet<SourceTarget>) -> Result<()> {
     let root_manifest = PathBuf::from("Cargo.toml");
     if !repo.is_file(&root_manifest)? {
-        let targets = discover_loose_source_targets(repo)?;
-        if targets.is_empty() {
-            bail!(
-                "expected {} to contain a Cargo.toml or supported source files",
-                repo.root().display()
-            );
-        }
-        return Ok(targets);
+        return Ok(());
     }
 
     let mut visited_manifests = HashSet::new();
     let mut visited_packages = HashSet::new();
-    let mut targets = BTreeSet::new();
     discover_manifest(
         repo,
         &root_manifest,
         &mut visited_manifests,
         &mut visited_packages,
-        &mut targets,
-    )?;
-    Ok(targets.into_iter().collect())
+        targets,
+    )
 }
 
-fn discover_loose_source_targets(repo: &dyn SourceRepo) -> Result<Vec<TargetRoot>> {
-    let mut targets = BTreeSet::new();
-    collect_loose_source_targets(repo, Path::new(""), &mut targets)?;
-    Ok(targets.into_iter().collect())
-}
-
-fn collect_loose_source_targets(
+fn collect_file_targets(
     repo: &dyn SourceRepo,
     dir: &Path,
-    targets: &mut BTreeSet<TargetRoot>,
+    targets: &mut BTreeSet<SourceTarget>,
 ) -> Result<()> {
     if !repo.is_dir(dir)? {
         return Ok(());
@@ -91,19 +91,19 @@ fn collect_loose_source_targets(
 
     for child in repo.read_dir(dir)? {
         if repo.is_dir(&child)? {
-            if should_skip_loose_source_dir(&child) {
+            if should_skip_source_dir(&child) {
                 continue;
             }
-            collect_loose_source_targets(repo, &child, targets)?;
+            collect_file_targets(repo, &child, targets)?;
         } else if repo.is_file(&child)? && is_clojure_code_file(&child) {
-            targets.insert(TargetRoot {
-                crate_name: loose_source_target_name(&child),
+            targets.insert(SourceTarget {
+                root_name: path_root_name(&child),
                 root_file: child,
                 language: Language::Clojure,
             });
         } else if repo.is_file(&child)? && is_typescript_code_file(&child) {
-            targets.insert(TargetRoot {
-                crate_name: loose_source_target_name(&child),
+            targets.insert(SourceTarget {
+                root_name: path_root_name(&child),
                 root_file: child,
                 language: Language::TypeScript,
             });
@@ -113,7 +113,7 @@ fn collect_loose_source_targets(
     Ok(())
 }
 
-fn should_skip_loose_source_dir(path: &Path) -> bool {
+fn should_skip_source_dir(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| {
@@ -153,12 +153,12 @@ fn is_typescript_declaration_file(path: &Path) -> bool {
         .is_some_and(|name| name.ends_with(".d.ts"))
 }
 
-fn loose_source_target_name(path: &Path) -> String {
+fn path_root_name(path: &Path) -> String {
     let parts = path
         .with_extension("")
         .components()
         .filter_map(|component| match component {
-            Component::Normal(part) => part.to_str().map(normalize_crate_name),
+            Component::Normal(part) => part.to_str().map(normalize_root_name),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -174,7 +174,7 @@ fn discover_manifest(
     manifest_path: &Path,
     visited_manifests: &mut HashSet<PathBuf>,
     visited_packages: &mut HashSet<PathBuf>,
-    targets: &mut BTreeSet<TargetRoot>,
+    targets: &mut BTreeSet<SourceTarget>,
 ) -> Result<()> {
     let manifest_path = normalize_relative(manifest_path);
     if !visited_manifests.insert(manifest_path.clone()) {
@@ -220,12 +220,12 @@ fn targets_for_package(
     repo: &dyn SourceRepo,
     manifest: &Manifest,
     package_dir: &Path,
-) -> Result<Vec<TargetRoot>> {
+) -> Result<Vec<SourceTarget>> {
     let package = manifest
         .package
         .as_ref()
         .expect("package should exist when collecting package targets");
-    let package_name = package.name.replace('-', "_");
+    let package_name = normalize_root_name(&package.name);
     let mut targets = BTreeSet::new();
 
     add_target_if_present(
@@ -250,19 +250,12 @@ fn targets_for_package(
 
     for target in &manifest.bin {
         if let Some(path) = target.path.as_deref() {
-            let crate_name = target
+            let root_name = target
                 .name
                 .as_deref()
-                .map(normalize_crate_name)
+                .map(normalize_root_name)
                 .unwrap_or_else(|| inferred_target_name(path));
-            add_target_if_present(
-                repo,
-                &mut targets,
-                package_dir,
-                Some(path),
-                path,
-                crate_name,
-            )?;
+            add_target_if_present(repo, &mut targets, package_dir, Some(path), path, root_name)?;
         }
     }
 
@@ -276,7 +269,7 @@ fn targets_for_package(
 
 fn add_explicit_targets(
     repo: &dyn SourceRepo,
-    targets: &mut BTreeSet<TargetRoot>,
+    targets: &mut BTreeSet<SourceTarget>,
     package_dir: &Path,
     entries: &[TargetManifest],
 ) -> Result<()> {
@@ -284,19 +277,19 @@ fn add_explicit_targets(
         let Some(path) = entry.path.as_deref() else {
             continue;
         };
-        let crate_name = entry
+        let root_name = entry
             .name
             .as_deref()
-            .map(normalize_crate_name)
+            .map(normalize_root_name)
             .unwrap_or_else(|| inferred_target_name(path));
-        add_target_if_present(repo, targets, package_dir, Some(path), path, crate_name)?;
+        add_target_if_present(repo, targets, package_dir, Some(path), path, root_name)?;
     }
     Ok(())
 }
 
 fn add_directory_targets(
     repo: &dyn SourceRepo,
-    targets: &mut BTreeSet<TargetRoot>,
+    targets: &mut BTreeSet<SourceTarget>,
     dir: &Path,
 ) -> Result<()> {
     if !repo.is_dir(dir)? {
@@ -305,26 +298,26 @@ fn add_directory_targets(
 
     for child in repo.read_dir(dir)? {
         if repo.is_file(&child)? && child.extension().is_some_and(|ext| ext == "rs") {
-            let crate_name = child
+            let root_name = child
                 .file_stem()
                 .and_then(|stem| stem.to_str())
-                .map(normalize_crate_name)
+                .map(normalize_root_name)
                 .unwrap_or_else(|| "bin".to_owned());
-            targets.insert(TargetRoot {
-                crate_name,
+            targets.insert(SourceTarget {
+                root_name,
                 root_file: child,
                 language: Language::Rust,
             });
         } else if repo.is_dir(&child)? {
             let candidate = child.join("main.rs");
             if repo.is_file(&candidate)? {
-                let crate_name = child
+                let root_name = child
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .map(normalize_crate_name)
+                    .map(normalize_root_name)
                     .unwrap_or_else(|| "bin".to_owned());
-                targets.insert(TargetRoot {
-                    crate_name,
+                targets.insert(SourceTarget {
+                    root_name,
                     root_file: candidate,
                     language: Language::Rust,
                 });
@@ -337,18 +330,18 @@ fn add_directory_targets(
 
 fn add_target_if_present(
     repo: &dyn SourceRepo,
-    targets: &mut BTreeSet<TargetRoot>,
+    targets: &mut BTreeSet<SourceTarget>,
     package_dir: &Path,
     explicit_path: Option<&str>,
     default_path: &str,
-    crate_name: String,
+    root_name: String,
 ) -> Result<()> {
     let relative_path = explicit_path
         .map(|path| normalize_relative(&package_dir.join(path)))
         .unwrap_or_else(|| normalize_relative(&package_dir.join(default_path)));
     if repo.is_file(&relative_path)? {
-        targets.insert(TargetRoot {
-            crate_name,
+        targets.insert(SourceTarget {
+            root_name,
             root_file: relative_path,
             language: Language::Rust,
         });
@@ -471,11 +464,11 @@ fn inferred_target_name(path: &str) -> String {
         .file_stem()
         .or_else(|| Path::new(path).parent().and_then(Path::file_name))
         .and_then(|name| name.to_str())
-        .map(normalize_crate_name)
+        .map(normalize_root_name)
         .unwrap_or_else(|| "target".to_owned())
 }
 
-fn normalize_crate_name(name: &str) -> String {
+fn normalize_root_name(name: &str) -> String {
     name.replace('-', "_")
 }
 
@@ -616,13 +609,13 @@ mod tests {
         assert_eq!(
             targets,
             vec![
-                TargetRoot {
-                    crate_name: "minidiff".to_owned(),
+                SourceTarget {
+                    root_name: "minidiff".to_owned(),
                     root_file: PathBuf::from("minidiff/src/lib.rs"),
                     language: Language::Rust,
                 },
-                TargetRoot {
-                    crate_name: "root_crate".to_owned(),
+                SourceTarget {
+                    root_name: "root_crate".to_owned(),
                     root_file: PathBuf::from("src/lib.rs"),
                     language: Language::Rust,
                 },
@@ -631,7 +624,51 @@ mod tests {
     }
 
     #[test]
-    fn discover_targets_falls_back_to_clojure_sources_without_cargo_manifest() {
+    fn discover_targets_merges_file_targets_with_cargo_targets() {
+        let repo = TestRepo::new(&[
+            (
+                "Cargo.toml",
+                r#"
+                [package]
+                name = "demo-crate"
+                "#,
+            ),
+            ("src/lib.rs", "pub fn rust() {}\n"),
+            ("src/app.ts", "export function render() { return 42; }\n"),
+            (
+                "src/app.d.ts",
+                "export declare function render(): number;\n",
+            ),
+            ("src/windowtron/core.clj", "(ns windowtron.core)\n"),
+            ("target/generated/ignored.clj", "(ns generated.ignored)\n"),
+        ]);
+
+        let targets = discover_targets(&repo).unwrap();
+
+        assert_eq!(
+            targets,
+            vec![
+                SourceTarget {
+                    root_name: "demo_crate".to_owned(),
+                    root_file: PathBuf::from("src/lib.rs"),
+                    language: Language::Rust,
+                },
+                SourceTarget {
+                    root_name: "src.app".to_owned(),
+                    root_file: PathBuf::from("src/app.ts"),
+                    language: Language::TypeScript,
+                },
+                SourceTarget {
+                    root_name: "src.windowtron.core".to_owned(),
+                    root_file: PathBuf::from("src/windowtron/core.clj"),
+                    language: Language::Clojure,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn discover_targets_collects_clojure_sources_without_cargo_manifest() {
         let repo = TestRepo::new(&[
             ("deps.edn", "{:paths [\"src\"]}\n"),
             ("src/windowtron/core.clj", "(ns windowtron.core)\n"),
@@ -644,13 +681,13 @@ mod tests {
         assert_eq!(
             targets,
             vec![
-                TargetRoot {
-                    crate_name: "src.windowtron.core".to_owned(),
+                SourceTarget {
+                    root_name: "src.windowtron.core".to_owned(),
                     root_file: PathBuf::from("src/windowtron/core.clj"),
                     language: Language::Clojure,
                 },
-                TargetRoot {
-                    crate_name: "src.windowtron.ui".to_owned(),
+                SourceTarget {
+                    root_name: "src.windowtron.ui".to_owned(),
                     root_file: PathBuf::from("src/windowtron/ui.cljs"),
                     language: Language::Clojure,
                 },
@@ -659,7 +696,7 @@ mod tests {
     }
 
     #[test]
-    fn discover_targets_falls_back_to_typescript_sources_without_cargo_manifest() {
+    fn discover_targets_collects_typescript_sources_without_cargo_manifest() {
         let repo = TestRepo::new(&[
             ("package.json", "{\"name\":\"demo\"}\n"),
             ("src/app.ts", "export function render() { return 42; }\n"),
@@ -677,11 +714,20 @@ mod tests {
 
         assert_eq!(
             targets,
-            vec![TargetRoot {
-                crate_name: "src.app".to_owned(),
+            vec![SourceTarget {
+                root_name: "src.app".to_owned(),
                 root_file: PathBuf::from("src/app.ts"),
                 language: Language::TypeScript,
             }]
         );
+    }
+
+    #[test]
+    fn discover_targets_does_not_treat_loose_rust_files_as_roots() {
+        let repo = TestRepo::new(&[("src/lib.rs", "pub fn orphan() {}\n")]);
+
+        let err = discover_targets(&repo).unwrap_err().to_string();
+
+        assert!(err.contains("supported source files"));
     }
 }

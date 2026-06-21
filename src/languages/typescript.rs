@@ -10,7 +10,7 @@ use crate::{
         Entity, EntityDetail, EntityId, SourceLocation, compute_line_starts, format_location,
         insert_entity, source_location_from_offsets,
     },
-    project_discovery::TargetRoot,
+    project_discovery::SourceTarget,
     source_repo::SourceRepo,
 };
 
@@ -37,7 +37,7 @@ struct ParsedTypeScriptFile {
 
 pub fn collect_target_entities(
     repo: &dyn SourceRepo,
-    target: &TargetRoot,
+    target: &SourceTarget,
     arena: &mut Arena<Entity>,
     entities: &mut Vec<EntityId>,
 ) -> Result<()> {
@@ -54,7 +54,7 @@ pub fn collect_target_entities(
         arena,
         entities,
         Entity {
-            name: target.crate_name.clone(),
+            name: target.root_name.clone(),
             parent: None,
             language: Language::TypeScript,
             location: source_location_bytes(&parsed, root.byte_range()),
@@ -147,7 +147,7 @@ fn parse_typescript_file(
 
 fn collect_top_level_entities(
     parsed: &ParsedTypeScriptFile,
-    target: &TargetRoot,
+    target: &SourceTarget,
     root: Node<'_>,
     parent: EntityId,
     arena: &mut Arena<Entity>,
@@ -207,7 +207,7 @@ fn exported_declaration(node: Node<'_>) -> Option<Node<'_>> {
 
 fn function_entity(
     parsed: &ParsedTypeScriptFile,
-    target: &TargetRoot,
+    target: &SourceTarget,
     node: Node<'_>,
     parent: EntityId,
 ) -> Option<Entity> {
@@ -226,7 +226,7 @@ fn function_entity(
 
 fn class_entity(
     parsed: &ParsedTypeScriptFile,
-    target: &TargetRoot,
+    target: &SourceTarget,
     node: Node<'_>,
     parent: EntityId,
     arena: &mut Arena<Entity>,
@@ -290,7 +290,7 @@ fn collect_class_methods(
 
 fn interface_entity(
     parsed: &ParsedTypeScriptFile,
-    target: &TargetRoot,
+    target: &SourceTarget,
     node: Node<'_>,
     parent: EntityId,
 ) -> Option<Entity> {
@@ -309,7 +309,7 @@ fn interface_entity(
 
 fn type_alias_entity(
     parsed: &ParsedTypeScriptFile,
-    target: &TargetRoot,
+    target: &SourceTarget,
     node: Node<'_>,
     parent: EntityId,
 ) -> Option<Entity> {
@@ -331,7 +331,7 @@ fn type_alias_entity(
 
 fn enum_entity(
     parsed: &ParsedTypeScriptFile,
-    target: &TargetRoot,
+    target: &SourceTarget,
     node: Node<'_>,
     parent: EntityId,
 ) -> Option<Entity> {
@@ -350,7 +350,7 @@ fn enum_entity(
 
 fn collect_var_entities(
     parsed: &ParsedTypeScriptFile,
-    target: &TargetRoot,
+    target: &SourceTarget,
     declaration: Node<'_>,
     parent: EntityId,
     arena: &mut Arena<Entity>,
@@ -465,8 +465,8 @@ fn collect_enum_variant_names(
     }
 }
 
-fn qualified_name(target: &TargetRoot, name: &str) -> String {
-    format!("{}::{name}", target.crate_name)
+fn qualified_name(target: &SourceTarget, name: &str) -> String {
+    format!("{}::{name}", target.root_name)
 }
 
 fn source_text(parsed: &ParsedTypeScriptFile, node: Node<'_>) -> String {
