@@ -53,13 +53,6 @@ pub fn discover_targets(repo: &dyn SourceRepo) -> Result<Vec<SourceTarget>> {
     collect_file_targets(repo, Path::new(""), &mut targets)?;
     collect_rust_targets(repo, &mut targets)?;
 
-    if targets.is_empty() {
-        bail!(
-            "expected {} to contain supported source files",
-            repo.root().display()
-        );
-    }
-
     Ok(targets.into_iter().collect())
 }
 
@@ -723,11 +716,11 @@ mod tests {
     }
 
     #[test]
-    fn discover_targets_does_not_treat_loose_rust_files_as_roots() {
+    fn discover_targets_returns_empty_for_unsupported_directories() {
         let repo = TestRepo::new(&[("src/lib.rs", "pub fn orphan() {}\n")]);
 
-        let err = discover_targets(&repo).unwrap_err().to_string();
+        let targets = discover_targets(&repo).unwrap();
 
-        assert!(err.contains("supported source files"));
+        assert!(targets.is_empty());
     }
 }

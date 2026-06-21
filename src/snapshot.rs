@@ -37,6 +37,7 @@ pub enum SnapshotSpec {
 pub struct Snapshot {
     pub arena: Arena<Entity>,
     pub entities: Vec<EntityId>,
+    pub source_target_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -154,6 +155,7 @@ pub fn build_snapshot(spec: &SnapshotSpec) -> Result<Snapshot> {
     Ok(Snapshot {
         arena: collected.arena,
         entities: collected.entities,
+        source_target_count: targets.len(),
     })
 }
 
@@ -1327,7 +1329,11 @@ mod tests {
             .into_iter()
             .map(|entity| arena.alloc(entity))
             .collect();
-        Snapshot { arena, entities }
+        Snapshot {
+            arena,
+            entities,
+            source_target_count: 1,
+        }
     }
 
     #[derive(Clone)]
@@ -1365,6 +1371,10 @@ mod tests {
             }));
         }
 
-        Snapshot { arena, entities }
+        Snapshot {
+            arena,
+            entities,
+            source_target_count: 1,
+        }
     }
 }

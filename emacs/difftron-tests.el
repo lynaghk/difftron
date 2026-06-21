@@ -391,13 +391,23 @@
      (lhs-label "repo@HEAD~1")
      (rhs-label "repo@HEAD")
      (lhs-rev "HEAD~1")
-     (rhs-rev "HEAD"))
+     (rhs-rev "HEAD")
+     (lhs-source-target-count 1)
+     (rhs-source-target-count 1))
   (list
    :command "diff"
    :entity_kind_order difftron-tests--entity-kind-order
    :entity_kinds difftron-tests--entity-kinds
-   :lhs (difftron-tests--git-revision lhs-label lhs-rev)
-   :rhs (difftron-tests--git-revision rhs-label rhs-rev)
+   :lhs
+   (plist-put
+    (difftron-tests--git-revision lhs-label lhs-rev)
+    :source_target_count
+    lhs-source-target-count)
+   :rhs
+   (plist-put
+    (difftron-tests--git-revision rhs-label rhs-rev)
+    :source_target_count
+    rhs-source-target-count)
    :added added
    :deleted deleted
    :moved moved
@@ -729,6 +739,52 @@
        (string-match-p
         "function demo::added() @ /tmp/repo/src/lib.rs:10:1-12:2"
         text)))))
+
+(ert-deftest difftron-renders-no-supported-files-diff-empty-state ()
+  (with-temp-buffer
+    (difftron-mode)
+    (let ((inhibit-read-only t))
+      (difftron--insert-payload
+       (difftron-tests--diff-payload
+        :lhs-source-target-count 0
+        :rhs-source-target-count 0)))
+    (should
+     (string-match-p
+      "No supported files detected"
+      (buffer-string)))))
+
+(ert-deftest difftron-renders-no-entity-changes-diff-empty-state ()
+  (with-temp-buffer
+    (difftron-mode)
+    (let ((inhibit-read-only t))
+      (difftron--insert-payload
+       (difftron-tests--diff-payload
+        :lhs-source-target-count 1
+        :rhs-source-target-count 1)))
+    (should
+     (string-match-p
+      "No entity changes"
+      (buffer-string)))))
+
+(ert-deftest difftron-renders-no-supported-files-list-empty-state ()
+  (with-temp-buffer
+    (difftron-mode)
+    (let ((inhibit-read-only t))
+      (difftron--insert-payload
+       (list
+        :command "list"
+        :entity_kind_order difftron-tests--entity-kind-order
+        :entity_kinds difftron-tests--entity-kinds
+        :snapshot
+        (plist-put
+         (difftron-tests--directory-snapshot "/tmp/repo")
+         :source_target_count
+         0)
+        :entities nil)))
+    (should
+     (string-match-p
+      "No supported files detected"
+      (buffer-string)))))
 
 (ert-deftest difftron-renders-kind-file-hierarchy ()
   (with-temp-buffer

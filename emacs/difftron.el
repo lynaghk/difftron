@@ -1357,7 +1357,8 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
   (difftron--insert-items
    (mapcar
     #'difftron--list-entity->item
-    (plist-get payload :entities))))
+    (plist-get payload :entities))
+   (difftron--list-empty-message payload)))
 
 (defun difftron--insert-diff (payload)
   "Insert a diff PAYLOAD into the current buffer."
@@ -1369,7 +1370,34 @@ REPO-DEFAULT-DIRECTORY and ARGS are stored to support refresh."
     (difftron--insert-snapshot-line "rhs" rhs)
     (insert "\n")
     (difftron--insert-items
-     (difftron--diff-items payload))))
+     (difftron--diff-items payload)
+     (difftron--diff-empty-message payload))))
+
+(defun difftron--list-empty-message (payload)
+  "Return the empty-state message for a list PAYLOAD."
+  (if (zerop (or
+              (plist-get
+               (plist-get payload :snapshot)
+               :source_target_count)
+              1))
+      "No supported files detected"
+    "No entities"))
+
+(defun difftron--diff-empty-message (payload)
+  "Return the empty-state message for a diff PAYLOAD."
+  (if (and
+       (zerop (or
+               (plist-get
+                (plist-get payload :lhs)
+                :source_target_count)
+               1))
+       (zerop (or
+               (plist-get
+                (plist-get payload :rhs)
+                :source_target_count)
+               1)))
+      "No supported files detected"
+    "No entity changes"))
 
 (defun difftron--insert-snapshot-line (name snapshot)
   "Insert one clickable diff endpoint NAME for SNAPSHOT."
@@ -2235,14 +2263,15 @@ When ITEM-LESSP is non-nil, sort items within each group using it."
     ('deleted 'magit-diff-removed)
     (_ nil)))
 
-(defun difftron--insert-items (items)
-  "Insert ITEMS using the current hierarchy."
+(defun difftron--insert-items (items &optional empty-message)
+  "Insert ITEMS using the current hierarchy.
+EMPTY-MESSAGE is inserted when ITEMS is empty."
   (if items
       (difftron--insert-hierarchy
        items
        (difftron--effective-hierarchy)
        0)
-    (insert "No entities\n")))
+    (insert (or empty-message "No entities") "\n")))
 
 (defun difftron--indent (depth)
   "Return indentation for section DEPTH."

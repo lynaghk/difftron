@@ -26,8 +26,31 @@ fn list_json_emits_structured_stdout() {
     let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
     assert_eq!(json["command"], "list");
     assert_eq!(json["snapshot"]["kind"], "directory");
+    assert_eq!(json["snapshot"]["source_target_count"], 1);
     assert_eq!(json["entities"][0]["name"], "demo");
     assert_eq!(json["entities"][1]["name"], "demo::meaning");
+}
+
+#[test]
+fn list_json_emits_empty_list_for_directories_without_supported_files() {
+    let repo = TestRepo::new_unsupported();
+
+    let output = Command::new(binary_path())
+        .current_dir(repo.path())
+        .args(["list", ".", "--format", "json"])
+        .output()
+        .expect("failed to run CLI");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    assert_eq!(json["command"], "list");
+    assert_eq!(json["snapshot"]["source_target_count"], 0);
+    assert_eq!(json["entities"].as_array().unwrap().len(), 0);
 }
 
 #[test]
@@ -76,6 +99,82 @@ fn diff_json_emits_modified_entities() {
         meaning["rhs"]["source_text"],
         "pub fn meaning() -> u32 { 42 }"
     );
+}
+
+#[test]
+fn diff_json_emits_empty_diff_for_repositories_without_supported_files() {
+    let repo = TestRepo::new_unsupported();
+    repo.commit_all("initial");
+    repo.write_file("README.md", "changed\n");
+    repo.commit_all("change docs");
+
+    let output = Command::new(binary_path())
+        .current_dir(repo.path())
+        .args(["diff", "HEAD~1", "HEAD", "--format", "json"])
+        .output()
+        .expect("failed to run CLI");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    assert_eq!(json["command"], "diff");
+    assert_eq!(json["lhs"]["source_target_count"], 0);
+    assert_eq!(json["rhs"]["source_target_count"], 0);
+    assert_eq!(json["added"].as_array().unwrap().len(), 0);
+    assert_eq!(json["deleted"].as_array().unwrap().len(), 0);
+    assert_eq!(json["moved"].as_array().unwrap().len(), 0);
+    assert_eq!(json["moved_modified"].as_array().unwrap().len(), 0);
+    assert_eq!(json["modified"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn diff_json_marks_supported_repositories_with_no_entity_changes() {
+    let repo = TestRepo::new();
+    repo.commit_all("initial");
+
+    let output = Command::new(binary_path())
+        .current_dir(repo.path())
+        .args(["diff", "HEAD", "HEAD", "--format", "json"])
+        .output()
+        .expect("failed to run CLI");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    assert_eq!(json["lhs"]["source_target_count"], 1);
+    assert_eq!(json["rhs"]["source_target_count"], 1);
+    assert_eq!(json["modified"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn diff_json_rejects_unsupported_single_files() {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let lhs = dir.path().join("lhs.txt");
+    let rhs = dir.path().join("rhs.txt");
+    fs::write(&lhs, "old\n").expect("failed to write lhs");
+    fs::write(&rhs, "new\n").expect("failed to write rhs");
+
+    let output = Command::new(binary_path())
+        .args([
+            "diff",
+            lhs.to_str().expect("lhs path should be valid utf-8"),
+            rhs.to_str().expect("rhs path should be valid utf-8"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("failed to run CLI");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported source file extension"));
 }
 
 #[test]
@@ -623,6 +722,16 @@ impl TestRepo {
             "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
         );
         repo.write_lib("pub fn meaning() -> u32 { 41 }\n");
+        repo.git(["init"]);
+        repo.git(["config", "user.name", "Test User"]);
+        repo.git(["config", "user.email", "test@example.com"]);
+        repo
+    }
+
+    fn new_unsupported() -> Self {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let repo = Self { dir };
+        repo.write_file("README.md", "initial\n");
         repo.git(["init"]);
         repo.git(["config", "user.name", "Test User"]);
         repo.git(["config", "user.email", "test@example.com"]);

@@ -122,7 +122,10 @@ fn run_diff(
             println!("{line}");
         }
     } else {
-        print!("{}", output::render_diff(lhs, rhs, &diff, format, width)?);
+        print!(
+            "{}",
+            output::render_diff(lhs, rhs, &lhs_snapshot, &rhs_snapshot, &diff, format, width)?
+        );
     }
 
     Ok(())

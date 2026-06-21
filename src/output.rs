@@ -30,7 +30,7 @@ pub fn render_list(
             command: "list",
             entity_kind_order: entity_kind_order(),
             entity_kinds: entity_kinds(),
-            snapshot: SnapshotOutput::from(snapshot),
+            snapshot: SnapshotOutput::from_snapshot(snapshot, entities),
             entities: entities
                 .entities
                 .iter()
@@ -44,6 +44,8 @@ pub fn render_list(
 pub fn render_diff(
     lhs: &SnapshotSpec,
     rhs: &SnapshotSpec,
+    lhs_snapshot: &Snapshot,
+    rhs_snapshot: &Snapshot,
     diff: &DiffResult,
     format: OutputFormat,
     width: Option<usize>,
@@ -78,8 +80,8 @@ pub fn render_diff(
                 command: "diff",
                 entity_kind_order: entity_kind_order(),
                 entity_kinds: entity_kinds(),
-                lhs: SnapshotOutput::from(lhs),
-                rhs: SnapshotOutput::from(rhs),
+                lhs: SnapshotOutput::from_snapshot(lhs, lhs_snapshot),
+                rhs: SnapshotOutput::from_snapshot(rhs, rhs_snapshot),
                 added: diff.added.iter().map(EntityOutput::from).collect(),
                 deleted: diff.deleted.iter().map(EntityOutput::from).collect(),
                 moved: diff.moved.iter().map(MovedEntityOutput::from).collect(),
@@ -345,6 +347,7 @@ struct SnapshotOutput {
     root: String,
     rev: Option<String>,
     summary: Option<String>,
+    source_target_count: usize,
 }
 
 impl From<&SnapshotSpec> for SnapshotOutput {
@@ -356,6 +359,7 @@ impl From<&SnapshotSpec> for SnapshotOutput {
                 root: root.display().to_string(),
                 rev: None,
                 summary: None,
+                source_target_count: 0,
             },
             SnapshotSpec::File { path, .. } => Self {
                 label: snapshot_label(value),
@@ -363,6 +367,7 @@ impl From<&SnapshotSpec> for SnapshotOutput {
                 root: path.display().to_string(),
                 rev: None,
                 summary: None,
+                source_target_count: 0,
             },
             SnapshotSpec::GitRevision { repo_root, rev } => Self {
                 label: snapshot_label(value),
@@ -370,7 +375,17 @@ impl From<&SnapshotSpec> for SnapshotOutput {
                 root: repo_root.display().to_string(),
                 rev: Some(rev.clone()),
                 summary: commit_summary(repo_root, rev),
+                source_target_count: 0,
             },
+        }
+    }
+}
+
+impl SnapshotOutput {
+    fn from_snapshot(spec: &SnapshotSpec, snapshot: &Snapshot) -> Self {
+        Self {
+            source_target_count: snapshot.source_target_count,
+            ..Self::from(spec)
         }
     }
 }
@@ -691,7 +706,18 @@ mod tests {
             }],
         };
 
-        let rendered = render_diff(&lhs, &rhs, &diff, OutputFormat::Json, None).unwrap();
+        let lhs_snapshot = snapshot_from_entities(Vec::new());
+        let rhs_snapshot = snapshot_from_entities(Vec::new());
+        let rendered = render_diff(
+            &lhs,
+            &rhs,
+            &lhs_snapshot,
+            &rhs_snapshot,
+            &diff,
+            OutputFormat::Json,
+            None,
+        )
+        .unwrap();
         let json: Value = serde_json::from_str(&rendered).unwrap();
 
         assert_eq!(json["command"], "diff");
@@ -802,6 +828,10 @@ mod tests {
             .into_iter()
             .map(|entity| arena.alloc(entity))
             .collect();
-        Snapshot { arena, entities }
+        Snapshot {
+            arena,
+            entities,
+            source_target_count: 1,
+        }
     }
 }
